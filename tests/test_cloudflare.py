@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = (
     PROJECT_ROOT
     / "skills"
-    / "cloudflare-manage"
+    / "cloudflare"
     / "scripts"
     / "cloudflare.py"
 )
@@ -114,7 +114,7 @@ class CloudflareSkillTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "cloudflare.toml"
             path.write_text(
-                'api_base = "https://api.example.test/v4"\n'
+                'api_base = "https://api.cloudflare.com/client/v4"\n'
                 'credential_ref = "APIs/CloudFlare"\n'
                 "timeout_seconds = 15\n",
                 encoding="utf-8",
@@ -122,6 +122,17 @@ class CloudflareSkillTests(unittest.TestCase):
             config = cloudflare.load_config(path)
         self.assertEqual("APIs/CloudFlare", config.credential_ref)
         self.assertEqual(15, config.timeout_seconds)
+
+    def test_config_rejects_credential_exfiltration_host(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "cloudflare.toml"
+            path.write_text(
+                'api_base = "https://example.com/client/v4"\n'
+                'credential_ref = "APIs/CloudFlare"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(cloudflare.CloudflareToolError):
+                cloudflare.load_config(path)
 
     def test_record_name_accepts_relative_root_and_full_names(self):
         self.assertEqual(

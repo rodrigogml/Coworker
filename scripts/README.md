@@ -61,16 +61,21 @@ Se a configuração local ainda não existir, copiar `config/secrets.example.tom
 ajustar os caminhos antes de executar os comandos.
 
 ```powershell
-botina-secrets status
-botina-secrets create
-botina-secrets enroll
-botina-secrets open
-botina-secrets add "APIs/Nome"
-botina-secrets check "APIs/Nome"
+python scripts/credential_vault.py status
+python scripts/credential_vault.py create
+python scripts/credential_vault.py enroll
+python scripts/credential_vault.py open
+python scripts/credential_vault.py add "APIs/Nome"
+python scripts/credential_vault.py check "APIs/Nome"
 ```
 
 O utilitário não possui comando para revelar credenciais. Criação e inclusão acontecem
 em um console interativo separado, no qual o usuário digita informações confidenciais.
+
+Integrações autenticadas por usuário e senha devem preferir uma única entrada:
+`Username` guarda o identificador e `Password` guarda o segredo. Scripts podem importar
+`read_entry_credentials` para obter o par internamente, sem imprimi-lo ou aceitá-lo em
+argumentos.
 
 `enroll` valida a senha mestra contra o cofre e a cadastra no Gerenciador de Credenciais
 do Windows com persistência local à máquina. O cofre pode ser sincronizado pelo

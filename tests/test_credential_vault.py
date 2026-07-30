@@ -96,6 +96,11 @@ class CredentialVaultTest(unittest.TestCase):
         with self.assertRaises(CREDENTIAL_VAULT.VaultToolError):
             CREDENTIAL_VAULT.validate_entry_path("APIs/Gmail\ncomando")
 
+    def test_entry_path_rejects_option_like_segments(self) -> None:
+        """Uma referência não pode ser interpretada como opção do CLI."""
+        with self.assertRaises(CREDENTIAL_VAULT.VaultToolError):
+            CREDENTIAL_VAULT.validate_entry_path("APIs/--show-protected/Teste")
+
     def test_check_result_rejects_invalid_identifier(self) -> None:
         """Um resultado arbitrário não pode ser lido fora do diretório previsto."""
         arguments = argparse.Namespace(request_id="../arquivo")
@@ -148,6 +153,167 @@ class CredentialVaultTest(unittest.TestCase):
         self.assertTrue(result["entry_exists"])
         self.assertFalse(result["interactive"])
         self.assertNotIn("senha-de-teste", str(result))
+
+    def test_reads_username_and_password_from_one_entry(self) -> None:
+        """Uma integração obtém o par composto em uma única consulta ao cofre."""
+        self.vault.touch()
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="usuario-de-teste\nsenha-de-teste\n",
+            stderr="",
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=completed,
+            ) as run_keepassxc,
+        ):
+            credentials = CREDENTIAL_VAULT.read_entry_credentials(
+                "APIs/Omie",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="BOTina/Test",
+            )
+
+        self.assertEqual(("usuario-de-teste", "senha-de-teste"), credentials)
+        arguments = run_keepassxc.call_args.args[1]
+        self.assertEqual(
+            [
+                "show",
+                "--show-protected",
+                "--attributes",
+                "Username",
+                "--attributes",
+                "Password",
+                str(self.vault),
+                "APIs/Omie",
+            ],
+            arguments,
+        )
+
+    def test_composed_credential_requires_both_fields(self) -> None:
+        """Uma entrada incompleta falha sem incluir o valor presente na mensagem."""
+        self.vault.touch()
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="\nsegredo-que-nao-pode-vazar\n",
+            stderr="",
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=completed,
+            ),
+            self.assertRaises(CREDENTIAL_VAULT.VaultToolError) as raised,
+        ):
+            CREDENTIAL_VAULT.read_entry_credentials(
+                "APIs/Omie",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="BOTina/Test",
+            )
+
+        self.assertNotIn("segredo-que-nao-pode-vazar", str(raised.exception))
+
+    def test_writes_credentials_without_secret_in_arguments(self) -> None:
+        """OAuth pode persistir um refresh token sem devolvê-lo ao agente."""
+        self.vault.touch()
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=completed,
+            ),
+            patch.object(
+                CREDENTIAL_VAULT.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            CREDENTIAL_VAULT.write_entry_credentials(
+                "APIs/Google/Accounts/Pessoal",
+                "pessoal@example.com",
+                "refresh-token-secreto",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="BOTina/Test",
+            )
+
+        arguments = run.call_args.args[0]
+        standard_input = run.call_args.kwargs["input"]
+        self.assertNotIn("refresh-token-secreto", arguments)
+        self.assertIn("refresh-token-secreto", standard_input)
+        self.assertEqual("pessoal@example.com", arguments[4])
+        self.assertNotIn("refresh-token-secreto", completed.stdout)
+
+    def test_write_failure_never_includes_secret(self) -> None:
+        """Falhas ao persistir OAuth permanecem sanitizadas."""
+        self.vault.touch()
+        success = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+        failure = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="refresh-token-secreto",
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=success,
+            ),
+            patch.object(
+                CREDENTIAL_VAULT.subprocess,
+                "run",
+                return_value=failure,
+            ),
+            self.assertRaises(CREDENTIAL_VAULT.VaultToolError) as raised,
+        ):
+            CREDENTIAL_VAULT.write_entry_credentials(
+                "APIs/Google/Accounts/Pessoal",
+                "pessoal@example.com",
+                "refresh-token-secreto",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="BOTina/Test",
+            )
+
+        self.assertNotIn("refresh-token-secreto", str(raised.exception))
 
     def test_unenroll_requires_confirmation(self) -> None:
         """A senha cadastrada não pode ser removida acidentalmente."""

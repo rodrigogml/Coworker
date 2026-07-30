@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gerenciar Forward Email"
+  short_description: "Gerencie domínios e aliases do Forward Email"
+  default_prompt: "Use $forwardemail para consultar ou administrar meus domínios e aliases no Forward Email com segurança."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gerenciar Todoist"
+  short_description: "Consultar e organizar tarefas no Todoist"
+  default_prompt: "Use $todoist para listar e organizar minhas tarefas do Todoist."

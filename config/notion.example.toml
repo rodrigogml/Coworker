@@ -1,0 +1,11 @@
+api_base = "https://api.notion.com/v1"
+api_version = "2026-03-11"
+timeout_seconds = 30
+page_size = 50
+max_pages = 20
+scan_max_pages = 10
+request_interval_seconds = 0.35
+default_profile = "default"
+
+[profiles.default]
+credential_ref = "APIs/Notion"

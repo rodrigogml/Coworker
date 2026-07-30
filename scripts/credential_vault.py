@@ -277,6 +277,12 @@ def validate_entry_path(value: str) -> str:
         raise VaultToolError("O caminho da entrada não pode ficar vazio.")
     if any(character in normalized for character in "\r\n\0"):
         raise VaultToolError("O caminho da entrada contém caracteres inválidos.")
+    parts = normalized.split("/")
+    if any(
+        not part or part in {".", ".."} or part.startswith("-")
+        for part in parts
+    ):
+        raise VaultToolError("O caminho da entrada contém um segmento inválido.")
     return normalized
 
 
@@ -326,15 +332,18 @@ def verify_master_password(
     return completed.returncode == 0
 
 
-def read_entry_secret(
+def _read_entry_attributes(
     entry: str,
+    attributes: tuple[str, ...],
     *,
     cli_path: Path | None = None,
     vault_path: Path | None = None,
     credential_target: str | None = None,
     config_path: Path = DEFAULT_CONFIG,
-) -> str:
-    """Obtém internamente um segredo para uso por um script de integração."""
+) -> tuple[str, ...]:
+    """Obtém atributos conhecidos de uma entrada sem escrevê-los no terminal."""
+    if not attributes:
+        raise VaultToolError("Ao menos um atributo da credencial deve ser solicitado.")
     if cli_path is None or vault_path is None or credential_target is None:
         config = load_vault_config(config_path)
         cli_path = cli_path or config.cli_path
@@ -345,13 +354,17 @@ def read_entry_secret(
     require_file(vault_path, "Cofre")
     master_password = read_windows_credential(credential_target)
     try:
+        attribute_arguments = [
+            item
+            for attribute in attributes
+            for item in ("--attributes", attribute)
+        ]
         completed = run_keepassxc(
             cli_path,
             [
                 "show",
                 "--show-protected",
-                "--attributes",
-                "Password",
+                *attribute_arguments,
                 str(vault_path),
                 normalized_entry,
             ],
@@ -363,7 +376,169 @@ def read_entry_secret(
         raise VaultToolError(
             f"Não foi possível acessar a credencial '{normalized_entry}'."
         )
-    return completed.stdout.rstrip("\r\n")
+    values = tuple(completed.stdout.splitlines())
+    if len(values) != len(attributes):
+        raise VaultToolError(
+            f"A credencial '{normalized_entry}' não contém os campos esperados."
+        )
+    return values
+
+
+def read_entry_secret(
+    entry: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> str:
+    """Obtém internamente a senha de uma entrada para uma integração."""
+    return _read_entry_attributes(
+        entry,
+        ("Password",),
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )[0]
+
+
+def read_entry_credentials(
+    entry: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> tuple[str, str]:
+    """Obtém internamente usuário e senha de uma única entrada."""
+    username, password = _read_entry_attributes(
+        entry,
+        ("Username", "Password"),
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )
+    if not username or not password:
+        raise VaultToolError(
+            f"A credencial '{validate_entry_path(entry)}' exige usuário e senha."
+        )
+    return username, password
+
+
+def _vault_item_exists(
+    cli_path: Path,
+    vault_path: Path,
+    item_path: str,
+    master_password: str,
+) -> bool:
+    """Verifica um caminho do cofre sem devolver seu conteúdo."""
+    completed = run_keepassxc(
+        cli_path,
+        ["show", "--quiet", str(vault_path), item_path],
+        master_password,
+    )
+    return completed.returncode == 0
+
+
+def _ensure_vault_groups(
+    cli_path: Path,
+    vault_path: Path,
+    entry: str,
+    master_password: str,
+) -> None:
+    """Cria somente os grupos ausentes do caminho de uma entrada."""
+    parts = entry.split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        group = "/".join(parts[:index])
+        completed = run_keepassxc(
+            cli_path,
+            ["ls", "--quiet", str(vault_path), group],
+            master_password,
+        )
+        if completed.returncode == 0:
+            continue
+        created = run_keepassxc(
+            cli_path,
+            ["mkdir", "--quiet", str(vault_path), group],
+            master_password,
+        )
+        if created.returncode != 0:
+            raise VaultToolError(
+                f"Não foi possível preparar o grupo da credencial '{entry}'."
+            )
+
+
+def write_entry_credentials(
+    entry: str,
+    username: str,
+    password: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Grava usuário e segredo internamente, sem argumentos ou saída sensível."""
+    normalized_entry = validate_entry_path(entry)
+    normalized_username = str(username).strip()
+    if not normalized_username or any(
+        character in normalized_username for character in "\r\n\0"
+    ):
+        raise VaultToolError("O usuário da credencial é inválido.")
+    if not password or any(character in password for character in "\r\n\0"):
+        raise VaultToolError("O segredo da credencial é inválido.")
+    if cli_path is None or vault_path is None or credential_target is None:
+        config = load_vault_config(config_path)
+        cli_path = cli_path or config.cli_path
+        vault_path = vault_path or config.vault_path
+        credential_target = credential_target or config.credential_target
+    require_file(cli_path, "KeePassXC CLI")
+    require_file(vault_path, "Cofre")
+    master_password = read_windows_credential(credential_target)
+    try:
+        _ensure_vault_groups(
+            cli_path,
+            vault_path,
+            normalized_entry,
+            master_password,
+        )
+        operation = (
+            "edit"
+            if _vault_item_exists(
+                cli_path,
+                vault_path,
+                normalized_entry,
+                master_password,
+            )
+            else "add"
+        )
+        completed = subprocess.run(
+            [
+                str(cli_path),
+                operation,
+                "--quiet",
+                "--username",
+                normalized_username,
+                "--password-prompt",
+                str(vault_path),
+                normalized_entry,
+            ],
+            input=f"{master_password}\n{password}\n",
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    finally:
+        master_password = ""
+        password = ""
+    if completed.returncode != 0:
+        raise VaultToolError(
+            f"Não foi possível gravar a credencial '{normalized_entry}'."
+        )
 
 
 def launch_interactive(

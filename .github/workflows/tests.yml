@@ -36,8 +36,19 @@ jobs:
         run: >-
           python -m py_compile
           scripts/credential_vault.py
+          scripts/google_accounts.py
+          scripts/google_api.py
+          scripts/google_service_config.py
           scripts/memory.py
-          skills/cloudflare-manage/scripts/cloudflare.py
+          skills/calendar/scripts/calendar.py
+          skills/cloudflare/scripts/cloudflare.py
+          skills/contacts/scripts/contacts.py
+          skills/drive/scripts/drive.py
+          skills/forwardemail/scripts/forward_email.py
+          skills/gmail/scripts/gmail.py
+          skills/notion/scripts/notion.py
+          skills/omie/scripts/omie.py
+          skills/todoist/scripts/todoist.py
 
       - name: Run tests
         run: python -m unittest discover -s tests -v

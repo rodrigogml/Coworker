@@ -1,13 +1,14 @@
 ---
-name: cloudflare-manage
+name: cloudflare
 description: Gerenciar a conta Cloudflare do usuário por API, incluindo validar o token, listar e criar zonas, consultar, criar, alterar e excluir registros DNS e ligar ou desligar o proxy. Use quando a tarefa mencionar Cloudflare, zonas, DNS autoritativo, registros A/AAAA/CNAME/TXT/MX ou nuvem laranja/cinza.
 ---
 
 # Gerenciar Cloudflare
 
-Use exclusivamente o comando `cloudflare` para acessar a API. Ele obtém internamente
-a credencial referenciada em `data/config/cloudflare.toml` do cofre KeePassXC e nunca
-a devolve ao agente.
+Use exclusivamente `python skills/cloudflare/scripts/cloudflare.py` para
+acessar a API. O script obtém internamente a credencial referenciada em
+`data/config/cloudflare.toml` do cofre KeePassXC e nunca a devolve ao agente.
+Quando houver várias contas, selecionar a referência com `--profile NOME`.
 
 ## Aplicar a autorização
 
@@ -25,8 +26,8 @@ a devolve ao agente.
 
 ## Executar o fluxo
 
-1. Usar `cloudflare doctor` quando for necessário diagnosticar autenticação ou
-   permissões.
+1. Usar `python skills/cloudflare/scripts/cloudflare.py doctor` quando for
+   necessário diagnosticar autenticação ou permissões.
 2. Consultar zonas ou registros para resolver IDs e verificar o estado atual.
 3. Recusar seleção ambígua; preferir `--record-id` quando houver registros repetidos.
 4. Executar a alteração já autorizada, sem uma segunda cerimônia artificial.
@@ -39,20 +40,28 @@ ambiente ou cabeçalhos de autenticação.
 ## Comandos
 
 ```powershell
-cloudflare doctor
-cloudflare zones list
-cloudflare zones list --name exemplo.com
-cloudflare zones create --name exemplo.com --account-id <account_id>
+python skills/cloudflare/scripts/cloudflare.py doctor
+python skills/cloudflare/scripts/cloudflare.py zones list
+python skills/cloudflare/scripts/cloudflare.py zones list --name exemplo.com
+python skills/cloudflare/scripts/cloudflare.py zones create `
+  --name exemplo.com --account-id <account_id>
 
-cloudflare dns list --zone exemplo.com
-cloudflare dns list --zone exemplo.com --name www --type A
-cloudflare dns show --zone exemplo.com --name www --type A
+python skills/cloudflare/scripts/cloudflare.py dns list --zone exemplo.com
+python skills/cloudflare/scripts/cloudflare.py dns list `
+  --zone exemplo.com --name www --type A
+python skills/cloudflare/scripts/cloudflare.py dns show `
+  --zone exemplo.com --name www --type A
 
-cloudflare dns create --zone exemplo.com --type A --name www --content 192.0.2.10 --proxied
-cloudflare dns update --zone exemplo.com --name www --type A --content 192.0.2.20
-cloudflare dns proxy --zone exemplo.com --name www --type A --enable
-cloudflare dns proxy --zone exemplo.com --record-id <record_id> --disable
-cloudflare dns delete --zone exemplo.com --record-id <record_id>
+python skills/cloudflare/scripts/cloudflare.py dns create `
+  --zone exemplo.com --type A --name www --content 192.0.2.10 --proxied
+python skills/cloudflare/scripts/cloudflare.py dns update `
+  --zone exemplo.com --name www --type A --content 192.0.2.20
+python skills/cloudflare/scripts/cloudflare.py dns proxy `
+  --zone exemplo.com --name www --type A --enable
+python skills/cloudflare/scripts/cloudflare.py dns proxy `
+  --zone exemplo.com --record-id <record_id> --disable
+python skills/cloudflare/scripts/cloudflare.py dns delete `
+  --zone exemplo.com --record-id <record_id>
 ```
 
 Acrescentar `--dry-run` aos comandos de criação, alteração, proxy ou exclusão para

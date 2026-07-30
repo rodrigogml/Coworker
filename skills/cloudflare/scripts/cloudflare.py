@@ -24,8 +24,13 @@ if str(PROJECT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(PROJECT_SCRIPTS))
 
 from credential_vault import VaultToolError, read_entry_secret  # noqa: E402
+from integration_profiles import (  # noqa: E402
+    IntegrationProfileError,
+    resolve_credential_ref,
+)
 
 
+ALLOWED_API_HOST = "api.cloudflare.com"
 ZONE_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$", re.IGNORECASE)
 RECORD_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$", re.IGNORECASE)
 ACCOUNT_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$", re.IGNORECASE)
@@ -81,7 +86,7 @@ class CloudflareConfig:
     timeout_seconds: int
 
 
-def load_config(path: Path) -> CloudflareConfig:
+def load_config(path: Path, profile: str | None = None) -> CloudflareConfig:
     """Carrega e valida a configuração TOML."""
     try:
         values = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -97,12 +102,29 @@ def load_config(path: Path) -> CloudflareConfig:
         ) from exc
 
     api_base = str(values.get("api_base", "")).rstrip("/")
-    credential_ref = str(values.get("credential_ref", "")).strip()
+    parsed = urllib.parse.urlparse(api_base)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise CloudflareToolError("'api_base' contém uma porta inválida.") from exc
+    try:
+        _, credential_ref = resolve_credential_ref(values, profile)
+    except IntegrationProfileError as exc:
+        raise CloudflareToolError(str(exc)) from exc
     timeout_seconds = values.get("timeout_seconds", 30)
-    if not api_base.startswith("https://"):
-        raise CloudflareToolError("'api_base' deve usar HTTPS.")
-    if not credential_ref:
-        raise CloudflareToolError("'credential_ref' não pode ficar vazio.")
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != ALLOWED_API_HOST
+        or parsed.path.rstrip("/") != "/client/v4"
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise CloudflareToolError(
+            "'api_base' deve ser 'https://api.cloudflare.com/client/v4'."
+        )
     if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 120:
         raise CloudflareToolError("'timeout_seconds' deve estar entre 1 e 120.")
     return CloudflareConfig(api_base, credential_ref, timeout_seconds)
@@ -831,6 +853,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Gerencia zonas e registros DNS da Cloudflare."
     )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument("--profile")
     commands = parser.add_subparsers(dest="resource", required=True)
 
     doctor = commands.add_parser("doctor", help="Valida token e acesso de leitura.")
@@ -924,7 +947,7 @@ def main() -> int:
     args = build_parser().parse_args()
     client: CloudflareClient | None = None
     try:
-        config = load_config(Path(args.config).expanduser().resolve())
+        config = load_config(Path(args.config).expanduser().resolve(), args.profile)
         token = read_entry_secret(config.credential_ref)
         client = CloudflareClient(config, token)
         token = ""

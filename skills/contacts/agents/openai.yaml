@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Contacts"
+  short_description: "Consulta e mantém contatos pessoais Google"
+  default_prompt: "Use $contacts para localizar ou atualizar meus contatos do Google."
