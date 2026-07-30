@@ -1,0 +1,29 @@
+# Dados pessoais, configurações locais e dados operacionais
+/data/**
+!/data/.gitkeep
+
+# Bancos SQLite e arquivos auxiliares
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+*.kdbx
+
+# Credenciais e configurações locais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editores e sistema operacional
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini

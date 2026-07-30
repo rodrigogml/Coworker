@@ -1,0 +1,26 @@
+version: 1
+
+storage:
+  human_readable: data/memory
+  operational_data: data
+  sqlite_database: data/memory.sqlite3
+
+retention:
+  store_only_future_useful_information: true
+  store_full_conversations: false
+  require_source: true
+  require_date: true
+  mark_inferences: true
+
+sensitive_data:
+  store_credentials: false
+  store_tokens: false
+  store_private_keys: false
+  require_explicit_need: true
+
+sqlite:
+  enabled: true
+  access_via_project_tool: true
+  allow_ad_hoc_writes: false
+  store_secrets: false
+  credential_reference_only: true
