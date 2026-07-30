@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gerenciar Gmail"
+  short_description: "Buscar e organizar mensagens do Gmail"
+  default_prompt: "Use $gmail para buscar e organizar minhas mensagens do Gmail."

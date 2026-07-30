@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gerenciar Notion"
+  short_description: "Buscar e editar notas no Notion"
+  default_prompt: "Use $notion para buscar e editar minhas notas do Notion."

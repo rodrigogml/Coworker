@@ -1,3 +1,6 @@
 api_base = "https://api.cloudflare.com/client/v4"
-credential_ref = "APIs/CloudFlare"
 timeout_seconds = 30
+default_profile = "default"
+
+[profiles.default]
+credential_ref = "APIs/CloudFlare"

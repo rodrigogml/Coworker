@@ -23,6 +23,11 @@ permanecem em `data/`, fora do Git.
 - consultas ao ERP Omie;
 - gerenciamento de tarefas, projetos, seções e etiquetas do Todoist;
 - busca, leitura, criação e edição de notas do Notion;
+- múltiplos perfis de autenticação por integração;
+- busca, leitura, organização, rascunhos e envio autorizado pelo Gmail;
+- consulta de disponibilidade e gestão de eventos no Google Calendar;
+- pesquisa, transferência, organização e compartilhamento no Google Drive;
+- pesquisa e manutenção de contatos pessoais pelo Google Contacts;
 - base para novas skills pessoais.
 
 ## Estrutura
@@ -35,7 +40,12 @@ BOTina/
 ├── .agents/
 ├── config/
 │   ├── cloudflare.example.toml
+│   ├── calendar.example.toml
+│   ├── contacts.example.toml
+│   ├── drive.example.toml
 │   ├── forwardemail.example.toml
+│   ├── gmail.example.toml
+│   ├── google.example.toml
 │   ├── omie.example.toml
 │   ├── notion.example.toml
 │   ├── todoist.example.toml
@@ -96,8 +106,13 @@ New-Item -ItemType Directory -Force data/config, data/memory, data/secrets | Out
 
 $modelos = @{
   "config/secrets.example.toml" = "data/config/secrets.toml"
+  "config/calendar.example.toml" = "data/config/calendar.toml"
   "config/cloudflare.example.toml" = "data/config/cloudflare.toml"
+  "config/contacts.example.toml" = "data/config/contacts.toml"
+  "config/drive.example.toml" = "data/config/drive.toml"
   "config/forwardemail.example.toml" = "data/config/forwardemail.toml"
+  "config/gmail.example.toml" = "data/config/gmail.toml"
+  "config/google.example.toml" = "data/config/google.toml"
   "config/omie.example.toml" = "data/config/omie.toml"
   "config/notion.example.toml" = "data/config/notion.toml"
   "config/todoist.example.toml" = "data/config/todoist.toml"
@@ -154,6 +169,27 @@ arquivo.
 referência `APIs/Notion`, limites de paginação e o intervalo entre requisições. Nunca
 gravar o token ou o conteúdo de notas nesse arquivo.
 
+Os modelos novos aceitam vários perfis:
+
+```toml
+default_profile = "pessoal"
+
+[profiles.pessoal]
+credential_ref = "APIs/Todoist/Pessoal"
+
+[profiles.empresa]
+credential_ref = "APIs/Todoist/Empresa"
+```
+
+Configurações antigas com uma única `credential_ref` continuam funcionando. Para usar
+`--profile`, migrar o arquivo privado para o formato acima. Nomes, referências e
+e-mails de contas ficam somente em `data/`; os modelos públicos usam `default`.
+
+`data/config/google.toml` reúne endpoints OAuth oficiais, a referência do cliente
+OAuth e os perfis de contas Google. Os arquivos `calendar.toml`, `contacts.toml`,
+`drive.toml` e `gmail.toml` contêm somente parâmetros operacionais de suas APIs.
+Client Secret, refresh tokens e access tokens nunca devem ser gravados nesses arquivos.
+
 ### 3. Inicializar a memória
 
 ```powershell
@@ -187,15 +223,22 @@ Quando o KeePassXC não estiver disponível, a IA deve:
 ```powershell
 python scripts/credential_vault.py status
 python scripts/credential_vault.py check "APIs/CloudFlare"
-python skills/cloudflare-manage/scripts/cloudflare.py doctor
+python skills/cloudflare/scripts/cloudflare.py doctor
 python scripts/credential_vault.py check "APIs/ForwardEmail"
-python skills/forward-email-manage/scripts/forward_email.py doctor
+python skills/forwardemail/scripts/forward_email.py doctor
 python scripts/credential_vault.py check "APIs/Omie"
-python skills/omie-manage/scripts/omie.py doctor
+python skills/omie/scripts/omie.py doctor
 python scripts/credential_vault.py check "APIs/Todoist"
-python skills/todoist-manage/scripts/todoist.py doctor
+python skills/todoist/scripts/todoist.py doctor
 python scripts/credential_vault.py check "APIs/Notion"
-python skills/notion-manage/scripts/notion.py doctor
+python skills/notion/scripts/notion.py doctor
+python scripts/credential_vault.py check "APIs/Google/OAuthClient"
+python scripts/google_accounts.py list
+python scripts/google_accounts.py doctor --profile default
+python skills/gmail/scripts/gmail.py --profile default doctor
+python skills/calendar/scripts/calendar.py --profile default doctor
+python skills/drive/scripts/drive.py --profile default doctor
+python skills/contacts/scripts/contacts.py --profile default doctor
 ```
 
 Se a entrada da Cloudflare não existir, a IA deve orientar:
@@ -241,6 +284,49 @@ python scripts/credential_vault.py add "APIs/Notion"
 O token deve ser digitado somente na janela aberta pelo comando. Uma integração
 interna não enxerga automaticamente todo o espaço de trabalho: página não
 compartilhada pode aparecer como inexistente.
+
+### Preparar Google OAuth e Workspace
+
+1. Criar um projeto no Google Cloud e configurar a tela de consentimento OAuth.
+2. Habilitar Gmail API, Google Calendar API, Google Drive API e People API.
+3. Criar um OAuth Client ID do tipo **Desktop app**.
+4. Abrir o KeePassXC e criar `APIs/Google/OAuthClient`, usando o Client ID em
+   `Username` e o Client Secret em `Password`.
+5. Ajustar os perfis e escopos em `data/config/google.toml`.
+6. Autorizar cada conta pelo navegador:
+
+```powershell
+python scripts/google_accounts.py enroll --profile default
+```
+
+O comando abre um console separado e o navegador. Após o consentimento, o refresh
+token é escrito diretamente na entrada `APIs/Google/Accounts/Default`; ele não aparece
+na conversa nem no terminal do agente. O perfil utiliza o e-mail autorizado em
+`Username` e o refresh token em `Password`.
+
+Para adicionar outra conta:
+
+```toml
+[profiles.empresa]
+credential_ref = "APIs/Google/Accounts/Empresa"
+scopes = [
+  "openid",
+  "email",
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.freebusy",
+  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/contacts",
+]
+```
+
+Executar então `python scripts/google_accounts.py enroll --profile empresa`.
+Ao adicionar escopos a um perfil já autorizado, executar `enroll` novamente: um
+refresh token antigo não recebe permissões adicionais automaticamente.
+Aplicações pessoais com poucos usuários podem operar sem verificação pública, mas o
+Google pode mostrar a tela de aplicação não verificada. Usar somente os escopos
+necessários e observar as políticas de dados do Google Workspace.
 
 ## Como agir quando algo estiver ausente
 
@@ -288,9 +374,9 @@ Senhas e tokens são recusados. Apenas referências externas podem ser registrad
 ## Cloudflare
 
 ```powershell
-python skills/cloudflare-manage/scripts/cloudflare.py zones list
-python skills/cloudflare-manage/scripts/cloudflare.py dns list --zone exemplo.com
-python skills/cloudflare-manage/scripts/cloudflare.py dns proxy `
+python skills/cloudflare/scripts/cloudflare.py zones list
+python skills/cloudflare/scripts/cloudflare.py dns list --zone exemplo.com
+python skills/cloudflare/scripts/cloudflare.py dns proxy `
   --zone exemplo.com --name www --type A --enable
 ```
 
@@ -301,13 +387,13 @@ confirmação.
 ## Forward Email
 
 ```powershell
-python skills/forward-email-manage/scripts/forward_email.py account show
-python skills/forward-email-manage/scripts/forward_email.py domains list
-python skills/forward-email-manage/scripts/forward_email.py domains verify `
+python skills/forwardemail/scripts/forward_email.py account show
+python skills/forwardemail/scripts/forward_email.py domains list
+python skills/forwardemail/scripts/forward_email.py domains verify `
   --domain exemplo.com
-python skills/forward-email-manage/scripts/forward_email.py aliases list `
+python skills/forwardemail/scripts/forward_email.py aliases list `
   --domain exemplo.com
-python skills/forward-email-manage/scripts/forward_email.py aliases create `
+python skills/forwardemail/scripts/forward_email.py aliases create `
   --domain exemplo.com --name contato `
   --recipient destino@exemplo.net
 ```
@@ -319,11 +405,11 @@ não uma confirmação. Envio de mensagens e geração de senhas não fazem part
 ## Omie
 
 ```powershell
-python skills/omie-manage/scripts/omie.py companies list
-python skills/omie-manage/scripts/omie.py customers show --id 123456
-python skills/omie-manage/scripts/omie.py products list --description "Produto"
-python skills/omie-manage/scripts/omie.py receivables list --status ATRASADO
-python skills/omie-manage/scripts/omie.py sales-orders list `
+python skills/omie/scripts/omie.py companies list
+python skills/omie/scripts/omie.py customers show --id 123456
+python skills/omie/scripts/omie.py products list --description "Produto"
+python skills/omie/scripts/omie.py receivables list --status ATRASADO
+python skills/omie/scripts/omie.py sales-orders list `
   --customer-id 123456 --status FATURADO
 ```
 
@@ -335,11 +421,11 @@ para evitar exposição acidental de credenciais, certificados ou corpos excessi
 ## Todoist
 
 ```powershell
-python skills/todoist-manage/scripts/todoist.py projects list
-python skills/todoist-manage/scripts/todoist.py tasks list --project-id ID
-python skills/todoist-manage/scripts/todoist.py tasks create `
+python skills/todoist/scripts/todoist.py projects list
+python skills/todoist/scripts/todoist.py tasks list --project-id ID
+python skills/todoist/scripts/todoist.py tasks create `
   --content "Enviar relatório" --due-string "amanhã às 10h"
-python skills/todoist-manage/scripts/todoist.py tasks close --id ID
+python skills/todoist/scripts/todoist.py tasks close --id ID
 ```
 
 A skill usa a API unificada v1 e cobre tarefas, projetos, seções e etiquetas.
@@ -350,11 +436,11 @@ atender ao pedido.
 ## Notion
 
 ```powershell
-python skills/notion-manage/scripts/notion.py pages search --query "Reunião"
-python skills/notion-manage/scripts/notion.py pages get --id ID
-python skills/notion-manage/scripts/notion.py pages find-content `
+python skills/notion/scripts/notion.py pages search --query "Reunião"
+python skills/notion/scripts/notion.py pages get --id ID
+python skills/notion/scripts/notion.py pages find-content `
   --query "termo interno" --max-pages 10
-python skills/notion-manage/scripts/notion.py pages create `
+python skills/notion/scripts/notion.py pages create `
   --parent-page-id ID --title "Nova nota" --markdown-file data/work/nova-nota.md
 ```
 
@@ -363,6 +449,75 @@ varredura controlada: seleciona páginas acessíveis, lê o Markdown e devolve s
 trechos correspondentes. Criações e substituições recebem conteúdo por arquivos
 UTF-8 privados; alterações pontuais usam uma lista JSON de `old_str` e `new_str`.
 Envio à lixeira é reversível, e exclusão permanente não faz parte da skill.
+
+## Gmail
+
+```powershell
+python scripts/google_accounts.py list
+python skills/gmail/scripts/gmail.py --profile pessoal doctor
+python skills/gmail/scripts/gmail.py --profile pessoal messages list `
+  --query "is:unread newer_than:7d"
+python skills/gmail/scripts/gmail.py --profile pessoal messages show `
+  --id ID --format full
+python skills/gmail/scripts/gmail.py --profile pessoal drafts create `
+  --message-file data/work/resposta.eml
+```
+
+A skill cobre mensagens, threads, marcadores e rascunhos. Mensagens novas são
+preparadas primeiro como rascunho; o envio é uma operação separada que exige pedido
+explícito. Modificação de marcadores e lixeira também alteram o Gmail. A exclusão
+permanente não é oferecida.
+
+Cada execução troca o refresh token armazenado no KeePassXC por um access token
+temporário. O refresh token não é devolvido ao agente e o access token é descartado ao
+final do processo.
+
+## Google Calendar
+
+```powershell
+python skills/calendar/scripts/calendar.py --profile pessoal calendars list
+python skills/calendar/scripts/calendar.py --profile pessoal events list `
+  --time-min "2026-08-01T00:00:00-03:00" `
+  --time-max "2026-08-08T00:00:00-03:00"
+python skills/calendar/scripts/calendar.py --profile pessoal freebusy `
+  --time-min "2026-08-01T09:00:00-03:00" `
+  --time-max "2026-08-01T18:00:00-03:00" --calendar-id primary
+```
+
+Criação, atualização e cancelamento de eventos exigem autorização explícita. O envio
+de notificações a participantes fica desativado por padrão. A skill também cobre
+instâncias recorrentes, regras `RRULE` e lembretes personalizados.
+
+## Google Drive
+
+```powershell
+python skills/drive/scripts/drive.py --profile pessoal files list `
+  --query "name contains 'Relatório' and trashed = false"
+python skills/drive/scripts/drive.py --profile pessoal files show --id ID
+python skills/drive/scripts/drive.py --profile pessoal files upload `
+  --source data/work/relatorio.pdf --parent-id ID --dry-run
+```
+
+A skill pesquisa, baixa, exporta, envia, substitui, copia, renomeia, move e coloca
+itens na lixeira, além de listar drives compartilhados. Exclusão permanente não é
+oferecida. Compartilhamentos, mudanças de função e notificações dependem de
+autorização explícita.
+
+## Google Contacts
+
+```powershell
+python skills/contacts/scripts/contacts.py --profile pessoal contacts search `
+  --query "Maria"
+python skills/contacts/scripts/contacts.py --profile pessoal contacts show `
+  --resource-name people/ID
+python skills/contacts/scripts/contacts.py --profile pessoal contacts create `
+  --name "Maria Silva" --email "maria@example.com" --dry-run
+```
+
+Atualizações preservam os metadados de concorrência devolvidos pela People API. A
+skill também administra grupos e membros sem excluir os contatos ao apagar um grupo.
+Criação, alteração e exclusão exigem autorização explícita; a exclusão de um contato
+é permanente.
 
 ## Privacidade e publicação
 

@@ -211,11 +211,17 @@ criar wrappers, atalhos ou comandos auxiliares fora do repositório. Dependênci
 externas devem ser localizadas e registradas em arquivos privados de configuração
 derivados dos modelos públicos.
 
+Integrações podem possuir vários perfis no TOML privado. Usar `default_profile` e
+`[profiles.NOME]`, mantendo uma `credential_ref` distinta para cada conta. Selecionar
+com `--profile NOME`; nunca inferir uma conta quando a escolha puder alterar o
+resultado. Configurações antigas com uma única `credential_ref` continuam válidas,
+mas não aceitam `--profile` até serem migradas.
+
 ### Cloudflare
 
 Para zonas e registros DNS da Cloudflare, usar
-`skills/cloudflare-manage/SKILL.md` e executar
-`python skills/cloudflare-manage/scripts/cloudflare.py`. A credencial deve ser obtida
+`skills/cloudflare/SKILL.md` e executar
+`python skills/cloudflare/scripts/cloudflare.py`. A credencial deve ser obtida
 diretamente do cofre, nunca aceita ou revelada como argumento.
 
 A autorização para modificar a Cloudflare deve vir do pedido explícito e atual. Não
@@ -225,8 +231,8 @@ somente uma prévia técnica e não constitui autorização.
 ### Forward Email
 
 Para domínios e aliases do Forward Email, usar
-`skills/forward-email-manage/SKILL.md` e executar
-`python skills/forward-email-manage/scripts/forward_email.py`. A credencial deve ser
+`skills/forwardemail/SKILL.md` e executar
+`python skills/forwardemail/scripts/forward_email.py`. A credencial deve ser
 obtida diretamente do cofre, nunca aceita ou revelada como argumento.
 
 A autorização para criar, alterar ou excluir domínios e aliases deve vir do pedido
@@ -235,8 +241,8 @@ somente uma prévia técnica e não constitui autorização.
 
 ### Omie
 
-Para consultar o ERP Omie, usar `skills/omie-manage/SKILL.md` e executar
-`python skills/omie-manage/scripts/omie.py`. App Key e App Secret devem permanecer em
+Para consultar o ERP Omie, usar `skills/omie/SKILL.md` e executar
+`python skills/omie/scripts/omie.py`. App Key e App Secret devem permanecer em
 uma única entrada do KeePassXC: App Key no campo `Username` e App Secret no campo
 `Password`. O script deve obter ambos internamente.
 
@@ -248,8 +254,8 @@ explícita e atual.
 ### Todoist
 
 Para tarefas, projetos, seções e etiquetas do Todoist, usar
-`skills/todoist-manage/SKILL.md` e executar
-`python skills/todoist-manage/scripts/todoist.py`. O token deve permanecer na entrada
+`skills/todoist/SKILL.md` e executar
+`python skills/todoist/scripts/todoist.py`. O token deve permanecer na entrada
 `APIs/Todoist` do KeePassXC e ser obtido internamente pelo script.
 
 Consultas podem ser executadas dentro do escopo solicitado. Criações, alterações,
@@ -260,8 +266,8 @@ explícito e atual. Não exigir códigos que o próprio agente possa produzir. `
 ### Notion
 
 Para buscar, ler, criar e editar notas e páginas do Notion, usar
-`skills/notion-manage/SKILL.md` e executar
-`python skills/notion-manage/scripts/notion.py`. O token deve permanecer na entrada
+`skills/notion/SKILL.md` e executar
+`python skills/notion/scripts/notion.py`. O token deve permanecer na entrada
 `APIs/Notion` do KeePassXC e ser obtido internamente pelo script.
 
 Consultas podem ser executadas dentro do escopo solicitado. Criações, edições,
@@ -269,6 +275,44 @@ substituições, envio à lixeira e restaurações devem vir do pedido explícit
 Preferir edição pontual à substituição integral. A busca nativa pesquisa títulos;
 para conteúdo, usar a varredura limitada descrita na skill. `--dry-run` é somente uma
 prévia técnica e não constitui autorização.
+
+### Google Workspace
+
+Para cadastrar, listar e diagnosticar contas Google, usar
+`python scripts/google_accounts.py`. O cliente OAuth deve permanecer em
+`APIs/Google/OAuthClient`; cada perfil autorizado deve ter sua própria entrada
+`APIs/Google/Accounts/<Nome>`. Refresh tokens são gravados diretamente no KeePassXC e
+access tokens existem somente em memória.
+
+Para mensagens, conversas, marcadores e rascunhos do Gmail, usar
+`skills/gmail/SKILL.md` e executar
+`python skills/gmail/scripts/gmail.py --profile NOME`. Consultas podem ser
+executadas dentro do escopo solicitado. Modificações de marcadores, lixeira, criação
+de rascunhos e envio devem vir do pedido explícito e atual. Criar um rascunho não
+autoriza seu envio; `drafts send` exige autorização específica para destinatários e
+conteúdo.
+
+Para agenda e disponibilidade, usar `skills/calendar/SKILL.md` e executar
+`python skills/calendar/scripts/calendar.py --profile NOME`. Criação, alteração e
+cancelamento de eventos, inclusão de participantes e envio de notificações exigem
+autorização explícita e atual. Validar recorrência, instâncias e lembretes conforme a
+skill antes de alterar uma série.
+
+Para arquivos e permissões, usar `skills/drive/SKILL.md` e executar
+`python skills/drive/scripts/drive.py --profile NOME`. Upload, renomeação,
+movimentação, lixeira e mudanças de compartilhamento exigem autorização explícita.
+Substituição de conteúdo é sobrescrita remota. Não improvisar exclusão permanente; a
+skill oferece somente lixeira.
+
+Para contatos pessoais, usar `skills/contacts/SKILL.md` e executar
+`python skills/contacts/scripts/contacts.py --profile NOME`. Pesquisar antes de criar
+e identificar alvos pelo `resourceName`. Criação, alteração e exclusão exigem
+autorização explícita; a exclusão é permanente. Ao excluir grupos, preservar os
+contatos com `deleteContacts=false`.
+
+Os quatro serviços compartilham os perfis definidos em `data/config/google.toml`.
+Quando os escopos forem ampliados, orientar nova execução de
+`python scripts/google_accounts.py enroll --profile NOME`.
 
 ## SQLite
 

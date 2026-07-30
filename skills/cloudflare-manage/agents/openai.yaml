@@ -1,4 +1,0 @@
-interface:
-  display_name: "Gerenciar Cloudflare"
-  short_description: "Gerencie zonas e registros DNS da Cloudflare"
-  default_prompt: "Use $cloudflare-manage para consultar ou alterar minhas zonas e registros DNS com segurança."

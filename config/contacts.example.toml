@@ -1,0 +1,7 @@
+api_base = "https://people.googleapis.com/v1"
+google_config = "data/config/google.toml"
+timeout_seconds = 30
+page_size = 100
+max_pages = 20
+max_response_bytes = 5242880
+person_fields = "metadata,names,emailAddresses,phoneNumbers,organizations,biographies,memberships"

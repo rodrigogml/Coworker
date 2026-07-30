@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = PROJECT_ROOT / "skills" / "omie-manage" / "scripts" / "omie.py"
+MODULE_PATH = PROJECT_ROOT / "skills" / "omie" / "scripts" / "omie.py"
 SPEC = importlib.util.spec_from_file_location("omie_skill", MODULE_PATH)
 omie = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = omie

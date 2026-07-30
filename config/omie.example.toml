@@ -1,5 +1,8 @@
 api_base = "https://app.omie.com.br/api/v1"
-credential_ref = "APIs/Omie"
 timeout_seconds = 30
 page_size = 100
 max_pages = 20
+default_profile = "default"
+
+[profiles.default]
+credential_ref = "APIs/Omie"

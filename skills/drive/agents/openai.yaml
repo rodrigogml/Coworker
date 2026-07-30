@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Drive"
+  short_description: "Pesquisa e organiza arquivos no Drive"
+  default_prompt: "Use $drive para localizar ou organizar meus arquivos no Google Drive."

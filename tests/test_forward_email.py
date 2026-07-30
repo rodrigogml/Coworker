@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = (
     PROJECT_ROOT
     / "skills"
-    / "forward-email-manage"
+    / "forwardemail"
     / "scripts"
     / "forward_email.py"
 )
@@ -115,6 +115,17 @@ class ForwardEmailTests(unittest.TestCase):
         self.assertEqual(config.api_base, "https://api.forwardemail.net")
         self.assertEqual(config.credential_ref, "APIs/ForwardEmail")
         self.assertEqual(config.timeout_seconds, 25)
+
+    def test_config_rejects_credential_exfiltration_host(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "forwardemail.toml"
+            path.write_text(
+                'api_base = "https://example.com"\n'
+                'credential_ref = "APIs/ForwardEmail"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(forward_email.ForwardEmailToolError):
+                forward_email.load_config(path)
 
     def test_normalizes_domain_and_full_alias_address(self):
         self.assertEqual(

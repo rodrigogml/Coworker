@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Calendar"
+  short_description: "Consulta e organiza compromissos Google"
+  default_prompt: "Use $calendar para consultar ou organizar minha agenda do Google Calendar."

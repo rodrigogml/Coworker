@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = (
-    PROJECT_ROOT / "skills" / "todoist-manage" / "scripts" / "todoist.py"
+    PROJECT_ROOT / "skills" / "todoist" / "scripts" / "todoist.py"
 )
 SPEC = importlib.util.spec_from_file_location("todoist_skill", MODULE_PATH)
 todoist = importlib.util.module_from_spec(SPEC)
@@ -76,6 +76,25 @@ class TodoistTests(unittest.TestCase):
             )
             with self.assertRaises(todoist.TodoistToolError):
                 todoist.load_config(path)
+
+    def test_load_config_selects_profile(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "todoist.toml"
+            path.write_text(
+                'api_base = "https://api.todoist.com/api/v1"\n'
+                "timeout_seconds = 30\n"
+                "page_size = 100\n"
+                "max_pages = 20\n"
+                'default_profile = "pessoal"\n'
+                "[profiles.pessoal]\n"
+                'credential_ref = "APIs/Todoist/Pessoal"\n'
+                "[profiles.empresa]\n"
+                'credential_ref = "APIs/Todoist/Empresa"\n',
+                encoding="utf-8",
+            )
+            config = todoist.load_config(path, "empresa")
+
+        self.assertEqual("APIs/Todoist/Empresa", config.credential_ref)
 
     def test_client_uses_bearer_without_returning_token(self):
         captured = {}

@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = PROJECT_ROOT / "skills" / "notion-manage" / "scripts" / "notion.py"
+MODULE_PATH = PROJECT_ROOT / "skills" / "notion" / "scripts" / "notion.py"
 SPEC = importlib.util.spec_from_file_location("notion_skill", MODULE_PATH)
 notion = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = notion

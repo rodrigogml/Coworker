@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gerenciar Omie"
+  short_description: "Consulte dados do ERP Omie com segurança"
+  default_prompt: "Use $omie para consultar com segurança meus dados no ERP Omie."
