@@ -1,0 +1,3 @@
+api_base = "https://api.forwardemail.net"
+credential_ref = "APIs/ForwardEmail"
+timeout_seconds = 30

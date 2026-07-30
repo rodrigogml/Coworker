@@ -136,17 +136,29 @@ O cofre adotado é o KeePassXC:
 - configuração local em `data/config/secrets.toml`;
 - modelo público em `config/secrets.example.toml`;
 - cofre criptografado dentro de `data/secrets/`;
-- operações da pessoa usuária por `botina-secrets`;
+- operações por `python scripts/credential_vault.py`;
 - senha mestra no Gerenciador de Credenciais do Windows, cadastrada por máquina;
 - referências no SQLite por `--credential-ref`.
+
+Para credenciais simples, usar o campo `Password`. Para autenticação formada por
+identificador e segredo, manter ambos em uma única entrada: identificador em
+`Username` e segredo em `Password`. Scripts devem ler esses campos internamente pela
+ferramenta compartilhada do cofre.
 
 Nunca pedir senha mestra, senha de conta ou token na conversa. Nunca executar comando
 que revele um segredo no terminal ou o devolva ao modelo. Scripts de integração devem
 obter credenciais internamente, usá-las somente na operação autorizada e sanitizar a
 saída.
 
-Para preparar uma máquina, usar `botina-secrets enroll`. Para remover o desbloqueio
-local, usar `botina-secrets unenroll --confirm`.
+Quando a configuração local estiver ausente, copiar o modelo sem sobrescrever arquivos
+existentes. Localizar `KeePassXC.exe` e `keepassxc-cli.exe` pelos caminhos configurados,
+pelo `PATH` e por diretórios conhecidos da instalação atual. O agente pode registrar
+os caminhos encontrados em `data/config/secrets.toml`, pois são configurações locais
+não confidenciais. Nunca gravar caminhos pessoais no modelo público.
+
+Para preparar uma máquina, usar `python scripts/credential_vault.py enroll`. Para
+remover o desbloqueio local, usar
+`python scripts/credential_vault.py unenroll --confirm`.
 
 ### Qualidade da memória
 
@@ -194,15 +206,56 @@ Scripts devem:
 - ser seguros para execução repetida sempre que possível;
 - detectar configuração ausente e retornar orientação acionável.
 
+Executar scripts do repositório diretamente por `python <caminho-do-script>`. Não
+criar wrappers, atalhos ou comandos auxiliares fora do repositório. Dependências
+externas devem ser localizadas e registradas em arquivos privados de configuração
+derivados dos modelos públicos.
+
 ### Cloudflare
 
 Para zonas e registros DNS da Cloudflare, usar
-`skills/cloudflare-manage/SKILL.md` e o comando `cloudflare`. A credencial deve ser
-obtida diretamente do cofre, nunca aceita ou revelada como argumento.
+`skills/cloudflare-manage/SKILL.md` e executar
+`python skills/cloudflare-manage/scripts/cloudflare.py`. A credencial deve ser obtida
+diretamente do cofre, nunca aceita ou revelada como argumento.
 
 A autorização para modificar a Cloudflare deve vir do pedido explícito e atual. Não
 exigir códigos ou confirmações que o próprio agente possa produzir. `--dry-run` é
 somente uma prévia técnica e não constitui autorização.
+
+### Forward Email
+
+Para domínios e aliases do Forward Email, usar
+`skills/forward-email-manage/SKILL.md` e executar
+`python skills/forward-email-manage/scripts/forward_email.py`. A credencial deve ser
+obtida diretamente do cofre, nunca aceita ou revelada como argumento.
+
+A autorização para criar, alterar ou excluir domínios e aliases deve vir do pedido
+explícito e atual. Esta skill não envia mensagens nem gera senhas. `--dry-run` é
+somente uma prévia técnica e não constitui autorização.
+
+### Omie
+
+Para consultar o ERP Omie, usar `skills/omie-manage/SKILL.md` e executar
+`python skills/omie-manage/scripts/omie.py`. App Key e App Secret devem permanecer em
+uma única entrada do KeePassXC: App Key no campo `Username` e App Secret no campo
+`Password`. O script deve obter ambos internamente.
+
+A versão atual da skill é somente de leitura. Não improvisar chamadas, métodos ou
+parâmetros diretamente contra a API. Inclusões, alterações, exclusões, baixas,
+conciliações, faturamentos e emissões exigem implementação específica e autorização
+explícita e atual.
+
+### Todoist
+
+Para tarefas, projetos, seções e etiquetas do Todoist, usar
+`skills/todoist-manage/SKILL.md` e executar
+`python skills/todoist-manage/scripts/todoist.py`. O token deve permanecer na entrada
+`APIs/Todoist` do KeePassXC e ser obtido internamente pelo script.
+
+Consultas podem ser executadas dentro do escopo solicitado. Criações, alterações,
+movimentações, conclusões, reaberturas, arquivamentos e exclusões devem vir do pedido
+explícito e atual. Não exigir códigos que o próprio agente possa produzir. `--dry-run`
+é somente uma prévia técnica e não constitui autorização.
 
 ## SQLite
 

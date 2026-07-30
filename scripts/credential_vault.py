@@ -326,15 +326,18 @@ def verify_master_password(
     return completed.returncode == 0
 
 
-def read_entry_secret(
+def _read_entry_attributes(
     entry: str,
+    attributes: tuple[str, ...],
     *,
     cli_path: Path | None = None,
     vault_path: Path | None = None,
     credential_target: str | None = None,
     config_path: Path = DEFAULT_CONFIG,
-) -> str:
-    """Obtém internamente um segredo para uso por um script de integração."""
+) -> tuple[str, ...]:
+    """Obtém atributos conhecidos de uma entrada sem escrevê-los no terminal."""
+    if not attributes:
+        raise VaultToolError("Ao menos um atributo da credencial deve ser solicitado.")
     if cli_path is None or vault_path is None or credential_target is None:
         config = load_vault_config(config_path)
         cli_path = cli_path or config.cli_path
@@ -345,13 +348,17 @@ def read_entry_secret(
     require_file(vault_path, "Cofre")
     master_password = read_windows_credential(credential_target)
     try:
+        attribute_arguments = [
+            item
+            for attribute in attributes
+            for item in ("--attributes", attribute)
+        ]
         completed = run_keepassxc(
             cli_path,
             [
                 "show",
                 "--show-protected",
-                "--attributes",
-                "Password",
+                *attribute_arguments,
                 str(vault_path),
                 normalized_entry,
             ],
@@ -363,7 +370,55 @@ def read_entry_secret(
         raise VaultToolError(
             f"Não foi possível acessar a credencial '{normalized_entry}'."
         )
-    return completed.stdout.rstrip("\r\n")
+    values = tuple(completed.stdout.splitlines())
+    if len(values) != len(attributes):
+        raise VaultToolError(
+            f"A credencial '{normalized_entry}' não contém os campos esperados."
+        )
+    return values
+
+
+def read_entry_secret(
+    entry: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> str:
+    """Obtém internamente a senha de uma entrada para uma integração."""
+    return _read_entry_attributes(
+        entry,
+        ("Password",),
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )[0]
+
+
+def read_entry_credentials(
+    entry: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> tuple[str, str]:
+    """Obtém internamente usuário e senha de uma única entrada."""
+    username, password = _read_entry_attributes(
+        entry,
+        ("Username", "Password"),
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )
+    if not username or not password:
+        raise VaultToolError(
+            f"A credencial '{validate_entry_path(entry)}' exige usuário e senha."
+        )
+    return username, password
 
 
 def launch_interactive(

@@ -149,6 +149,81 @@ class CredentialVaultTest(unittest.TestCase):
         self.assertFalse(result["interactive"])
         self.assertNotIn("senha-de-teste", str(result))
 
+    def test_reads_username_and_password_from_one_entry(self) -> None:
+        """Uma integração obtém o par composto em uma única consulta ao cofre."""
+        self.vault.touch()
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="usuario-de-teste\nsenha-de-teste\n",
+            stderr="",
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=completed,
+            ) as run_keepassxc,
+        ):
+            credentials = CREDENTIAL_VAULT.read_entry_credentials(
+                "APIs/Omie",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="BOTina/Test",
+            )
+
+        self.assertEqual(("usuario-de-teste", "senha-de-teste"), credentials)
+        arguments = run_keepassxc.call_args.args[1]
+        self.assertEqual(
+            [
+                "show",
+                "--show-protected",
+                "--attributes",
+                "Username",
+                "--attributes",
+                "Password",
+                str(self.vault),
+                "APIs/Omie",
+            ],
+            arguments,
+        )
+
+    def test_composed_credential_requires_both_fields(self) -> None:
+        """Uma entrada incompleta falha sem incluir o valor presente na mensagem."""
+        self.vault.touch()
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="\nsegredo-que-nao-pode-vazar\n",
+            stderr="",
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=completed,
+            ),
+            self.assertRaises(CREDENTIAL_VAULT.VaultToolError) as raised,
+        ):
+            CREDENTIAL_VAULT.read_entry_credentials(
+                "APIs/Omie",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="BOTina/Test",
+            )
+
+        self.assertNotIn("segredo-que-nao-pode-vazar", str(raised.exception))
+
     def test_unenroll_requires_confirmation(self) -> None:
         """A senha cadastrada não pode ser removida acidentalmente."""
         arguments = self.arguments()

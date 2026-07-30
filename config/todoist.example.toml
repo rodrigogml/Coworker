@@ -1,0 +1,5 @@
+api_base = "https://api.todoist.com/api/v1"
+credential_ref = "APIs/Todoist"
+timeout_seconds = 30
+page_size = 100
+max_pages = 20
