@@ -257,6 +257,19 @@ movimentações, conclusões, reaberturas, arquivamentos e exclusões devem vir 
 explícito e atual. Não exigir códigos que o próprio agente possa produzir. `--dry-run`
 é somente uma prévia técnica e não constitui autorização.
 
+### Notion
+
+Para buscar, ler, criar e editar notas e páginas do Notion, usar
+`skills/notion-manage/SKILL.md` e executar
+`python skills/notion-manage/scripts/notion.py`. O token deve permanecer na entrada
+`APIs/Notion` do KeePassXC e ser obtido internamente pelo script.
+
+Consultas podem ser executadas dentro do escopo solicitado. Criações, edições,
+substituições, envio à lixeira e restaurações devem vir do pedido explícito e atual.
+Preferir edição pontual à substituição integral. A busca nativa pesquisa títulos;
+para conteúdo, usar a varredura limitada descrita na skill. `--dry-run` é somente uma
+prévia técnica e não constitui autorização.
+
 ## SQLite
 
 A memória estruturada usa `data/memory.sqlite3` e deve ser acessada por

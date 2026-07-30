@@ -22,6 +22,7 @@ permanecem em `data/`, fora do Git.
 - gerenciamento de domínios e aliases do Forward Email;
 - consultas ao ERP Omie;
 - gerenciamento de tarefas, projetos, seções e etiquetas do Todoist;
+- busca, leitura, criação e edição de notas do Notion;
 - base para novas skills pessoais.
 
 ## Estrutura
@@ -36,6 +37,7 @@ BOTina/
 │   ├── cloudflare.example.toml
 │   ├── forwardemail.example.toml
 │   ├── omie.example.toml
+│   ├── notion.example.toml
 │   ├── todoist.example.toml
 │   ├── memory-policy.yaml
 │   └── secrets.example.toml
@@ -97,6 +99,7 @@ $modelos = @{
   "config/cloudflare.example.toml" = "data/config/cloudflare.toml"
   "config/forwardemail.example.toml" = "data/config/forwardemail.toml"
   "config/omie.example.toml" = "data/config/omie.toml"
+  "config/notion.example.toml" = "data/config/notion.toml"
   "config/todoist.example.toml" = "data/config/todoist.toml"
   "templates/memory/README.md" = "data/memory/README.md"
   "templates/memory/profile.md" = "data/memory/profile.md"
@@ -147,6 +150,10 @@ arquivo.
 `data/config/todoist.toml` contém somente o endpoint oficial, a referência
 `APIs/Todoist` e limites de paginação. Nunca gravar o token nesse arquivo.
 
+`data/config/notion.toml` contém somente o endpoint e a versão oficial da API, a
+referência `APIs/Notion`, limites de paginação e o intervalo entre requisições. Nunca
+gravar o token ou o conteúdo de notas nesse arquivo.
+
 ### 3. Inicializar a memória
 
 ```powershell
@@ -187,6 +194,8 @@ python scripts/credential_vault.py check "APIs/Omie"
 python skills/omie-manage/scripts/omie.py doctor
 python scripts/credential_vault.py check "APIs/Todoist"
 python skills/todoist-manage/scripts/todoist.py doctor
+python scripts/credential_vault.py check "APIs/Notion"
+python skills/notion-manage/scripts/notion.py doctor
 ```
 
 Se a entrada da Cloudflare não existir, a IA deve orientar:
@@ -219,6 +228,19 @@ python scripts/credential_vault.py add "APIs/Todoist"
 ```
 
 O token pessoal do Todoist deve ser digitado somente na janela aberta pelo comando.
+
+Para o Notion, criar uma integração interna em
+<https://www.notion.so/profile/integrations>, habilitar as capacidades de leitura,
+inserção e atualização de conteúdo e compartilhar com ela as páginas desejadas pelo
+menu de conexões do Notion. Depois, incluir o token confidencialmente:
+
+```powershell
+python scripts/credential_vault.py add "APIs/Notion"
+```
+
+O token deve ser digitado somente na janela aberta pelo comando. Uma integração
+interna não enxerga automaticamente todo o espaço de trabalho: página não
+compartilhada pode aparecer como inexistente.
 
 ## Como agir quando algo estiver ausente
 
@@ -324,6 +346,23 @@ A skill usa a API unificada v1 e cobre tarefas, projetos, seções e etiquetas.
 Alterações exigem autorização explícita na conversa. Exclusões de tarefas, seções e
 projetos podem remover conteúdo descendente; arquivar deve ser preferido quando
 atender ao pedido.
+
+## Notion
+
+```powershell
+python skills/notion-manage/scripts/notion.py pages search --query "Reunião"
+python skills/notion-manage/scripts/notion.py pages get --id ID
+python skills/notion-manage/scripts/notion.py pages find-content `
+  --query "termo interno" --max-pages 10
+python skills/notion-manage/scripts/notion.py pages create `
+  --parent-page-id ID --title "Nova nota" --markdown-file data/work/nova-nota.md
+```
+
+A API busca títulos, não o texto completo das páginas. `find-content` implementa uma
+varredura controlada: seleciona páginas acessíveis, lê o Markdown e devolve somente
+trechos correspondentes. Criações e substituições recebem conteúdo por arquivos
+UTF-8 privados; alterações pontuais usam uma lista JSON de `old_str` e `new_str`.
+Envio à lixeira é reversível, e exclusão permanente não faz parte da skill.
 
 ## Privacidade e publicação
 
