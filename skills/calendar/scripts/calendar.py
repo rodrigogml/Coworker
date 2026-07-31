@@ -183,9 +183,13 @@ def _reminders(args: argparse.Namespace) -> dict[str, Any] | None:
 def doctor(
     client: GoogleApiClient,
     config: GoogleServiceConfig,
-    args: argparse.Namespace,
+    _args: argparse.Namespace,
 ) -> Any:
-    return client.request("GET", f"/calendars/{_calendar_id(config, args.calendar_id)}")
+    return client.request(
+        "GET",
+        "/users/me/calendarList",
+        query={"maxResults": 1},
+    )
 
 
 def calendars_list(

@@ -16,6 +16,15 @@ sys.modules[SPEC.name] = calendar
 SPEC.loader.exec_module(calendar)
 
 
+class FakeClient:
+    def __init__(self):
+        self.requests = []
+
+    def request(self, method, path, *, query=None, payload=None):
+        self.requests.append((method, path, query, payload))
+        return {"items": []}
+
+
 class CalendarTests(unittest.TestCase):
     def config(self):
         return calendar.GoogleServiceConfig(
@@ -89,6 +98,15 @@ class CalendarTests(unittest.TestCase):
         self.assertIn("--profile", help_text)
         self.assertNotIn("--token", help_text)
         self.assertNotIn("--method", help_text)
+
+    def test_doctor_uses_calendar_list_scope(self):
+        client = FakeClient()
+        result = calendar.doctor(client, self.config(), argparse.Namespace())
+        self.assertEqual({"items": []}, result)
+        self.assertEqual(
+            ("GET", "/users/me/calendarList", {"maxResults": 1}, None),
+            client.requests[0],
+        )
 
     def test_recurrence_and_reminders_are_bounded(self):
         args = argparse.Namespace(

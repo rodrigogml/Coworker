@@ -111,6 +111,17 @@ class ContactsTests(unittest.TestCase):
         self.assertNotIn("--token", help_text)
         self.assertNotIn("--method", help_text)
 
+    def test_doctor_uses_contacts_scope(self):
+        client = FakeClient()
+        contacts.doctor(client, self.config(), argparse.Namespace())
+        self.assertEqual("GET", client.requests[0][0])
+        self.assertEqual("/people/me/connections", client.requests[0][1])
+        self.assertEqual(1, client.requests[0][2]["pageSize"])
+        self.assertEqual(
+            "READ_SOURCE_TYPE_CONTACT",
+            client.requests[0][2]["sources"],
+        )
+
     def test_group_members_rejects_same_contact_in_both_sets(self):
         args = argparse.Namespace(
             group_resource="contactGroups/friends",

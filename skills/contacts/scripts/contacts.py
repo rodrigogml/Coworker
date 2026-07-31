@@ -103,8 +103,12 @@ def doctor(
 ) -> Any:
     return client.request(
         "GET",
-        "/people/me",
-        query={"personFields": _fields(config)},
+        "/people/me/connections",
+        query={
+            "personFields": _fields(config),
+            "pageSize": 1,
+            "sources": "READ_SOURCE_TYPE_CONTACT",
+        },
     )
 
 
