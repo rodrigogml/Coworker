@@ -1,0 +1,16 @@
+default_profile = "default"
+
+[portal]
+allowed_host = "contadigital.cpfl.com.br"
+allowed_path = "/Boleto/boletolink.aspx"
+timeout_seconds = 30
+
+[mail]
+sender = "contadigital@cpfl.com.br"
+search_days = 120
+search_limit = 20
+
+[profiles.default]
+gmail_profile = "default"
+entity_ref = "Pessoas/Fisicas/Nome da Pessoa"
+consumer_unit = ""

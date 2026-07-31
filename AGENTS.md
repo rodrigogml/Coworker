@@ -369,6 +369,22 @@ Os quatro serviços compartilham os perfis definidos em `data/config/google.toml
 Quando os escopos forem ampliados, orientar nova execução de
 `python scripts/google_accounts.py enroll --profile NOME`.
 
+### CPFL
+
+Para contas digitais da CPFL, usar `skills/cpfl/SKILL.md` e executar
+`python skills/cpfl/scripts/cpfl.py --profile NOME`. A skill compõe Gmail e o cadastro
+protegido da pessoa titular; CPF nunca deve ser aceito como argumento.
+
+`latest` localiza somente mensagens autenticadas do remetente oficial. `payment-data`
+obtém PIX e linha digitável sem reCAPTCHA, grava os valores exclusivamente dentro de
+`data/` e devolve somente validações e o caminho do arquivo. Obter esses dados não
+autoriza pagamento.
+
+O PDF exige navegador e reCAPTCHA. Não improvisar bypass, não expor o link individual
+e seguir a confirmação específica do navegador antes de resolver CAPTCHA. Quando
+houver desafio visual, entregar a aba à pessoa usuária. Depois do download, usar uma
+skill genérica de PDF para extração.
+
 ## SQLite
 
 A memória estruturada usa `data/memory.sqlite3` e deve ser acessada por

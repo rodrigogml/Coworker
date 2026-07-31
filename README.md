@@ -28,6 +28,7 @@ permanecem em `data/`, fora do Git.
 - consulta de disponibilidade e gestão de eventos no Google Calendar;
 - pesquisa, transferência, organização e compartilhamento no Google Drive;
 - pesquisa e manutenção de contatos pessoais pelo Google Contacts;
+- consulta de contas digitais, PIX e linha digitável da CPFL;
 - base para novas skills pessoais.
 
 ## Estrutura
@@ -42,6 +43,7 @@ BOTina/
 │   ├── cloudflare.example.toml
 │   ├── calendar.example.toml
 │   ├── contacts.example.toml
+│   ├── cpfl.example.toml
 │   ├── drive.example.toml
 │   ├── forwardemail.example.toml
 │   ├── gmail.example.toml
@@ -117,6 +119,7 @@ $modelos = @{
   "config/calendar.example.toml" = "data/config/calendar.toml"
   "config/cloudflare.example.toml" = "data/config/cloudflare.toml"
   "config/contacts.example.toml" = "data/config/contacts.toml"
+  "config/cpfl.example.toml" = "data/config/cpfl.toml"
   "config/drive.example.toml" = "data/config/drive.toml"
   "config/forwardemail.example.toml" = "data/config/forwardemail.toml"
   "config/gmail.example.toml" = "data/config/gmail.toml"
@@ -197,6 +200,9 @@ e-mails de contas ficam somente em `data/`; os modelos públicos usam `default`.
 OAuth e os perfis de contas Google. Os arquivos `calendar.toml`, `contacts.toml`,
 `drive.toml` e `gmail.toml` contêm somente parâmetros operacionais de suas APIs.
 Client Secret, refresh tokens e access tokens nunca devem ser gravados nesses arquivos.
+
+`data/config/cpfl.toml` relaciona um perfil Gmail à entrada protegida da pessoa titular.
+O modelo público não contém nomes, unidades consumidoras ou referências pessoais.
 
 ### 3. Inicializar a memória
 
@@ -320,6 +326,7 @@ python skills/gmail/scripts/gmail.py --profile default doctor
 python skills/calendar/scripts/calendar.py --profile default doctor
 python skills/drive/scripts/drive.py --profile default doctor
 python skills/contacts/scripts/contacts.py --profile default doctor
+python skills/cpfl/scripts/cpfl.py --profile default doctor
 ```
 
 Se a entrada da Cloudflare não existir, a IA deve orientar:
@@ -552,6 +559,23 @@ permanente não é oferecida.
 Cada execução troca o refresh token armazenado no KeePassXC por um access token
 temporário. O refresh token não é devolvido ao agente e o access token é descartado ao
 final do processo.
+
+## CPFL
+
+```powershell
+python skills/cpfl/scripts/cpfl.py --profile pessoal doctor
+python skills/cpfl/scripts/cpfl.py --profile pessoal latest
+python skills/cpfl/scripts/cpfl.py --profile pessoal payment-data
+```
+
+A skill pesquisa somente mensagens autenticadas de `contadigital@cpfl.com.br`, valida
+o link individual contra uma allowlist fechada e obtém os quatro primeiros dígitos do
+CPF diretamente do cofre. `payment-data` salva PIX e linha digitável em
+`data/work/cpfl/`; esses valores não aparecem no JSON devolvido ao agente.
+
+O PDF usa reCAPTCHA e requer navegador. A automação deve seguir o fluxo de CAPTCHA do
+navegador e nunca tentar contornar o controle. Obter dados da conta não autoriza
+pagamento.
 
 ## Google Calendar
 
