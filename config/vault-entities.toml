@@ -1,0 +1,119 @@
+version = 1
+
+[vault]
+root_group = "Pessoas"
+physical_person_group = "Pessoas/Fisicas"
+legal_entity_group = "Pessoas/Juridicas"
+attribute_names_case_sensitive = true
+empty_password = true
+
+[normalization]
+dates = "YYYY-MM-DD"
+tax_identifiers = "digits_only"
+state_codes = "ISO_3166-2_BR_subdivision_without_country_prefix"
+attribute_names = "UPPER_SNAKE_CASE_ASCII"
+
+[titles]
+unique_within_group = true
+partial_name_pattern = "{NOME_CONHECIDO} ({REFERENCIA})"
+complete_name_pattern = "{NOME_CIVIL_COMPLETO}"
+complete_name_with_reference_pattern = "{NOME_CIVIL_COMPLETO} ({REFERENCIA})"
+reference_parentheses_required = true
+reference_quotes_allowed = false
+reference_must_be_short_stable_and_non_sensitive = true
+
+[entity_types.PESSOA_FISICA]
+group = "Pessoas/Fisicas"
+title = "Nome civil completo"
+
+[entity_types.PESSOA_FISICA.attributes.NOME_TIPO]
+description = "Qualidade do nome usado no titulo da entrada"
+required = true
+protected = false
+allowed_values = ["PARCIAL", "COMPLETO"]
+
+[entity_types.PESSOA_FISICA.attributes.REFERENCIA]
+description = "Referencia curta usada para identificar ou desambiguar a pessoa"
+required = false
+required_when = "NOME_TIPO=PARCIAL"
+protected = false
+normalization = "trim"
+
+[entity_types.PESSOA_FISICA.attributes.CPF]
+description = "Cadastro de Pessoa Fisica"
+required = false
+protected = true
+pattern = "^[0-9]{11}$"
+validation = "cpf_checksum"
+
+[entity_types.PESSOA_FISICA.attributes.DATA_NASCIMENTO]
+description = "Data de nascimento"
+required = false
+protected = true
+format = "YYYY-MM-DD"
+
+[entity_types.PESSOA_FISICA.attributes.RG]
+description = "Numero do documento de identidade"
+required = false
+protected = true
+normalization = "trim"
+
+[entity_types.PESSOA_FISICA.attributes.RG_ORGAO_EMISSOR]
+description = "Orgao emissor do documento de identidade"
+required = false
+protected = true
+normalization = "uppercase_trim"
+
+[entity_types.PESSOA_FISICA.attributes.RG_UF]
+description = "UF de emissao do documento de identidade"
+required = false
+protected = true
+pattern = "^[A-Z]{2}$"
+
+[entity_types.PESSOA_FISICA.attributes.NOME_SOCIAL]
+description = "Nome social quando diferente do nome civil"
+required = false
+protected = true
+normalization = "trim"
+
+[entity_types.PESSOA_JURIDICA]
+group = "Pessoas/Juridicas"
+title = "Razao social completa"
+
+[entity_types.PESSOA_JURIDICA.attributes.NOME_TIPO]
+description = "Qualidade da razao social ou nome usado no titulo da entrada"
+required = true
+protected = false
+allowed_values = ["PARCIAL", "COMPLETO"]
+
+[entity_types.PESSOA_JURIDICA.attributes.REFERENCIA]
+description = "Referencia curta usada para identificar ou desambiguar a organizacao"
+required = false
+required_when = "NOME_TIPO=PARCIAL"
+protected = false
+normalization = "trim"
+
+[entity_types.PESSOA_JURIDICA.attributes.CNPJ]
+description = "Cadastro Nacional da Pessoa Juridica"
+required = false
+protected = true
+pattern = "^[0-9]{14}$"
+validation = "cnpj_checksum"
+
+[entity_types.PESSOA_JURIDICA.attributes.NOME_FANTASIA]
+description = "Nome fantasia"
+required = false
+protected = false
+normalization = "trim"
+
+[entity_types.PESSOA_JURIDICA.attributes.INSCRICAO_ESTADUAL]
+description = "Inscricao estadual sem pontuacao decorativa"
+required = false
+protected = true
+normalization = "uppercase_alphanumeric"
+
+[entity_types.PESSOA_JURIDICA.attributes.INSCRICAO_MUNICIPAL]
+description = "Inscricao municipal sem pontuacao decorativa"
+required = false
+protected = true
+normalization = "uppercase_alphanumeric"

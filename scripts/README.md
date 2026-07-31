@@ -81,3 +81,22 @@ argumentos.
 do Windows com persistência local à máquina. O cofre pode ser sincronizado pelo
 provedor escolhido pela pessoa usuária; o cadastro local deve ser repetido em cada
 computador.
+
+## Entidades no cofre
+
+`vault_entities.py` lê e grava os atributos personalizados definidos em
+`config/vault-entities.toml`. A ferramenta exige PyKeePass e recusa gravações enquanto
+a interface KeePassXC estiver aberta.
+
+```powershell
+python scripts/vault_entities.py inspect `
+  --entry "Pessoas/Fisicas/Nome da Pessoa"
+
+python scripts/vault_entities.py set `
+  --entry "Pessoas/Fisicas/Nome da Pessoa" `
+  --attribute CPF --prompt
+```
+
+`inspect` informa somente presença e proteção, nunca valores. Scripts de integração
+devem importar `read_entry_attribute` e descartar o valor assim que a operação terminar.
+Valores sensíveis entram por prompt ou entrada padrão e nunca por argumentos.

@@ -50,7 +50,8 @@ BOTina/
 │   ├── notion.example.toml
 │   ├── todoist.example.toml
 │   ├── memory-policy.yaml
-│   └── secrets.example.toml
+│   ├── secrets.example.toml
+│   └── vault-entities.toml
 ├── data/                         # privado e ignorado pelo Git
 │   ├── config/
 │   ├── memory/
@@ -69,12 +70,19 @@ BOTina/
 - Windows 10 ou 11 para a integração atual com o Gerenciador de Credenciais;
 - Python 3.11 ou superior disponível como `python`;
 - KeePassXC e `keepassxc-cli` para o cofre;
+- dependências Python declaradas em `requirements.txt`;
 - Git apenas para versionar o núcleo público;
 - acesso à internet somente para integrações que precisem de APIs.
 
 SQLite já faz parte do Python; não é necessário instalar um executável separado.
-As ferramentas atuais usam somente a biblioteca padrão do Python e não exigem
-`pip install`.
+Instalar as dependências Python antes do bootstrap:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+PyKeePass permite que a BOTina leia e grave atributos personalizados protegidos no
+arquivo KDBX. As demais ferramentas continuam preferindo a biblioteca padrão.
 
 Antes do bootstrap, a IA deve diagnosticar o ambiente:
 
@@ -208,6 +216,79 @@ python scripts/credential_vault.py enroll
 `create` somente deve ser usado quando o cofre ainda não existir. `enroll` abre um
 console separado para a pessoa usuária digitar a senha mestra; ela nunca deve ser
 pedida na conversa.
+
+### Cadastrar pessoas e organizações
+
+O arquivo `config/vault-entities.toml` é o contrato público dos cadastros pessoais.
+Ele define grupos, nomes de atributos, formatos e quais campos devem ser protegidos.
+O arquivo contém somente o modelo, nunca valores reais.
+
+Organizar as entradas assim:
+
+```text
+Pessoas/
+├── Fisicas/
+│   └── Nome civil completo
+└── Juridicas/
+    └── Razao social completa
+```
+
+Toda entrada usa `NOME_TIPO`, com valor `COMPLETO` ou `PARCIAL`. Quando o nome completo
+não for conhecido, `REFERENCIA` também é obrigatória e integra o título entre
+parênteses:
+
+```text
+Gustavo (Padaria Central)
+João (Azulejista)
+Marco Antônio (Salgadeiro)
+```
+
+Não usar aspas, dados sensíveis ou características passageiras como referência. Se
+ainda houver colisão, acrescentar contexto estável, como
+`Gustavo (Padaria Central - Centro)`. Os títulos devem ser únicos dentro de cada grupo,
+pois as ferramentas da BOTina os acessam pelo caminho completo.
+
+Quando o nome completo se tornar conhecido, atualizar `NOME_TIPO` para `COMPLETO`. A
+referência pode continuar no título e no atributo `REFERENCIA` quando ainda ajudar na
+identificação. Toda renomeação exige atualização das referências ao caminho da entrada.
+
+Para pessoa física, usar também somente os atributos aplicáveis dentre `CPF`,
+`DATA_NASCIMENTO`, `RG`, `RG_ORGAO_EMISSOR`, `RG_UF` e `NOME_SOCIAL`. Para pessoa
+jurídica, usar `CNPJ`, `NOME_FANTASIA`, `INSCRICAO_ESTADUAL` e
+`INSCRICAO_MUNICIPAL`. Campos opcionais desconhecidos podem permanecer ausentes; não
+devem ser criados vazios.
+
+> [!IMPORTANT]
+> Marque na interface do KeePassXC todos os atributos que possuem
+> `protected = true`. O cofre é criptografado em repouso, mas essa proteção adicional
+> evita que uma consulta genérica mostre o valor quando o cofre estiver desbloqueado.
+
+CPF e CNPJ são salvos somente com dígitos, datas usam `YYYY-MM-DD` e UFs usam duas
+letras maiúsculas. Os campos padrão `Username`, `Password`, `URL` e `Notes` permanecem
+vazios. Antes de adotar um novo atributo recorrente, acrescente sua definição ao
+contrato para evitar grafias incompatíveis entre entradas.
+
+O agente pode inspecionar e gravar os atributos sem revelar seus valores:
+
+```powershell
+python scripts/vault_entities.py inspect `
+  --entry "Pessoas/Fisicas/Nome da Pessoa"
+
+python scripts/vault_entities.py set `
+  --entry "Pessoas/Fisicas/Nome da Pessoa" `
+  --attribute CPF --prompt
+```
+
+`--prompt` é o fluxo indicado para digitação humana. Automações autorizadas podem usar
+`--stdin`, nunca um argumento de linha de comando. O KeePassXC deve estar fechado
+durante a gravação para impedir que duas aplicações salvem versões concorrentes do
+mesmo cofre.
+
+O cofre não substitui a memória relacional. SQLite e Markdown podem registrar que uma
+pessoa é titular de uma unidade, a finalidade de uma conta e a referência da entrada
+no KeePassXC. CPF, RG, CNPJ e demais valores protegidos permanecem exclusivamente no
+cofre. Uma skill deve buscar somente o atributo necessário, usá-lo em memória durante
+a operação autorizada e nunca exibi-lo ou copiá-lo para logs e bancos.
 
 Quando o KeePassXC não estiver disponível, a IA deve:
 

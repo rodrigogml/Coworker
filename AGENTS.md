@@ -140,10 +140,65 @@ O cofre adotado é o KeePassXC:
 - senha mestra no Gerenciador de Credenciais do Windows, cadastrada por máquina;
 - referências no SQLite por `--credential-ref`.
 
+Propriedades de pessoas e organizações são manipuladas por
+`python scripts/vault_entities.py`. Essa ferramenta usa PyKeePass para escrever
+atributos personalizados, pois o `keepassxc-cli` atual oferece leitura, mas não edição
+desses campos. Antes de qualquer gravação, a interface do KeePassXC deve estar fechada
+para evitar concorrência sobre o arquivo. Skills podem importar
+`read_entry_attribute` para obter somente o valor necessário em memória.
+
 Para credenciais simples, usar o campo `Password`. Para autenticação formada por
 identificador e segredo, manter ambos em uma única entrada: identificador em
 `Username` e segredo em `Password`. Scripts devem ler esses campos internamente pela
 ferramenta compartilhada do cofre.
+
+### Pessoas físicas e jurídicas no cofre
+
+Dados identificadores de pessoas físicas e jurídicas devem seguir o contrato público
+em `config/vault-entities.toml`. Usar os grupos `Pessoas/Fisicas` e
+`Pessoas/Juridicas`, com o nome civil completo ou a razão social completa como título
+da entrada. Manter `Username`, `Password`, `URL` e `Notes` vazios nessas entradas;
+registrar os dados somente nos atributos personalizados definidos pelo contrato.
+
+Os nomes dos atributos são sensíveis a maiúsculas e minúsculas e devem ser usados
+exatamente como definidos. CPF e CNPJ devem conter somente dígitos, datas devem usar
+`YYYY-MM-DD` e UFs devem usar duas letras maiúsculas. Todo atributo marcado como
+`protected = true` deve também ser protegido na interface do KeePassXC.
+
+Toda entrada deve possuir `NOME_TIPO`, com `COMPLETO` quando o título contiver o nome
+civil ou a razão social completa e `PARCIAL` quando houver apenas um nome conhecido.
+No segundo caso, `REFERENCIA` é obrigatória e o título deve seguir
+`Nome conhecido (Referência)`, por exemplo `João (Azulejista)`. Usar parênteses, não
+aspas. A referência deve ser curta, estável, não sensível e baseada preferencialmente
+em organização, local, ocupação ou relação conhecida.
+
+Títulos devem ser únicos dentro do grupo. Se uma referência ainda produzir colisão,
+acrescentar contexto não sensível, como `Gustavo (Padaria Central - Centro)`. Nunca
+usar CPF, telefone ou outro identificador sensível para diferenciar títulos. Quando o
+nome completo for conhecido, atualizar `NOME_TIPO`, preservar `REFERENCIA` quando ela
+continuar útil e atualizar todas as referências ao caminho que forem afetadas pela
+renomeação.
+
+Não criar variações, abreviações ou novos atributos recorrentes diretamente no cofre.
+Quando surgir uma necessidade nova, atualizar primeiro o contrato público, sem incluir
+valores pessoais. Não armazenar partes deriváveis, como os quatro primeiros dígitos de
+um CPF, quando a ferramenta puder obtê-las do valor completo durante a operação.
+
+O KeePassXC guarda identificadores e atributos pessoais sensíveis. O SQLite e a memória
+guardam relações, classificações, regras operacionais e a referência da entrada, mas
+não devem duplicar os valores protegidos. Endereços completos ou outros dados pessoais
+sensíveis que venham a ser necessários exigem definição explícita de armazenamento
+protegido antes do registro.
+
+Skills devem solicitar internamente apenas os atributos necessários para a operação e
+nunca listar a entrada inteira, imprimir os valores no terminal, devolvê-los ao modelo
+ou persistir valores derivados. A leitura ou gravação de dados pessoais exige escopo e
+autorização explícitos no pedido atual.
+
+Para escrita manual, usar `vault_entities.py set` com `--prompt`; para automações que
+já receberam o valor por canal autorizado, usar `--stdin`. Nunca aceitar valores em
+argumentos. `inspect` informa somente presença e proteção dos campos. Não abrir nem
+manter o KeePassXC aberto durante uma gravação feita por essa ferramenta.
 
 Nunca pedir senha mestra, senha de conta ou token na conversa. Nunca executar comando
 que revele um segredo no terminal ou o devolva ao modelo. Scripts de integração devem
