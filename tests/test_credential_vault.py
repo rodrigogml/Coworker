@@ -29,7 +29,7 @@ class CredentialVaultTest(unittest.TestCase):
         """Cria executáveis e cofre descartáveis."""
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        root = Path(self.temporary_directory.name)
+        root = Path(self.temporary_directory.name).resolve()
         self.gui = root / "KeePassXC.exe"
         self.cli = root / "keepassxc-cli.exe"
         self.vault = root / "vault.kdbx"

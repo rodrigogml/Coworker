@@ -151,7 +151,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_detects_keepassxc_siblings_from_existing_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             gui = root / "KeePassXC.exe"
             cli = root / "keepassxc-cli.exe"
             gui.touch()
