@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from google_api import validate_api_base
+from integration_config import missing_config_message
 
 
 @dataclass(frozen=True)
@@ -37,8 +38,7 @@ def load_service_config(
         values = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ValueError(
-            f"Configuração {service} não encontrada em '{path}'. Copie "
-            f"'{example_path}' para '{default_path}'."
+            missing_config_message(default_path.stem, path)
         ) from exc
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(

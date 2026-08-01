@@ -174,6 +174,18 @@ O sandbox inicial concede leitura ao diretório do projeto, escrita somente em `
 execução dos pontos de entrada públicos das skills e nenhuma rede. A rede pode ser
 habilitada posteriormente, quando uma integração configurada realmente precisar dela.
 
+Configurações privadas de integrações são inicializadas sem PowerShell e sem alterar o
+repositório. O catálogo e os comandos disponíveis podem ser consultados por:
+
+```powershell
+python scripts/integration_config.py list
+python scripts/integration_config.py init omie
+```
+
+Cada comando copia somente seu modelo público para `data/config/`, informa `created`
+ou `already_exists` e nunca sobrescreve personalizações locais. As skills indicam os
+modelos necessários, inclusive o arquivo Google compartilhado quando aplicável.
+
 ## Bootstrap manual da instância local
 
 Uma IA deve executar estas etapas de forma idempotente. Arquivos existentes nunca

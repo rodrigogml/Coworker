@@ -173,24 +173,19 @@ class GoogleAccountsTests(unittest.TestCase):
         with patch.object(
             google,
             "read_entry_credentials",
-            side_effect=[
-                ("client-id-publico.apps.googleusercontent.com", "client-secret"),
-                ("pessoal@example.com", "refresh-secreto"),
-            ],
-        ) as read:
-            access = google.refresh_google_access(
-                self.config(),
-                "pessoal",
-                opener=opener,
-            )
+            return_value=("pessoal@example.com", "refresh-secreto"),
+        ) as read, patch.object(
+            google,
+            "read_entry_secret",
+            return_value="client-secret",
+        ) as read_secret:
+            access = google.refresh_google_access(self.config(), "pessoal", opener=opener)
 
         self.assertEqual(
-            [
-                ("APIs/Google/OAuthClient",),
-                ("APIs/Google/Accounts/Pessoal",),
-            ],
+            [("APIs/Google/Accounts/Pessoal",)],
             [call.args for call in read.call_args_list],
         )
+        read_secret.assert_called_once_with("APIs/Google/OAuthClient")
         token_body = requests[0].data.decode("ascii")
         self.assertIn(
             "client_id=client-id-publico.apps.googleusercontent.com",
@@ -202,13 +197,13 @@ class GoogleAccountsTests(unittest.TestCase):
         access.close()
         self.assertEqual("", access.access_token)
 
-    def test_vault_client_must_match_public_client(self):
+    def test_legacy_config_reads_client_id_and_secret_from_vault(self):
         config = self.config()
         config = google.GoogleConfig(
             authorization_endpoint=config.authorization_endpoint,
             token_endpoint=config.token_endpoint,
             userinfo_endpoint=config.userinfo_endpoint,
-            client_id=config.client_id,
+            client_id="",
             client_credential_ref="APIs/Google/OAuthClient",
             timeout_seconds=config.timeout_seconds,
             authorization_timeout_seconds=config.authorization_timeout_seconds,
@@ -218,10 +213,12 @@ class GoogleAccountsTests(unittest.TestCase):
         with patch.object(
             google,
             "read_entry_credentials",
-            return_value=("client-id-privado", "client-secret"),
+            return_value=("client-id-vault", "client-secret"),
         ):
-            with self.assertRaises(google.GoogleAccountError):
-                google._read_oauth_client(config)
+            self.assertEqual(
+                ("client-id-vault", "client-secret"),
+                google._read_oauth_client(config),
+            )
 
     def test_launch_enrollment_never_passes_credentials(self):
         with patch.object(google.subprocess, "Popen") as popen:

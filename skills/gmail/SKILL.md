@@ -9,6 +9,15 @@ Usar `python skills/gmail/scripts/gmail.py`. Selecionar a conta com `--profile`
 e obter OAuth internamente por `scripts/google_accounts.py`; nunca aceitar tokens em
 argumentos ou respostas.
 
+## Inicializar a configuração
+
+Quando algum arquivo estiver ausente, inicializar os dois modelos sem sobrescrever:
+
+```powershell
+python scripts/integration_config.py init google
+python scripts/integration_config.py init gmail
+```
+
 ## Executar o fluxo
 
 1. Usar `python scripts/google_accounts.py list` para conhecer os perfis locais.

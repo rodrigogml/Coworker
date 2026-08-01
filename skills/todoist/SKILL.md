@@ -9,6 +9,14 @@ Usar exclusivamente `python skills/todoist/scripts/todoist.py`. Obter o token
 da entrada `APIs/Todoist` do KeePassXC e nunca aceitá-lo em argumentos ou respostas.
 Quando houver várias contas, selecionar a referência com `--profile NOME`.
 
+## Inicializar a configuração
+
+```powershell
+python scripts/integration_config.py init todoist
+```
+
+O comando cria somente `data/config/todoist.toml` quando ele ainda não existe.
+
 ## Executar o fluxo
 
 1. Usar `doctor` quando for necessário diagnosticar autenticação.

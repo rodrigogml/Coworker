@@ -33,6 +33,7 @@ from google_accounts import (  # noqa: E402
     require_google_scopes,
     refresh_google_access,
 )
+from integration_config import missing_config_message  # noqa: E402
 
 
 ALLOWED_API_HOST = "gmail.googleapis.com"
@@ -69,8 +70,7 @@ def load_config(path: Path) -> GmailConfig:
         values = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise GmailToolError(
-            f"Configuração Gmail não encontrada em '{path}'. Copie "
-            f"'{EXAMPLE_CONFIG}' para '{DEFAULT_CONFIG}'."
+            missing_config_message("gmail", path)
         ) from exc
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise GmailToolError(

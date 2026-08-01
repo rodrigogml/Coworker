@@ -28,6 +28,7 @@ from integration_profiles import (  # noqa: E402
     IntegrationProfileError,
     resolve_credential_ref,
 )
+from integration_config import missing_config_message  # noqa: E402
 
 
 ALLOWED_API_HOST = "api.cloudflare.com"
@@ -92,9 +93,7 @@ def load_config(path: Path, profile: str | None = None) -> CloudflareConfig:
         values = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise CloudflareToolError(
-            f"Configuração local não encontrada em '{path}'. Copie "
-            f"'{EXAMPLE_CONFIG}' para "
-            f"'{PROJECT_ROOT / 'data' / 'config' / 'cloudflare.toml'}'."
+            missing_config_message("cloudflare", path)
         ) from exc
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise CloudflareToolError(

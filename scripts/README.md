@@ -2,6 +2,19 @@
 
 Este diretório contém utilitários usados por mais de uma skill.
 
+## Configurações de integrações
+
+`integration_config.py` copia modelos públicos conhecidos para `data/config/` por um
+ponto de entrada permitido no sandbox restrito. Ele não aceita caminhos arbitrários e
+nunca sobrescreve um arquivo existente.
+
+```powershell
+python scripts/integration_config.py list
+python scripts/integration_config.py init omie
+```
+
+O resultado JSON usa `created` na primeira execução e `already_exists` nas seguintes.
+
 ## Memória SQLite
 
 `memory.py` é a interface oficial de acesso ao banco `data/memory.sqlite3`.

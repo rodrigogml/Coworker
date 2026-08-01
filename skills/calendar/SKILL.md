@@ -8,6 +8,15 @@ description: Consultar disponibilidade, calendários e eventos do Google Calenda
 Usar `python skills/calendar/scripts/calendar.py --profile NOME`. Obter OAuth
 internamente por `scripts/google_accounts.py`; nunca aceitar nem revelar tokens.
 
+## Inicializar a configuração
+
+Quando algum arquivo estiver ausente, inicializar os dois modelos sem sobrescrever:
+
+```powershell
+python scripts/integration_config.py init google
+python scripts/integration_config.py init calendar
+```
+
 ## Executar
 
 1. Listar perfis com `python scripts/google_accounts.py list`.

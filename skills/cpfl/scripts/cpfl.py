@@ -35,6 +35,7 @@ from scripts.integration_profiles import (  # noqa: E402
     IntegrationProfileError,
     validate_profile_name,
 )
+from scripts.integration_config import missing_config_message  # noqa: E402
 from scripts.vault_entities import (  # noqa: E402
     VaultEntityError,
     inspect_entry,
@@ -102,7 +103,7 @@ def load_config(path: Path, requested_profile: str | None = None) -> CpflConfig:
             values = tomllib.load(stream)
     except FileNotFoundError as exc:
         raise CpflError(
-            f"Configuração ausente. Copie '{EXAMPLE_CONFIG}' para '{DEFAULT_CONFIG}'."
+            missing_config_message("cpfl", resolved)
         ) from exc
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise CpflError("Não foi possível carregar a configuração da CPFL.") from exc

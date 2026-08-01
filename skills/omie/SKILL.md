@@ -10,6 +10,15 @@ entrada do KeePassXC, usando `Username` como App Key e `Password` como App Secre
 devolve somente campos operacionais selecionados.
 Quando houver várias empresas, selecionar a referência com `--profile NOME`.
 
+## Inicializar a configuração
+
+```powershell
+python scripts/integration_config.py init omie
+```
+
+O comando cria somente `data/config/omie.toml` quando ele ainda não existe. Se o
+arquivo já existir, informa `already_exists` e preserva seu conteúdo.
+
 ## Respeitar o escopo
 
 - Tratar todos os comandos atuais como somente de leitura.

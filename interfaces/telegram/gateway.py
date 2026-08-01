@@ -51,6 +51,7 @@ from interfaces.telegram.config import (  # noqa: E402
     load_config,
 )
 from interfaces.telegram.identity import IdentityConfigError, InstanceIdentity  # noqa: E402
+from interfaces.telegram.feedback import choose_message  # noqa: E402
 from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
     RestartError,
     spawn_relauncher,
@@ -512,6 +513,8 @@ class Gateway:
             self._queue_album(inbound, message, message_record_id)
             return
         with self.state_lock:
+            jobs = self.state.job_summary()
+            already_busy = bool(jobs["queued"] or jobs["running"])
             job_id = self.state.create_job(
                 update_id, chat_id, request_message_id=message_record_id
             )
@@ -519,7 +522,11 @@ class Gateway:
         self.work.put(WorkItem(job_id, inbound, (message,), (message_record_id,)))
         self._send(
             chat_id,
-            f"Recebido. {self.config.identity.display_name} começou a processar sua solicitação.",
+            choose_message(
+                self.config.feedback.queued_messages
+                if already_busy
+                else self.config.feedback.immediate_messages
+            ),
             reply_to_message_id=message_id,
         )
 
@@ -759,6 +766,8 @@ class Gateway:
             buffer = self.albums.get(key)
             if buffer is None:
                 with self.state_lock:
+                    jobs = self.state.job_summary()
+                    already_busy = bool(jobs["queued"] or jobs["running"])
                     job_id = self.state.create_job(
                         inbound.update_ids[0], inbound.chat_id,
                         media_group_id=inbound.media_group_id,
@@ -768,7 +777,11 @@ class Gateway:
                 self.albums[key] = buffer
                 self._send(
                     inbound.chat_id,
-                    f"Recebido. {self.config.identity.display_name} começou a processar o álbum.",
+                    choose_message(
+                        self.config.feedback.queued_messages
+                        if already_busy
+                        else self.config.feedback.immediate_messages
+                    ),
                     reply_to_message_id=inbound.message_ids[0],
                 )
             else:
@@ -1007,13 +1020,21 @@ class Gateway:
     def _execute(self, item: WorkItem) -> None:
         files: list[DownloadedFile] = []
         inbound = item.inbound
+        typing_stop = threading.Event()
+        self._send_typing(inbound.chat_id)
+        typing_thread = threading.Thread(
+            target=self._typing_loop,
+            args=(inbound.chat_id, typing_stop),
+            name=f"coworker-typing-{inbound.chat_id}",
+            daemon=True,
+        )
+        typing_thread.start()
         try:
             workspace = JobWorkspace.create(self.config.media.jobs_dir, item.job_id)
             with self.state_lock:
                 self.state.update_job(item.job_id, "running")
                 self.state.set_job_workspace(item.job_id, workspace.root)
                 thread_id = self.state.session(inbound.chat_id)
-            self.api.send_typing(inbound.chat_id)
             attachment_specs = [
                 attachment for message in item.messages
                 for attachment in message_attachments(message)
@@ -1128,6 +1149,23 @@ class Gateway:
                 self._send(inbound.chat_id, f"Não foi possível concluir: {exc}", update_id=inbound.update_ids[0])
             except TelegramApiError:
                 pass
+        finally:
+            typing_stop.set()
+            typing_thread.join(timeout=1)
+
+    def _send_typing(self, chat_id: int) -> None:
+        try:
+            self.api.send_typing(chat_id)
+        except TelegramApiError as exc:
+            print_json(
+                {"ok": False, "warning": f"status de digitação não enviado: {exc}"},
+                stream=sys.stderr,
+            )
+
+    def _typing_loop(self, chat_id: int, stop: threading.Event) -> None:
+        interval = self.config.feedback.typing_interval_seconds
+        while not stop.wait(interval):
+            self._send_typing(chat_id)
 
     def _deliver_artifacts(self, item: WorkItem, delivery: CodexDelivery) -> None:
         inbound = item.inbound

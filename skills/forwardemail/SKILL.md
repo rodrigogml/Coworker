@@ -10,6 +10,14 @@ acessar a API. O script obtém internamente a credencial referenciada em
 `data/config/forwardemail.toml` do cofre KeePassXC e nunca a devolve ao agente.
 Quando houver várias contas, selecionar a referência com `--profile NOME`.
 
+## Inicializar a configuração
+
+```powershell
+python scripts/integration_config.py init forwardemail
+```
+
+O comando cria somente `data/config/forwardemail.toml` quando ele ainda não existe.
+
 ## Aplicar a autorização
 
 - Executar consultas de leitura dentro do escopo pedido sem confirmação adicional.

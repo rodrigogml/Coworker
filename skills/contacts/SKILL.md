@@ -8,6 +8,15 @@ description: Listar, pesquisar, consultar, criar, corrigir e excluir contatos pe
 Usar `python skills/contacts/scripts/contacts.py --profile NOME`. Obter OAuth por
 `scripts/google_accounts.py`; nunca aceitar nem revelar tokens.
 
+## Inicializar a configuração
+
+Quando algum arquivo estiver ausente, inicializar os dois modelos sem sobrescrever:
+
+```powershell
+python scripts/integration_config.py init google
+python scripts/integration_config.py init contacts
+```
+
 ## Executar
 
 1. Pesquisar antes de criar para evitar duplicidades.

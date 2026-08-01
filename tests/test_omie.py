@@ -52,6 +52,18 @@ class FakePagingClient:
 
 
 class OmieTests(unittest.TestCase):
+    def test_missing_config_points_to_sandbox_safe_initializer(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "omie.toml"
+
+            with self.assertRaises(omie.OmieToolError) as raised:
+                omie.load_config(path)
+
+        self.assertIn(
+            "python scripts/integration_config.py init omie",
+            str(raised.exception),
+        )
+
     def test_load_config(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "omie.toml"

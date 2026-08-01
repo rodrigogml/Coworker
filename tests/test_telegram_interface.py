@@ -561,6 +561,7 @@ class CodexIsolationTests(unittest.TestCase):
         entry_points = (
             "scripts/credential_vault.py",
             "scripts/google_accounts.py",
+            "scripts/integration_config.py",
             "scripts/memory.py",
             "scripts/vault_entities.py",
             "interfaces/telegram/scripts/restart_gateway.py",

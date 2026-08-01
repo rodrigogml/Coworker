@@ -28,6 +28,7 @@ from integration_profiles import (  # noqa: E402
     IntegrationProfileError,
     resolve_credential_ref,
 )
+from integration_config import missing_config_message  # noqa: E402
 
 
 ALLOWED_API_HOST = "api.todoist.com"
@@ -73,8 +74,7 @@ def load_config(path: Path, profile: str | None = None) -> TodoistConfig:
         values = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise TodoistToolError(
-            f"Configuração local não encontrada em '{path}'. Copie "
-            f"'{EXAMPLE_CONFIG}' para '{DEFAULT_CONFIG}'."
+            missing_config_message("todoist", path)
         ) from exc
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise TodoistToolError(

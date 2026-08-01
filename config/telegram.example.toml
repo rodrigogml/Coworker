@@ -37,6 +37,12 @@ max_pages = 200
 max_duration_seconds = 3600
 max_frames = 100
 
+# As 30 mensagens imediatas e as 30 mensagens de fila possuem padrões internos.
+# Para personalizá-las, defina aqui `immediate_messages = [...]` e/ou
+# `queued_messages = [...]`.
+[feedback]
+typing_interval_seconds = 4
+
 [webhook]
 public_url = ""
 secret_credential_ref = "APIs/Telegram/INSTANCE_ID-webhook"

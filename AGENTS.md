@@ -274,6 +274,12 @@ Scripts devem:
 - ser seguros para execução repetida sempre que possível;
 - detectar configuração ausente e retornar orientação acionável.
 
+Quando faltar a configuração privada de uma integração, executar o inicializador
+fechado indicado pela própria skill ou pela mensagem de erro:
+`python scripts/integration_config.py init NOME`. Não usar `Copy-Item`, `apply_patch`
+ou escrita genérica por shell para esse bootstrap. O comando pode criar apenas modelos
+conhecidos dentro de `data/config/` e nunca sobrescreve um arquivo existente.
+
 Executar scripts do repositório diretamente por `python <caminho-do-script>`. Não
 criar wrappers, atalhos ou comandos auxiliares fora do repositório. Dependências
 externas devem ser localizadas e registradas em arquivos privados de configuração

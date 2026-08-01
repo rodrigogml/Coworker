@@ -8,6 +8,18 @@ description: Localizar contas digitais da CPFL no Gmail, validar links oficiais,
 Usar `python skills/cpfl/scripts/cpfl.py`. Selecionar a configuração com
 `--profile`; nunca fornecer CPF, link individual ou código de pagamento em argumentos.
 
+## Inicializar a configuração
+
+A CPFL compõe sua configuração com Gmail e a conta Google selecionada:
+
+```powershell
+python scripts/integration_config.py init google
+python scripts/integration_config.py init gmail
+python scripts/integration_config.py init cpfl
+```
+
+Os comandos não sobrescrevem configurações já personalizadas.
+
 ## Executar o fluxo
 
 1. Executar `doctor` para validar Gmail, pessoa titular e configuração.

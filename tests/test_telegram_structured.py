@@ -9,7 +9,10 @@ import queue
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -22,6 +25,7 @@ from interfaces.telegram.credential_broker import (
 from interfaces.telegram.gateway import Gateway
 from interfaces.telegram.config import (
     CodexConfig,
+    FeedbackConfig,
     MediaConfig,
     PairingConfig,
     ProcessorConfig,
@@ -437,6 +441,7 @@ class _FakeTelegramApi:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, int | None]] = []
         self.deleted: list[tuple[int, int]] = []
+        self.typing: list[int] = []
 
     def send_text(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None):
         self.sent.append((chat_id, text, reply_to_message_id))
@@ -448,6 +453,9 @@ class _FakeTelegramApi:
     def delete_message(self, chat_id: int, message_id: int) -> bool:
         self.deleted.append((chat_id, message_id))
         return True
+
+    def send_typing(self, chat_id: int) -> None:
+        self.typing.append(chat_id)
 
     def set_profile(self, **_values):
         return True
@@ -466,6 +474,62 @@ class GatewayContextTests(unittest.TestCase):
             WebhookConfig("", "", "127.0.0.1", 8787),
         )
         return Gateway(config, _FakeTelegramApi())
+
+    def test_acknowledgement_distinguishes_immediate_work_from_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            gateway.config = replace(
+                gateway.config,
+                feedback=FeedbackConfig(("Agora",), ("Fila",), 0.01),
+            )
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            first = {
+                "message": {
+                    "message_id": 20,
+                    "chat": {"id": 10, "type": "private"},
+                    "from": {"id": 10},
+                    "text": "primeiro pedido",
+                }
+            }
+            second = {
+                "message": {
+                    "message_id": 21,
+                    "chat": {"id": 10, "type": "private"},
+                    "from": {"id": 10},
+                    "text": "segundo pedido",
+                }
+            }
+
+            gateway._handle_update(1, first)
+            gateway._handle_update(2, second)
+            sent = list(gateway.api.sent)
+            gateway.close()
+
+        self.assertEqual((10, "Agora", 20), sent[0])
+        self.assertEqual((10, "Fila", 21), sent[1])
+
+    def test_typing_is_renewed_until_work_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            gateway.config = replace(
+                gateway.config,
+                feedback=FeedbackConfig(("Agora",), ("Fila",), 0.01),
+            )
+            stop = threading.Event()
+            thread = threading.Thread(target=gateway._typing_loop, args=(10, stop))
+            thread.start()
+            time.sleep(0.035)
+            stop.set()
+            thread.join(timeout=1)
+            typing = list(gateway.api.typing)
+            gateway.close()
+
+        self.assertGreaterEqual(len(typing), 2)
 
     def test_reply_context_recovers_thread_and_turn_from_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

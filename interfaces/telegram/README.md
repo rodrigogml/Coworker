@@ -250,7 +250,11 @@ nativa. PDF, OCR, áudio e vídeo possuem diagnóstico opcional; quando a depend
 está disponível, o original é preservado e essa limitação é informada ao Codex. A
 interface nunca instala processadores automaticamente nem executa arquivos recebidos.
 
-Os limites ficam em `[processors]` e `[media]` no TOML privado. A retenção dos jobs é
+Os limites ficam em `[processors]` e `[media]` no TOML privado. A seção opcional
+`[feedback]` controla `typing_interval_seconds` e permite substituir as listas
+`immediate_messages` e `queued_messages`; sem substituição, cada estado usa 30
+variações internas. O gateway renova `typing` enquanto um trabalho estiver em execução.
+A retenção dos jobs é
 manual nesta versão: remova caixas antigas somente com o gateway parado e depois de
 confirmar que seus artefatos não são mais necessários.
 

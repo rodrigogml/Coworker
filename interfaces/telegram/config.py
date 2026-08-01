@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from interfaces.telegram.identity import InstanceIdentity, load_identity
+from interfaces.telegram.feedback import IMMEDIATE_MESSAGES, QUEUED_MESSAGES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -69,6 +70,13 @@ class WebhookConfig:
 
 
 @dataclass(frozen=True)
+class FeedbackConfig:
+    immediate_messages: tuple[str, ...] = IMMEDIATE_MESSAGES
+    queued_messages: tuple[str, ...] = QUEUED_MESSAGES
+    typing_interval_seconds: float = 4.0
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     identity: InstanceIdentity
     transport: str
@@ -82,6 +90,7 @@ class TelegramConfig:
     media: MediaConfig
     processors: ProcessorConfig
     webhook: WebhookConfig
+    feedback: FeedbackConfig = FeedbackConfig()
 
 
 def _mapping(values: dict[str, Any], name: str) -> dict[str, Any]:
@@ -99,6 +108,19 @@ def _resolve(raw: Any, base: Path, *, allow_empty: bool = False) -> Path | None:
         raise TelegramConfigError("Um caminho obrigatório está vazio.")
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+
+def _feedback_messages(raw: Any, default: tuple[str, ...], name: str) -> tuple[str, ...]:
+    if raw is None:
+        return default
+    if not isinstance(raw, list):
+        raise TelegramConfigError(f"'feedback.{name}' deve ser uma lista TOML.")
+    messages = tuple(str(item).strip() for item in raw)
+    if not messages or any(not item or len(item) > 200 for item in messages):
+        raise TelegramConfigError(
+            f"'feedback.{name}' deve conter mensagens de 1 a 200 caracteres."
+        )
+    return messages
 
 
 def default_state_dir(instance_id: str) -> Path:
@@ -237,6 +259,14 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     processor_values = values.get("processors", {})
     if not isinstance(processor_values, dict):
         raise TelegramConfigError("A seção [processors] deve ser uma tabela TOML.")
+    feedback_values = values.get("feedback", {})
+    if not isinstance(feedback_values, dict):
+        raise TelegramConfigError("A seção [feedback] deve ser uma tabela TOML.")
+    typing_interval = float(feedback_values.get("typing_interval_seconds", 4.0))
+    if not 1.0 <= typing_interval <= 5.0:
+        raise TelegramConfigError(
+            "'feedback.typing_interval_seconds' deve estar entre 1 e 5 segundos."
+        )
     listen_port = int(webhook_values.get("listen_port", 8787))
     if not 60 <= ttl <= 3600 or not 1 <= attempts <= 10:
         raise TelegramConfigError("Limites de pareamento inválidos.")
@@ -289,5 +319,18 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             str(webhook_values.get("secret_credential_ref", "")).strip(),
             str(webhook_values.get("listen_host", "127.0.0.1")).strip(),
             listen_port,
+        ),
+        feedback=FeedbackConfig(
+            _feedback_messages(
+                feedback_values.get("immediate_messages"),
+                IMMEDIATE_MESSAGES,
+                "immediate_messages",
+            ),
+            _feedback_messages(
+                feedback_values.get("queued_messages"),
+                QUEUED_MESSAGES,
+                "queued_messages",
+            ),
+            typing_interval,
         ),
     )

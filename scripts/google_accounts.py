@@ -29,12 +29,14 @@ EXAMPLE_CONFIG = PROJECT_ROOT / "config" / "google.example.toml"
 from credential_vault import (  # noqa: E402
     VaultToolError,
     read_entry_credentials,
+    read_entry_secret,
     write_entry_credentials,
 )
 from integration_profiles import (  # noqa: E402
     IntegrationProfileError,
     validate_profile_name,
 )
+from integration_config import missing_config_message  # noqa: E402
 
 
 ALLOWED_ENDPOINTS = {
@@ -152,8 +154,7 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
         values = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise GoogleAccountError(
-            f"Configuração Google não encontrada em '{path}'. Copie "
-            f"'{EXAMPLE_CONFIG}' para '{DEFAULT_CONFIG}'."
+            missing_config_message("google", path)
         ) from exc
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise GoogleAccountError(
@@ -236,19 +237,17 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
 
 def _read_oauth_client(config: GoogleConfig) -> tuple[str, str]:
     """Combina o Client ID público com o Client Secret protegido."""
-    stored_id, client_secret = read_entry_credentials(
-        config.client_credential_ref
-    )
-    client_id = config.client_id or stored_id
-    if config.client_id and stored_id and config.client_id != stored_id:
-        client_secret = ""
-        raise GoogleAccountError(
-            "O Client ID do cofre não corresponde ao cliente Coworker configurado."
+    if config.client_id:
+        client_id = config.client_id
+        client_secret = read_entry_secret(config.client_credential_ref)
+    else:
+        client_id, client_secret = read_entry_credentials(
+            config.client_credential_ref
         )
     if not client_id or not client_secret:
         client_secret = ""
         raise GoogleAccountError(
-            "A credencial OAuth do Google deve conter Client ID e Client Secret."
+            "A credencial OAuth do Google não está completa."
         )
     return client_id, client_secret
 

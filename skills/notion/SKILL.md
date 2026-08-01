@@ -9,6 +9,14 @@ Usar exclusivamente `python skills/notion/scripts/notion.py`. Obter o token
 da entrada `APIs/Notion` do KeePassXC e nunca aceitá-lo em argumentos ou respostas.
 Quando houver vários espaços ou contas, selecionar a referência com `--profile NOME`.
 
+## Inicializar a configuração
+
+```powershell
+python scripts/integration_config.py init notion
+```
+
+O comando cria somente `data/config/notion.toml` quando ele ainda não existe.
+
 ## Executar o fluxo
 
 1. Usar `doctor` para diagnosticar autenticação e acesso.
