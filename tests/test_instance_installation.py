@@ -341,7 +341,7 @@ class InstallerTests(unittest.TestCase):
             result = install_instance.configure_telegram(
                 "assistente-teste",
                 non_interactive=False,
-                start_gateway=False,
+                should_start_gateway=False,
             )
 
         write.assert_called_once_with(
@@ -349,6 +349,34 @@ class InstallerTests(unittest.TestCase):
         )
         self.assertTrue(result["configured"])
         self.assertNotIn("token-secreto", str(output.call_args_list))
+
+    def test_telegram_configuration_starts_managed_gateway_when_requested(self) -> None:
+        with (
+            patch.object(install_instance, "_yes_no", return_value=False),
+            patch.object(
+                install_instance,
+                "pair_owner_interactively",
+                return_value=True,
+            ),
+            patch.object(
+                install_instance,
+                "start_gateway",
+                return_value={
+                    "pid": 321,
+                    "already_running": False,
+                },
+            ) as start,
+            patch("builtins.print"),
+        ):
+            result = install_instance.configure_telegram(
+                "assistente-teste",
+                non_interactive=False,
+                should_start_gateway=True,
+            )
+
+        start.assert_called_once_with("assistente-teste")
+        self.assertTrue(result["paired"])
+        self.assertEqual(321, result["process_id"])
 
 
 if __name__ == "__main__":

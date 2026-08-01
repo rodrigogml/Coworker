@@ -1153,7 +1153,7 @@ def pair_owner_interactively() -> bool:
 
 
 def configure_telegram(
-    instance_id: str, *, non_interactive: bool, start_gateway: bool
+    instance_id: str, *, non_interactive: bool, should_start_gateway: bool
 ) -> dict[str, Any]:
     credential_ref = f"APIs/Telegram/{instance_id}"
     if non_interactive:
@@ -1182,7 +1182,7 @@ def configure_telegram(
         print("Nome, bio, comandos e sandbox do bot foram sincronizados.")
     paired = pair_owner_interactively()
     process_id = None
-    if start_gateway:
+    if should_start_gateway:
         runtime = start_gateway(instance_id)
         process_id = runtime["pid"]
         action = "já estava em execução" if runtime["already_running"] else "foi iniciado"
@@ -1512,7 +1512,7 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
                 last_telegram = configure_telegram(
                     instance_id,
                     non_interactive=False,
-                    start_gateway=not args.no_start,
+                    should_start_gateway=not args.no_start,
                 )
             elif answer == "5":
                 result = _initialize_memory()
@@ -1585,7 +1585,7 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
             telegram_result = configure_telegram(
                 instance_id,
                 non_interactive=args.non_interactive,
-                start_gateway=not args.no_start,
+                should_start_gateway=not args.no_start,
             )
         else:
             print(
