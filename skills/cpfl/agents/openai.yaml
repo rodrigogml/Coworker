@@ -1,4 +1,4 @@
 interface:
   display_name: "CPFL"
   short_description: "Consultar contas e dados de pagamento da CPFL"
-  default_prompt: "Use $cpfl para localizar uma conta da CPFL e obter seus dados de pagamento."
+  default_prompt: "Use $cpfl para consultar um link oficial da CPFL e obter seus dados de pagamento com segurança."

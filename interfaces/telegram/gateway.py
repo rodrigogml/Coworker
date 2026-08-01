@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import queue
 import re
@@ -28,6 +29,8 @@ from interfaces.telegram.codex import (  # noqa: E402
     CodexAdapter,
     CodexCancelledError,
     CodexExecutionError,
+    CodexModel,
+    CodexOptions,
     ProcessRegistry,
 )
 from interfaces.telegram.contracts import (  # noqa: E402
@@ -87,6 +90,11 @@ from scripts.credential_vault import (  # noqa: E402
 BOT_COMMANDS = (
     ("new", "Iniciar uma nova conversa"),
     ("resume", "Retomar a conversa respondida"),
+    ("settings", "Configurar o Codex"),
+    ("model", "Escolher o modelo"),
+    ("reasoning", "Definir o nível de raciocínio"),
+    ("speed", "Definir a velocidade"),
+    ("verbosity", "Definir o tamanho das respostas"),
     ("status", "Consultar a sessão e a fila"),
     ("usage", "Consultar a franquia do Codex"),
     ("cancel", "Interromper a execução atual"),
@@ -96,6 +104,7 @@ BOT_COMMANDS = (
 )
 
 REDACTED_SECRET = "[Censurado por segurança]"
+SETTINGS_PANEL_TTL_SECONDS = 15 * 60
 
 SECRET_SERVICE_ENTRIES = {
     "cloudflare": "APIs/Cloudflare",
@@ -116,6 +125,7 @@ class WorkItem:
     inbound: InboundMessage
     messages: tuple[dict[str, Any], ...]
     message_record_ids: tuple[int, ...]
+    codex_options: CodexOptions = CodexOptions()
 
 
 @dataclass
@@ -408,10 +418,19 @@ class Gateway:
         thread_id: str | None = None,
         turn_id: str | None = None,
         job_id: int | None = None,
+        reply_markup: dict[str, Any] | None = None,
     ) -> list[int]:
-        receipts = self.api.send_text(
-            chat_id, text, reply_to_message_id=reply_to_message_id
-        )
+        if reply_markup is None:
+            receipts = self.api.send_text(
+                chat_id, text, reply_to_message_id=reply_to_message_id
+            )
+        else:
+            receipts = self.api.send_text(
+                chat_id,
+                text,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=reply_markup,
+            )
         records: list[int] = []
         with self.state_lock:
             for receipt in receipts:
@@ -427,10 +446,432 @@ class Gateway:
                 self.state.set_job_response(job_id, records[0])
         return records
 
+    @staticmethod
+    def _inline_keyboard(rows: list[list[tuple[str, str]]]) -> dict[str, Any]:
+        return {
+            "inline_keyboard": [
+                [{"text": label, "callback_data": data} for label, data in row]
+                for row in rows
+            ]
+        }
+
+    def _codex_options(self, chat_id: int) -> CodexOptions:
+        with self.state_lock:
+            preferences = self.state.codex_preferences(chat_id)
+        return CodexOptions(
+            model=preferences.model or self.config.codex.model,
+            reasoning_effort=(
+                preferences.reasoning_effort or self.config.codex.reasoning_effort
+            ),
+            speed=preferences.speed or self.config.codex.speed,
+            verbosity=preferences.verbosity or self.config.codex.verbosity,
+        )
+
+    def _model_for_options(
+        self, models: tuple[CodexModel, ...], options: CodexOptions
+    ) -> CodexModel | None:
+        if options.model:
+            return next((item for item in models if item.model == options.model), None)
+        return next((item for item in models if item.is_default), models[0] if models else None)
+
+    @staticmethod
+    def _model_callback_token(model: str) -> str:
+        return hashlib.sha256(model.encode("utf-8")).hexdigest()[:16]
+
+    def _settings_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        options = self._codex_options(chat_id)
+        model_label = options.model or "padrão do Codex"
+        try:
+            selected = self._model_for_options(self.codex.models(), options)
+            if selected is not None:
+                model_label = selected.display_name
+        except CodexExecutionError:
+            pass
+        text = (
+            "Configuração do Codex\n\n"
+            f"Modelo: {model_label}\n"
+            f"Reasoning: {options.reasoning_effort or 'padrão do modelo'}\n"
+            f"Velocidade: {options.speed}\n"
+            f"Verbosity: {options.verbosity or 'padrão do modelo'}\n\n"
+            "As alterações valem para as próximas solicitações."
+        )
+        keyboard = self._inline_keyboard(
+            [
+                [("Modelo", "cx:model:0"), ("Reasoning", "cx:reasoning")],
+                [("Velocidade", "cx:speed"), ("Verbosity", "cx:verbosity")],
+                [("Diagnóstico", "cx:diagnose"), ("Restaurar", "cx:reset")],
+            ]
+        )
+        return text, keyboard
+
+    def _status_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        with self.state_lock:
+            thread_id = self.state.session(chat_id)
+            jobs = self.state.job_summary()
+            current = self.state.current_job()
+        options = self._codex_options(chat_id)
+        short_thread = f"{thread_id[:8]}…" if thread_id else "nenhuma"
+        text = (
+            f"{self.config.identity.display_name} está disponível\n\n"
+            f"Sessão: {short_thread}\n"
+            f"Backend: {self.config.codex.backend}\n"
+            f"Modelo: {options.model or 'padrão do Codex'}\n"
+            f"Reasoning: {options.reasoning_effort or 'padrão do modelo'}\n"
+            f"Velocidade: {options.speed}\n"
+            f"Trabalho: {(current or {}).get('id', 'nenhum')}\n"
+            f"Em execução: {jobs['running']}\n"
+            f"Na fila: {jobs['queued']}"
+        )
+        keyboard = self._inline_keyboard(
+            [
+                [("Atualizar", "op:status"), ("Configurações", "cx:root")],
+                [("Cancelar execução", "op:cancel"), ("Nova conversa", "op:new")],
+                [("Consultar franquia", "op:usage")],
+            ]
+        )
+        return text, keyboard
+
+    def _models_panel(self, chat_id: int, page: int) -> tuple[str, dict[str, Any]]:
+        models = self.codex.models()
+        options = self._codex_options(chat_id)
+        page_size = 6
+        total_pages = max(1, (len(models) + page_size - 1) // page_size)
+        page = max(0, min(page, total_pages - 1))
+        start = page * page_size
+        rows: list[list[tuple[str, str]]] = []
+        for model in models[start : start + page_size]:
+            selected = options.model == model.model or (
+                options.model is None and model.is_default
+            )
+            label = f"✓ {model.display_name}" if selected else model.display_name
+            rows.append(
+                [(label[:50], f"cx:ms:{self._model_callback_token(model.model)}")]
+            )
+        navigation: list[tuple[str, str]] = []
+        if page > 0:
+            navigation.append(("◀ Anterior", f"cx:model:{page - 1}"))
+        if page + 1 < total_pages:
+            navigation.append(("Próxima ▶", f"cx:model:{page + 1}"))
+        if navigation:
+            rows.append(navigation)
+        rows.extend(
+            [
+                [("Usar padrão", "cx:ms:default")],
+                [("Voltar", "cx:root")],
+            ]
+        )
+        return (
+            f"Escolha o modelo\n\nPágina {page + 1} de {total_pages}.",
+            self._inline_keyboard(rows),
+        )
+
+    def _reasoning_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        models = self.codex.models()
+        options = self._codex_options(chat_id)
+        selected_model = self._model_for_options(models, options)
+        efforts = (
+            selected_model.supported_reasoning_efforts
+            if selected_model
+            else ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+        )
+        rows: list[list[tuple[str, str]]] = []
+        current_row: list[tuple[str, str]] = []
+        for effort in efforts:
+            label = f"✓ {effort}" if options.reasoning_effort == effort else effort
+            current_row.append((label, f"cx:rs:{effort}"))
+            if len(current_row) == 2:
+                rows.append(current_row)
+                current_row = []
+        if current_row:
+            rows.append(current_row)
+        rows.extend(
+            [[("Usar padrão", "cx:rs:default")], [("Voltar", "cx:root")]]
+        )
+        model_label = selected_model.display_name if selected_model else "modelo atual"
+        return (
+            f"Reasoning para {model_label}\n\nAtual: "
+            f"{options.reasoning_effort or 'padrão do modelo'}",
+            self._inline_keyboard(rows),
+        )
+
+    def _speed_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        options = self._codex_options(chat_id)
+        speed = options.speed
+        selected = self._model_for_options(self.codex.models(), options)
+        supports_fast = bool(selected and selected.supports_fast)
+        choices = [
+            ("✓ Standard" if speed == "standard" else "Standard", "cx:ss:standard")
+        ]
+        if supports_fast:
+            choices.append(("✓ Fast" if speed == "fast" else "Fast", "cx:ss:fast"))
+        return (
+            f"Velocidade atual: {speed}\n\n"
+            + (
+                "Fast mode pode consumir créditos em uma taxa maior."
+                if supports_fast
+                else "O modelo selecionado não oferece Fast mode."
+            ),
+            self._inline_keyboard(
+                [
+                    choices,
+                    [("Voltar", "cx:root")],
+                ]
+            ),
+        )
+
+    def _verbosity_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        current = self._codex_options(chat_id).verbosity
+        rows = [
+            [
+                (f"✓ {value}" if current == value else value, f"cx:vs:{value}")
+                for value in ("low", "medium", "high")
+            ],
+            [("Usar padrão", "cx:vs:default")],
+            [("Voltar", "cx:root")],
+        ]
+        return (
+            f"Verbosity atual: {current or 'padrão do modelo'}",
+            self._inline_keyboard(rows),
+        )
+
+    def _edit_panel(
+        self, chat_id: int, message_id: int, text: str, keyboard: dict[str, Any]
+    ) -> None:
+        try:
+            self.api.edit_text(chat_id, message_id, text, reply_markup=keyboard)
+        except TelegramApiError as exc:
+            if "message is not modified" not in str(exc).casefold():
+                raise
+
+    def _send_settings(self, chat_id: int, *, update_id: int | None = None) -> None:
+        text, keyboard = self._settings_panel(chat_id)
+        self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+
+    def _answer_callback(
+        self, callback_id: str, text: str | None = None, *, show_alert: bool = False
+    ) -> None:
+        if not callback_id:
+            return
+        try:
+            self.api.answer_callback_query(
+                callback_id, text, show_alert=show_alert
+            )
+        except TelegramApiError as exc:
+            print_json(
+                {"ok": False, "warning": f"callback do Telegram não confirmado: {exc}"},
+                stream=sys.stderr,
+            )
+
+    def _handle_callback_update(
+        self, update_id: int, callback: dict[str, Any]
+    ) -> None:
+        callback_id = str(callback.get("id") or "")
+        sender = callback.get("from") or {}
+        message = callback.get("message") or {}
+        chat = message.get("chat") or {}
+        try:
+            user_id = int(sender.get("id"))
+            chat_id = int(chat.get("id"))
+            message_id = int(message.get("message_id"))
+            message_date = int(message.get("date"))
+        except (TypeError, ValueError):
+            self._answer_callback(callback_id, "Painel inválido.", show_alert=True)
+            with self.state_lock:
+                self.state.finish_update(update_id, "invalid", "callback sem identificadores")
+            return
+        with self.state_lock:
+            authorized = self.state.is_authorized(user_id, chat_id)
+        if str(chat.get("type")) != "private" or not authorized:
+            self._answer_callback(callback_id, "Ação não autorizada.", show_alert=True)
+            with self.state_lock:
+                self.state.finish_update(update_id, "unauthorized")
+            return
+        if time.time() - message_date > SETTINGS_PANEL_TTL_SECONDS:
+            self._answer_callback(
+                callback_id,
+                "Este painel expirou. Use /settings para abrir outro.",
+                show_alert=True,
+            )
+            with self.state_lock:
+                self.state.finish_update(update_id, "expired")
+            return
+        data = str(callback.get("data") or "")
+        if not data.startswith(("cx:", "op:")):
+            self._answer_callback(callback_id, "Ação desconhecida.", show_alert=True)
+            with self.state_lock:
+                self.state.finish_update(update_id, "invalid")
+            return
+        self._answer_callback(callback_id)
+        try:
+            if data.startswith("cx:"):
+                self._route_settings_callback(chat_id, message_id, data)
+            else:
+                self._route_operational_callback(chat_id, message_id, data)
+            status, error = "processed", None
+        except (CodexExecutionError, StateError, TelegramApiError, ValueError, IndexError) as exc:
+            try:
+                self._send(chat_id, f"Não foi possível atualizar a configuração: {exc}")
+            except TelegramApiError:
+                pass
+            status, error = "failed", str(exc)
+        with self.state_lock:
+            self.state.finish_update(update_id, status, error)
+
+    def _route_settings_callback(
+        self, chat_id: int, message_id: int, data: str
+    ) -> None:
+        if data == "cx:root":
+            text, keyboard = self._settings_panel(chat_id)
+        elif data.startswith("cx:model:"):
+            text, keyboard = self._models_panel(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("cx:ms:"):
+            choice = data.rsplit(":", 1)[1]
+            models = self.codex.models(force=True)
+            if choice == "default":
+                with self.state_lock:
+                    self.state.set_codex_preference(chat_id, "model", None)
+                selected = self._model_for_options(models, self._codex_options(chat_id))
+            else:
+                selected = next(
+                    (
+                        model for model in models
+                        if self._model_callback_token(model.model) == choice
+                    ),
+                    None,
+                )
+                if selected is None:
+                    raise StateError("O modelo selecionado não está mais disponível.")
+                with self.state_lock:
+                    self.state.set_codex_preference(chat_id, "model", selected.model)
+            if selected is not None:
+                with self.state_lock:
+                    current = self.state.codex_preferences(chat_id).reasoning_effort
+                    if current and current not in selected.supported_reasoning_efforts:
+                        self.state.set_codex_preference(chat_id, "reasoning_effort", None)
+                    if not selected.supports_fast:
+                        self.state.set_codex_preference(chat_id, "speed", "standard")
+            text, keyboard = self._settings_panel(chat_id)
+        elif data == "cx:reasoning":
+            text, keyboard = self._reasoning_panel(chat_id)
+        elif data.startswith("cx:rs:"):
+            effort = data.rsplit(":", 1)[1]
+            value = None if effort == "default" else effort
+            if value is not None:
+                models = self.codex.models()
+                selected = self._model_for_options(models, self._codex_options(chat_id))
+                if selected and value not in selected.supported_reasoning_efforts:
+                    raise StateError("Esse nível não é compatível com o modelo selecionado.")
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "reasoning_effort", value)
+            text, keyboard = self._reasoning_panel(chat_id)
+        elif data == "cx:speed":
+            text, keyboard = self._speed_panel(chat_id)
+        elif data == "cx:ss:fast":
+            options = self._codex_options(chat_id)
+            selected = self._model_for_options(self.codex.models(), options)
+            if not selected or not selected.supports_fast:
+                raise StateError("O modelo selecionado não oferece Fast mode.")
+            text = (
+                "Ativar Fast mode?\n\n"
+                "Ele aumenta a velocidade em modelos compatíveis, mas pode consumir "
+                "créditos em uma taxa maior."
+            )
+            keyboard = self._inline_keyboard(
+                [[("Ativar Fast", "cx:sf:confirm"), ("Cancelar", "cx:speed")]]
+            )
+        elif data in {"cx:ss:standard", "cx:sf:confirm"}:
+            speed = "fast" if data.endswith("confirm") else "standard"
+            if speed == "fast":
+                options = self._codex_options(chat_id)
+                selected = self._model_for_options(self.codex.models(), options)
+                if not selected or not selected.supports_fast:
+                    raise StateError("O modelo selecionado não oferece Fast mode.")
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "speed", speed)
+            text, keyboard = self._speed_panel(chat_id)
+        elif data == "cx:verbosity":
+            text, keyboard = self._verbosity_panel(chat_id)
+        elif data.startswith("cx:vs:"):
+            value = data.rsplit(":", 1)[1]
+            with self.state_lock:
+                self.state.set_codex_preference(
+                    chat_id, "verbosity", None if value == "default" else value
+                )
+            text, keyboard = self._verbosity_panel(chat_id)
+        elif data == "cx:reset":
+            text = "Restaurar todas as configurações do Codex para os padrões da instância?"
+            keyboard = self._inline_keyboard(
+                [[("Restaurar", "cx:reset:confirm"), ("Cancelar", "cx:root")]]
+            )
+        elif data == "cx:reset:confirm":
+            with self.state_lock:
+                self.state.reset_codex_preferences(chat_id)
+            text, keyboard = self._settings_panel(chat_id)
+        elif data == "cx:diagnose":
+            diagnostic = self.codex.doctor()
+            models = self.codex.models(force=True)
+            text = (
+                "Diagnóstico do Codex\n\n"
+                f"Versão: {diagnostic['version']}\n"
+                f"Backend: {diagnostic['backend']}\n"
+                f"Autenticado: {'sim' if diagnostic['authenticated'] else 'não'}\n"
+                f"App Server: {diagnostic['app_server']}\n"
+                f"Modelos disponíveis: {len(models)}\n"
+                f"Sandbox: {diagnostic['sandbox']}\n"
+                f"Rede: {'habilitada' if diagnostic['network_access'] else 'desabilitada'}"
+            )
+            keyboard = self._inline_keyboard([[('Voltar', 'cx:root')]])
+        else:
+            raise StateError("Ação de configuração desconhecida.")
+        self._edit_panel(chat_id, message_id, text, keyboard)
+
+    def _route_operational_callback(
+        self, chat_id: int, message_id: int, data: str
+    ) -> None:
+        if data == "op:status":
+            text, keyboard = self._status_panel(chat_id)
+        elif data == "op:cancel":
+            cancelled = self.registry.cancel(chat_id)
+            with self.state_lock:
+                queued = self.state.cancel_queued_jobs(chat_id)
+            text, keyboard = self._status_panel(chat_id)
+            outcome = (
+                "Cancelamento solicitado."
+                if cancelled
+                else "Não havia execução ativa."
+            )
+            if queued:
+                outcome += f" {queued} item(ns) da fila foram cancelados."
+            text = outcome + "\n\n" + text
+        elif data == "op:new":
+            self.registry.cancel(chat_id)
+            with self.state_lock:
+                queued = self.state.cancel_queued_jobs(chat_id)
+                existed = self.state.clear_session(chat_id)
+            text, keyboard = self._status_panel(chat_id)
+            outcome = (
+                "Sessão anterior desvinculada."
+                if existed
+                else "Não havia sessão ativa."
+            )
+            if queued:
+                outcome += f" {queued} item(ns) da fila foram cancelados."
+            text = outcome + " A próxima mensagem iniciará uma nova conversa.\n\n" + text
+        elif data == "op:usage":
+            text = format_rate_limits(self.codex.rate_limits())
+            keyboard = self._inline_keyboard([[('Voltar ao status', 'op:status')]])
+        else:
+            raise StateError("Ação operacional desconhecida.")
+        self._edit_panel(chat_id, message_id, text, keyboard)
+
     def _handle_update(self, update_id: int, update: dict[str, Any]) -> None:
         with self.state_lock:
             if self.state.update_seen(update_id):
                 return
+        callback = update.get("callback_query")
+        if isinstance(callback, dict):
+            self._handle_callback_update(update_id, callback)
+            return
         message = update.get("message")
         if not isinstance(message, dict):
             with self.state_lock:
@@ -519,7 +960,15 @@ class Gateway:
                 update_id, chat_id, request_message_id=message_record_id
             )
             self.state.finish_update(update_id, "queued")
-        self.work.put(WorkItem(job_id, inbound, (message,), (message_record_id,)))
+        self.work.put(
+            WorkItem(
+                job_id,
+                inbound,
+                (message,),
+                (message_record_id,),
+                self._codex_options(chat_id),
+            )
+        )
         self._send(
             chat_id,
             choose_message(
@@ -820,6 +1269,7 @@ class Gateway:
             WorkItem(
                 buffer.job_id, inbound, tuple(buffer.messages),
                 tuple(buffer.message_record_ids),
+                self._codex_options(inbound.chat_id),
             )
         )
 
@@ -913,7 +1363,16 @@ class Gateway:
         self, update_id: int, chat_id: int, command: str, argument: str,
         reply_context: ReplyContext | None,
     ) -> None:
-        if command == "/new":
+        if command in {"/settings", "/codex", "/model", "/reasoning", "/speed", "/verbosity"}:
+            try:
+                self._handle_codex_command(update_id, chat_id, command, argument)
+            except (CodexExecutionError, StateError) as exc:
+                self._send(
+                    chat_id,
+                    f"Não foi possível consultar ou alterar o Codex: {exc}",
+                    update_id=update_id,
+                )
+        elif command == "/new":
             if self.registry.cancel(chat_id):
                 self._send(chat_id, "A execução atual foi interrompida antes da troca de sessão.")
             with self.state_lock:
@@ -979,19 +1438,23 @@ class Gateway:
                     self.state.set_session(chat_id, reply_context.thread_id)
                 self._send(chat_id, "A sessão referenciada agora está ativa.", update_id=update_id)
         elif command == "/status":
-            with self.state_lock:
-                thread_id = self.state.session(chat_id)
-                jobs = self.state.job_summary()
-                current = self.state.current_job()
-            short_thread = f"{thread_id[:8]}…" if thread_id else "nenhuma"
+            text, keyboard = self._status_panel(chat_id)
             self._send(
                 chat_id,
-                f"Sessão ativa: {short_thread}\nBackend: {self.config.codex.backend}\nTrabalho: {(current or {}).get('id', 'nenhum')}\nEm execução: {jobs['running']}\nNa fila: {jobs['queued']}",
+                text,
                 update_id=update_id,
+                reply_markup=keyboard,
             )
         elif command == "/usage":
             try:
-                self._send(chat_id, format_rate_limits(self.codex.rate_limits()), update_id=update_id)
+                self._send(
+                    chat_id,
+                    format_rate_limits(self.codex.rate_limits()),
+                    update_id=update_id,
+                    reply_markup=self._inline_keyboard(
+                        [[("Voltar ao status", "op:status")]]
+                    ),
+                )
             except CodexExecutionError as exc:
                 self._send(chat_id, f"Não foi possível consultar a franquia: {exc}", update_id=update_id)
         elif command == "/thread":
@@ -1007,6 +1470,147 @@ class Gateway:
         with self.state_lock:
             self.state.finish_update(update_id, "processed")
 
+    def _handle_codex_command(
+        self, update_id: int, chat_id: int, command: str, argument: str
+    ) -> None:
+        value = argument.strip()
+        normalized = value.casefold()
+        if command in {"/settings", "/codex"} and not value:
+            self._send_settings(chat_id, update_id=update_id)
+            return
+        if command == "/codex":
+            if normalized == "reset":
+                self._send(
+                    chat_id,
+                    "Restaurar todas as configurações do Codex para os padrões da instância?",
+                    update_id=update_id,
+                    reply_markup=self._inline_keyboard(
+                        [[("Restaurar", "cx:reset:confirm"), ("Cancelar", "cx:root")]]
+                    ),
+                )
+                return
+            if normalized == "diagnose":
+                diagnostic = self.codex.doctor()
+                models = self.codex.models(force=True)
+                self._send(
+                    chat_id,
+                    "Diagnóstico do Codex\n\n"
+                    f"Versão: {diagnostic['version']}\n"
+                    f"Backend: {diagnostic['backend']}\n"
+                    f"Autenticado: {'sim' if diagnostic['authenticated'] else 'não'}\n"
+                    f"App Server: {diagnostic['app_server']}\n"
+                    f"Modelos disponíveis: {len(models)}\n"
+                    f"Sandbox: {diagnostic['sandbox']}\n"
+                    f"Rede: {'habilitada' if diagnostic['network_access'] else 'desabilitada'}",
+                    update_id=update_id,
+                )
+                return
+            self._send(
+                chat_id,
+                "Use /codex, /codex diagnose ou /codex reset.",
+                update_id=update_id,
+            )
+            return
+        if command == "/model":
+            if not value:
+                text, keyboard = self._models_panel(chat_id, 0)
+                self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+                return
+            models = self.codex.models(force=True)
+            selected = None if normalized == "default" else next(
+                (item for item in models if item.model.casefold() == normalized), None
+            )
+            if selected is None and normalized != "default":
+                self._send(
+                    chat_id,
+                    "Modelo indisponível. Use /model para consultar a lista atual.",
+                    update_id=update_id,
+                )
+                return
+            with self.state_lock:
+                self.state.set_codex_preference(
+                    chat_id, "model", selected.model if selected else None
+                )
+            effective_model = selected or self._model_for_options(
+                models, self._codex_options(chat_id)
+            )
+            if effective_model is not None:
+                with self.state_lock:
+                    current = self.state.codex_preferences(chat_id).reasoning_effort
+                    if current and current not in effective_model.supported_reasoning_efforts:
+                        self.state.set_codex_preference(chat_id, "reasoning_effort", None)
+                    if not effective_model.supports_fast:
+                        self.state.set_codex_preference(chat_id, "speed", "standard")
+            self._send_settings(chat_id, update_id=update_id)
+            return
+        if command == "/reasoning":
+            if not value:
+                text, keyboard = self._reasoning_panel(chat_id)
+                self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+                return
+            effort = None if normalized == "default" else normalized
+            if effort is not None:
+                models = self.codex.models()
+                selected = self._model_for_options(models, self._codex_options(chat_id))
+                if not selected or effort not in selected.supported_reasoning_efforts:
+                    self._send(
+                        chat_id,
+                        "Reasoning incompatível. Use /reasoning para consultar as opções.",
+                        update_id=update_id,
+                    )
+                    return
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "reasoning_effort", effort)
+            self._send_settings(chat_id, update_id=update_id)
+            return
+        if command == "/speed":
+            if not value:
+                text, keyboard = self._speed_panel(chat_id)
+                self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+                return
+            if normalized not in {"standard", "fast"}:
+                self._send(chat_id, "Use /speed standard ou /speed fast.", update_id=update_id)
+                return
+            if normalized == "fast":
+                options = self._codex_options(chat_id)
+                selected = self._model_for_options(self.codex.models(), options)
+                if not selected or not selected.supports_fast:
+                    self._send(
+                        chat_id,
+                        "O modelo selecionado não oferece Fast mode.",
+                        update_id=update_id,
+                    )
+                    return
+                self._send(
+                    chat_id,
+                    "Ativar Fast mode?\n\nEle pode consumir créditos em uma taxa maior.",
+                    update_id=update_id,
+                    reply_markup=self._inline_keyboard(
+                        [[("Ativar Fast", "cx:sf:confirm"), ("Cancelar", "cx:speed")]]
+                    ),
+                )
+                return
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "speed", "standard")
+            self._send_settings(chat_id, update_id=update_id)
+            return
+        if command == "/verbosity":
+            if not value:
+                text, keyboard = self._verbosity_panel(chat_id)
+                self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+                return
+            verbosity = None if normalized == "default" else normalized
+            if verbosity not in {None, "low", "medium", "high"}:
+                self._send(
+                    chat_id,
+                    "Use /verbosity low, medium, high ou default.",
+                    update_id=update_id,
+                )
+                return
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "verbosity", verbosity)
+            self._send_settings(chat_id, update_id=update_id)
+
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
             item = self.work.get()
@@ -1021,7 +1625,6 @@ class Gateway:
         files: list[DownloadedFile] = []
         inbound = item.inbound
         typing_stop = threading.Event()
-        self._send_typing(inbound.chat_id)
         typing_thread = threading.Thread(
             target=self._typing_loop,
             args=(inbound.chat_id, typing_stop),
@@ -1109,6 +1712,7 @@ class Gateway:
                 on_started=lambda pid: self._job_started(item.job_id, pid),
                 output_schema=workspace.schema_path,
                 job_output=workspace.output_dir,
+                options=item.codex_options,
             )
             delivery = parse_delivery(
                 result.final_message, workspace, self.config.media.max_upload_bytes
@@ -1164,8 +1768,10 @@ class Gateway:
 
     def _typing_loop(self, chat_id: int, stop: threading.Event) -> None:
         interval = self.config.feedback.typing_interval_seconds
-        while not stop.wait(interval):
+        while not stop.is_set():
             self._send_typing(chat_id)
+            if stop.wait(interval):
+                break
 
     def _deliver_artifacts(self, item: WorkItem, delivery: CodexDelivery) -> None:
         inbound = item.inbound

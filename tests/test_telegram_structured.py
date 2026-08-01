@@ -17,7 +17,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from interfaces.telegram.codex import CodexAdapter, CodexCancelledError, ProcessRegistry
+from interfaces.telegram.codex import (
+    CodexAdapter,
+    CodexCancelledError,
+    CodexModel,
+    CodexOptions,
+    ProcessRegistry,
+)
 from interfaces.telegram.credential_broker import (
     create_request,
     parse_field_spec,
@@ -396,7 +402,14 @@ class AppServerBackendTests(unittest.TestCase):
                 patch.object(adapter, "_send_app_server_message") as send,
                 patch.object(adapter, "_stop_process"),
             ):
-                result = adapter.run(10, "pedido", None, [image], output_schema=schema)
+                result = adapter.run(
+                    10,
+                    "pedido",
+                    None,
+                    [image],
+                    output_schema=schema,
+                    options=CodexOptions("gpt-test", "high", "fast", "low"),
+                )
 
         turn_start = next(
             call.args[1]
@@ -405,8 +418,46 @@ class AppServerBackendTests(unittest.TestCase):
         )
         self.assertIn({"type": "localImage", "path": str(image)}, turn_start["params"]["input"])
         self.assertEqual({"type": "object"}, turn_start["params"]["outputSchema"])
+        self.assertEqual("gpt-test", turn_start["params"]["model"])
+        self.assertEqual("high", turn_start["params"]["effort"])
+        self.assertEqual("fast", turn_start["params"]["serviceTier"])
         self.assertEqual("thread-1", result.thread_id)
         self.assertEqual("turn-1", result.turn_id)
+
+    def test_model_catalog_preserves_dynamic_reasoning_efforts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            adapter = self._adapter(Path(temporary))
+            process = SimpleNamespace()
+            with (
+                patch.object(adapter, "_start_app_server", return_value=(process, queue.Queue())),
+                patch.object(adapter, "_initialize_app_server"),
+                patch.object(
+                    adapter,
+                    "_wait_app_server_response",
+                    return_value={
+                        "data": [
+                            {
+                                "model": "gpt-test",
+                                "displayName": "GPT Test",
+                                "isDefault": True,
+                                "defaultReasoningEffort": "max",
+                                "supportedReasoningEfforts": [
+                                    {"reasoningEffort": "max"},
+                                    {"reasoningEffort": "ultra"},
+                                ],
+                                "additionalSpeedTiers": ["fast"],
+                            }
+                        ]
+                    },
+                ),
+                patch.object(adapter, "_send_app_server_message"),
+                patch.object(adapter, "_stop_process"),
+            ):
+                models = adapter.models(force=True)
+
+        self.assertEqual("gpt-test", models[0].model)
+        self.assertEqual(("max", "ultra"), models[0].supported_reasoning_efforts)
+        self.assertTrue(models[0].supports_fast)
 
     def test_job_environment_exposes_only_broker_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -442,10 +493,23 @@ class _FakeTelegramApi:
         self.sent: list[tuple[int, str, int | None]] = []
         self.deleted: list[tuple[int, int]] = []
         self.typing: list[int] = []
+        self.edited: list[tuple[int, int, str, dict | None]] = []
+        self.callbacks: list[tuple[str, str | None, bool]] = []
 
-    def send_text(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None):
+    def send_text(
+        self, chat_id: int, text: str, *, reply_to_message_id: int | None = None,
+        reply_markup=None,
+    ):
         self.sent.append((chat_id, text, reply_to_message_id))
         return [TelegramReceipt(100 + len(self.sent))]
+
+    def edit_text(self, chat_id: int, message_id: int, text: str, *, reply_markup=None):
+        self.edited.append((chat_id, message_id, text, reply_markup))
+        return TelegramReceipt(message_id)
+
+    def answer_callback_query(self, callback_id: str, text=None, *, show_alert=False):
+        self.callbacks.append((callback_id, text, show_alert))
+        return True
 
     def close(self) -> None:
         pass
@@ -568,6 +632,86 @@ class GatewayContextTests(unittest.TestCase):
             gateway.close()
 
         self.assertEqual("thread-1", active)
+
+    def test_authorized_callback_updates_speed_and_edits_panel(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            model = CodexModel("gpt-test", "GPT Test", "low", ("low",), True, True)
+            with patch.object(gateway.codex, "models", return_value=(model,)):
+                gateway._handle_update(
+                    1,
+                    {
+                        "callback_query": {
+                            "id": "callback-1",
+                            "from": {"id": 10},
+                            "data": "cx:ss:standard",
+                            "message": {
+                                "message_id": 20,
+                                "date": int(time.time()),
+                                "chat": {"id": 10, "type": "private"},
+                            },
+                        }
+                    },
+                )
+            preferences = gateway.state.codex_preferences(10)
+            callbacks = list(gateway.api.callbacks)
+            edited = list(gateway.api.edited)
+            gateway.close()
+
+        self.assertEqual("standard", preferences.speed)
+        self.assertEqual(("callback-1", None, False), callbacks[0])
+        self.assertEqual((10, 20), edited[0][:2])
+
+    def test_expired_callback_does_not_change_preferences(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            gateway._handle_update(
+                1,
+                {
+                    "callback_query": {
+                        "id": "callback-expired",
+                        "from": {"id": 10},
+                        "data": "cx:ss:fast",
+                        "message": {
+                            "message_id": 20,
+                            "date": int(time.time()) - 3600,
+                            "chat": {"id": 10, "type": "private"},
+                        },
+                    }
+                },
+            )
+            preferences = gateway.state.codex_preferences(10)
+            callback = gateway.api.callbacks[0]
+            gateway.close()
+
+        self.assertIsNone(preferences.speed)
+        self.assertTrue(callback[2])
+
+    def test_fast_mode_is_refused_when_model_does_not_advertise_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            model = CodexModel("gpt-mini", "GPT Mini", "low", ("low",), True, False)
+            gateway.state.update_seen(1)
+            with patch.object(gateway.codex, "models", return_value=(model,)):
+                gateway._handle_codex_command(1, 10, "/speed", "fast")
+            preferences = gateway.state.codex_preferences(10)
+            sent = list(gateway.api.sent)
+            gateway.close()
+
+        self.assertIsNone(preferences.speed)
+        self.assertIn("não oferece Fast mode", sent[-1][1])
 
     def test_secret_capture_never_persists_or_queues_plaintext(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

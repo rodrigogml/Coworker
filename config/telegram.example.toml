@@ -19,6 +19,12 @@ access_mode = "restricted"
 sandbox = "workspace-write"
 network_access = false
 approval_policy = "never"
+# Deixe vazio para herdar o padrão da conta/Codex. Estas opções também podem
+# ser personalizadas pela pessoa proprietária com /settings no Telegram.
+model = ""
+reasoning_effort = ""
+speed = "standard"
+verbosity = ""
 timeout_seconds = 1800
 additional_directories = []
 writable_directories = ["data"]

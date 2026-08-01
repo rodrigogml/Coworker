@@ -35,6 +35,24 @@ class CodexResult:
     status: str = "completed"
 
 
+@dataclass(frozen=True)
+class CodexOptions:
+    model: str | None = None
+    reasoning_effort: str | None = None
+    speed: str = "standard"
+    verbosity: str | None = None
+
+
+@dataclass(frozen=True)
+class CodexModel:
+    model: str
+    display_name: str
+    default_reasoning_effort: str | None
+    supported_reasoning_efforts: tuple[str, ...]
+    is_default: bool = False
+    supports_fast: bool = False
+
+
 class ProcessRegistry:
     """Permite cancelar o processo ativo enquanto o polling continua responsivo."""
 
@@ -94,6 +112,8 @@ class CodexAdapter:
         self.config = config
         self.project_root = project_root
         self.registry = registry
+        self._models_cache: tuple[CodexModel, ...] = ()
+        self._models_cached_at = 0.0
 
     def _environment(self) -> dict[str, str]:
         self.config.home_dir.mkdir(parents=True, exist_ok=True)
@@ -274,6 +294,66 @@ class CodexAdapter:
                 except subprocess.TimeoutExpired:
                     process.kill()
 
+    def models(self, *, force: bool = False) -> tuple[CodexModel, ...]:
+        """Consulta o seletor oficial de modelos usando a conta isolada da instância."""
+        if (
+            not force
+            and self._models_cache
+            and time.monotonic() - self._models_cached_at < 300
+        ):
+            return self._models_cache
+        process, responses = self._start_app_server("coworker-codex-models")
+        deadline = time.monotonic() + 30
+        try:
+            self._initialize_app_server(process, responses, deadline)
+            self._send_app_server_message(
+                process,
+                {
+                    "method": "model/list",
+                    "id": 2,
+                    "params": {"limit": 100, "includeHidden": False},
+                },
+            )
+            result = self._wait_app_server_response(responses, 2, deadline)
+        finally:
+            self._stop_process(process)
+        raw_models = result.get("data")
+        if not isinstance(raw_models, list):
+            raise CodexExecutionError("O Codex devolveu um catálogo de modelos inválido.")
+        parsed: list[CodexModel] = []
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            model = str(item.get("model") or item.get("id") or "").strip()
+            if not model:
+                continue
+            efforts: list[str] = []
+            for effort in item.get("supportedReasoningEfforts") or []:
+                if isinstance(effort, dict) and effort.get("reasoningEffort"):
+                    efforts.append(str(effort["reasoningEffort"]).casefold())
+            parsed.append(
+                CodexModel(
+                    model=model,
+                    display_name=str(item.get("displayName") or model),
+                    default_reasoning_effort=(
+                        str(item["defaultReasoningEffort"]).casefold()
+                        if item.get("defaultReasoningEffort")
+                        else None
+                    ),
+                    supported_reasoning_efforts=tuple(efforts),
+                    is_default=bool(item.get("isDefault")),
+                    supports_fast="fast" in {
+                        str(tier).casefold()
+                        for tier in item.get("additionalSpeedTiers") or []
+                    },
+                )
+            )
+        if not parsed:
+            raise CodexExecutionError("Nenhum modelo disponível foi informado pelo Codex.")
+        self._models_cache = tuple(parsed)
+        self._models_cached_at = time.monotonic()
+        return self._models_cache
+
     @staticmethod
     def _send_app_server_message(
         process: subprocess.Popen[str], message: dict[str, Any]
@@ -304,18 +384,19 @@ class CodexAdapter:
             if message.get("id") != request_id:
                 continue
             if isinstance(message.get("error"), dict):
-                raise CodexExecutionError("O Codex recusou a consulta dos limites da conta.")
+                raise CodexExecutionError("O Codex recusou a solicitação ao App Server.")
             result = message.get("result")
             if not isinstance(result, dict):
-                raise CodexExecutionError("O Codex devolveu limites em formato inválido.")
+                raise CodexExecutionError("O Codex devolveu uma resposta em formato inválido.")
             return result
-        raise CodexExecutionError("A consulta dos limites do Codex excedeu o tempo esperado.")
+        raise CodexExecutionError("A solicitação ao Codex excedeu o tempo esperado.")
 
     def build_command(
         self,
         thread_id: str | None,
         images: list[Path],
         output_schema: Path | None = None,
+        options: CodexOptions | None = None,
     ) -> list[str]:
         """Monta argumentos compatíveis com o modo não interativo do CLI."""
         command = [
@@ -330,6 +411,8 @@ class CodexAdapter:
         command.extend(
             ["--config", f'approval_policy="{self.config.approval_policy}"']
         )
+        for override in self.option_overrides(options or CodexOptions()):
+            command.extend(["--config", override])
         for directory in self.config.additional_directories:
             command.extend(["--add-dir", str(directory)])
         if output_schema is not None:
@@ -344,6 +427,23 @@ class CodexAdapter:
                 command.extend(["--image", str(image)])
             command.append("-")
         return command
+
+    @staticmethod
+    def option_overrides(options: CodexOptions) -> tuple[str, ...]:
+        """Traduz somente opções de inferência previamente validadas pelo gateway."""
+        overrides: list[str] = []
+        if options.model:
+            model = options.model.replace('"', '\\"')
+            overrides.append(f'model="{model}"')
+        if options.reasoning_effort:
+            overrides.append(f'model_reasoning_effort="{options.reasoning_effort}"')
+        if options.verbosity:
+            overrides.append(f'model_verbosity="{options.verbosity}"')
+        if options.speed == "fast":
+            overrides.extend(('features.fast_mode=true', 'service_tier="fast"'))
+        else:
+            overrides.extend(('features.fast_mode=false', 'service_tier="default"'))
+        return tuple(overrides)
 
     def permission_overrides(self) -> tuple[str, ...]:
         """Traduz a política pública para os perfis atuais de permissão do Codex."""
@@ -377,13 +477,17 @@ class CodexAdapter:
         on_started: Callable[[int], None] | None = None,
         output_schema: Path | None = None,
         job_output: Path | None = None,
+        options: CodexOptions | None = None,
     ) -> CodexResult:
+        effective_options = options or CodexOptions()
         if self.config.backend == "app-server":
             return self._run_app_server(
-                chat_id, prompt, thread_id, images, on_started, output_schema, job_output
+                chat_id, prompt, thread_id, images, on_started, output_schema, job_output,
+                effective_options,
             )
         return self._run_exec(
-            chat_id, prompt, thread_id, images, on_started, output_schema, job_output
+            chat_id, prompt, thread_id, images, on_started, output_schema, job_output,
+            effective_options,
         )
 
     def _run_exec(
@@ -395,8 +499,9 @@ class CodexAdapter:
         on_started: Callable[[int], None] | None,
         output_schema: Path | None,
         job_output: Path | None,
+        options: CodexOptions,
     ) -> CodexResult:
-        command = self.build_command(thread_id, images, output_schema)
+        command = self.build_command(thread_id, images, output_schema, options)
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             process = subprocess.Popen(
@@ -528,11 +633,15 @@ class CodexAdapter:
         reader_name: str,
         job_output: Path | None = None,
         chat_id: int | None = None,
+        options: CodexOptions | None = None,
     ) -> tuple[subprocess.Popen[str], queue.Queue[str | None]]:
         command = [str(self.config.executable), "app-server", "--listen", "stdio://"]
         for override in self.permission_overrides():
             command.extend(["--config", override])
         command.extend(["--config", f'approval_policy="{self.config.approval_policy}"'])
+        if options is not None:
+            for override in self.option_overrides(options):
+                command.extend(["--config", override])
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             process = subprocess.Popen(
@@ -595,9 +704,10 @@ class CodexAdapter:
         on_started: Callable[[int], None] | None,
         output_schema: Path | None,
         job_output: Path | None,
+        options: CodexOptions,
     ) -> CodexResult:
         process, responses = self._start_app_server(
-            "coworker-codex-turn", job_output, chat_id
+            "coworker-codex-turn", job_output, chat_id, options
         )
         self.registry.register(chat_id, process)
         deadline = time.monotonic() + self.config.timeout_seconds
@@ -635,6 +745,13 @@ class CodexAdapter:
                 "approvalPolicy": self.config.approval_policy,
                 "sandboxPolicy": self._app_server_sandbox(),
             }
+            if options.model:
+                turn_params["model"] = options.model
+            if options.reasoning_effort:
+                turn_params["effort"] = options.reasoning_effort
+            turn_params["serviceTier"] = (
+                "fast" if options.speed == "fast" else "default"
+            )
             if output_schema is not None:
                 turn_params["outputSchema"] = json.loads(output_schema.read_text(encoding="utf-8"))
             self._send_app_server_message(

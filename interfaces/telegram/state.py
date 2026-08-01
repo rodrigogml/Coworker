@@ -55,6 +55,14 @@ class PairingCandidate:
     expires_at: str
 
 
+@dataclass(frozen=True)
+class CodexPreferences:
+    model: str | None = None
+    reasoning_effort: str | None = None
+    speed: str | None = None
+    verbosity: str | None = None
+
+
 class StateStore:
     """Controla autorização, sessões e mensagens em um SQLite exclusivo da máquina."""
 
@@ -273,6 +281,52 @@ class StateStore:
         cursor = self.connection.execute(
             "UPDATE codex_sessions SET active=0,last_used_at=? WHERE chat_id=? AND active=1",
             (iso(), chat_id),
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
+    def codex_preferences(self, chat_id: int) -> CodexPreferences:
+        row = self.connection.execute(
+            "SELECT model,reasoning_effort,speed,verbosity FROM codex_preferences WHERE chat_id=?",
+            (chat_id,),
+        ).fetchone()
+        if not row:
+            return CodexPreferences()
+        return CodexPreferences(
+            model=str(row["model"]) if row["model"] else None,
+            reasoning_effort=(
+                str(row["reasoning_effort"]) if row["reasoning_effort"] else None
+            ),
+            speed=str(row["speed"]) if row["speed"] else None,
+            verbosity=str(row["verbosity"]) if row["verbosity"] else None,
+        )
+
+    def set_codex_preference(self, chat_id: int, field: str, value: str | None) -> None:
+        allowed = {
+            "model",
+            "reasoning_effort",
+            "speed",
+            "verbosity",
+        }
+        if field not in allowed:
+            raise StateError("Campo de configuração do Codex inválido.")
+        try:
+            with self.connection:
+                self.connection.execute(
+                    """INSERT INTO codex_preferences(chat_id,updated_at)
+                       VALUES (?,?) ON CONFLICT(chat_id) DO NOTHING""",
+                    (chat_id, iso()),
+                )
+                self.connection.execute(
+                    f"UPDATE codex_preferences SET {field}=?,updated_at=? WHERE chat_id=?",
+                    (value, iso(), chat_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise StateError("Valor de configuração do Codex inválido.") from exc
+
+    def reset_codex_preferences(self, chat_id: int) -> bool:
+        cursor = self.connection.execute(
+            "DELETE FROM codex_preferences WHERE chat_id=?", (chat_id,)
         )
         self.connection.commit()
         return cursor.rowcount > 0

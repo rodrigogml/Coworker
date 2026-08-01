@@ -1,13 +1,13 @@
-"""Testes da extração segura de contas digitais da CPFL."""
+"""Testes da consulta direta e segura de contas da CPFL."""
 
 from __future__ import annotations
 
-import base64
 import importlib.util
-import json
+import io
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,80 +22,107 @@ sys.modules[SPEC.name] = CPFL
 SPEC.loader.exec_module(CPFL)
 
 
-class CpflTests(unittest.TestCase):
-    """Valida autenticidade, formatos e ausência de exposição financeira."""
+class _Headers:
+    @staticmethod
+    def get_content_charset() -> str:
+        return "utf-8"
 
-    def setUp(self) -> None:
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary_directory.cleanup)
-        root = Path(self.temporary_directory.name)
-        self.config_path = root / "cpfl.toml"
-        self.config_path.write_text(
-            'default_profile = "pessoal"\n\n'
-            "[portal]\n"
-            'allowed_host = "contadigital.cpfl.com.br"\n'
-            'allowed_path = "/Boleto/boletolink.aspx"\n'
-            "timeout_seconds = 30\n\n"
-            "[mail]\n"
-            'sender = "contadigital@cpfl.com.br"\n'
-            "search_days = 120\n"
-            "search_limit = 20\n\n"
-            "[profiles.pessoal]\n"
-            'gmail_profile = "pessoal"\n'
-            'entity_ref = "Pessoas/Fisicas/Pessoa Teste"\n'
-            'consumer_unit = ""\n',
-            encoding="utf-8",
-        )
-        self.config = CPFL.load_config(self.config_path)
+
+class _Response:
+    def __init__(self, url: str, body: str):
+        self._url = url
+        self._body = body.encode("utf-8")
+        self.headers = _Headers()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def geturl(self) -> str:
+        return self._url
+
+    def read(self, limit: int) -> bytes:
+        return self._body[:limit]
+
+
+class _Opener:
+    def __init__(self, responses: list[_Response]):
+        self.responses = responses
+        self.requests = []
+
+    def open(self, request, *, timeout):
+        self.requests.append((request, timeout))
+        return self.responses.pop(0)
+
+
+class CpflTests(unittest.TestCase):
+    link = "https://contadigital.cpfl.com.br/Boleto/boletolink.aspx?token=falso"
+    entity_ref = "Pessoas/Fisicas/Pessoa Teste"
 
     @staticmethod
     def pix_payload() -> str:
         prefix = "00020153039865802BR6304"
         return prefix + CPFL._crc16(prefix.encode("utf-8"))
 
-    def message(self, *, authenticated: bool = True) -> dict[str, object]:
-        authentication = (
-            "mx.google.com; dkim=pass header.i=@cpfl.com.br; spf=pass "
-            "smtp.mailfrom=contadigital@cpfl.com.br; dmarc=pass "
-            "header.from=cpfl.com.br"
-            if authenticated
-            else "mx.google.com; dkim=fail; spf=fail; dmarc=fail"
+    def test_builds_request_without_configuration_or_email(self) -> None:
+        request = CPFL.build_request(self.link, self.entity_ref)
+
+        self.assertEqual(self.entity_ref, request.entity_ref)
+        self.assertEqual(16, len(request.request_id))
+        self.assertNotIn("token=falso", str(request.request_id))
+
+    def test_rejects_non_official_or_incomplete_links(self) -> None:
+        invalid = (
+            "https://example.com/Boleto/boletolink.aspx?token=x",
+            "http://contadigital.cpfl.com.br/Boleto/boletolink.aspx?token=x",
+            "https://contadigital.cpfl.com.br/Boleto/boletolink.aspx",
+            "https://contadigital.cpfl.com.br/Boleto/boletolink.aspx?token=x#fragment",
         )
-        body = (
-            '<a href="https://contadigital.cpfl.com.br/Boleto/boletolink.aspx?token=falso">Conta</a>'
-            " Número da UC: 123.456.789-01 Mês de referência: 07/2026 "
-            "Data de vencimento: 24/08/2026 Valor: R$ 123,45"
+        for link in invalid:
+            with self.subTest(link=link), self.assertRaises(CPFL.CpflError):
+                CPFL._validate_portal_url(link)
+
+    def test_reads_link_from_file_or_stdin_but_not_argument_value(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "link.txt"
+            source.write_text(self.link + "\n", encoding="utf-8")
+            from_file = CPFL.read_link(link_file=source, link_stdin=False)
+        from_stdin = CPFL.read_link(
+            link_file=None,
+            link_stdin=True,
+            stdin=io.StringIO(self.link + "\n"),
         )
-        encoded = base64.urlsafe_b64encode(body.encode("utf-8")).decode("ascii")
-        return {
-            "id": "abcdef1234",
-            "payload": {
-                "headers": [
-                    {"name": "From", "value": "<contadigital@cpfl.com.br>"},
-                    {"name": "Subject", "value": "Conta por e-mail CPFL"},
-                    {"name": "Date", "value": "Tue, 28 Jul 2026 04:31:14 -0300"},
-                    {"name": "Authentication-Results", "value": authentication},
-                ],
-                "body": {"data": encoded},
-            },
-        }
 
-    def test_loads_profile_without_personal_values_in_public_model(self) -> None:
-        self.assertEqual(self.config.profile.name, "pessoal")
-        self.assertEqual(self.config.portal.allowed_host, "contadigital.cpfl.com.br")
+        self.assertEqual(self.link, from_file)
+        self.assertEqual(self.link, from_stdin)
+        parser_help = CPFL.build_parser().format_help()
+        self.assertNotIn("--link LINK", parser_help)
 
-    def test_parses_only_authenticated_official_message(self) -> None:
-        bill = CPFL.parse_bill_message(self.message(), self.config)
-        self.assertEqual(bill.reference_month, "07/2026")
-        self.assertEqual(bill.due_date, "24/08/2026")
-        self.assertEqual(bill.amount, "R$ 123,45")
-        self.assertNotIn("token=falso", str(CPFL.bill_summary(bill)))
-        with self.assertRaisesRegex(CPFL.CpflError, "autenticação"):
-            CPFL.parse_bill_message(self.message(authenticated=False), self.config)
+    def test_portal_uses_only_first_four_cpf_digits(self) -> None:
+        request = CPFL.build_request(self.link, self.entity_ref)
+        first_page = (
+            '<form action="/Boleto/boletolink.aspx?token=falso">'
+            '<input name="txtNumDoc" value="">'
+            '<input name="__VIEWSTATE" value="state">'
+            "</form>"
+        )
+        result_page = '<input name="resultado" value="ok">'
+        opener = _Opener([
+            _Response(self.link, first_page),
+            _Response(self.link, result_page),
+        ])
+        with (
+            patch.object(CPFL.urllib.request, "build_opener", return_value=opener),
+            patch.object(CPFL, "read_entry_attribute", return_value="12345678901"),
+        ):
+            CPFL._open_portal(request, 30)
 
-    def test_rejects_link_outside_cpfl_allowlist(self) -> None:
-        with self.assertRaisesRegex(CPFL.CpflError, "fora do portal"):
-            CPFL._validate_portal_url("https://example.com/Boleto/boletolink.aspx", self.config)
+        posted = opener.requests[1][0].data.decode("utf-8")
+        fields = urllib.parse.parse_qs(posted)
+        self.assertEqual(["1234"], fields["txtNumDoc"])
+        self.assertNotIn("12345678901", posted)
 
     def test_payment_data_validates_without_returning_codes_in_summary(self) -> None:
         barcode = "8" + "1" * 47
@@ -104,42 +131,40 @@ class CpflTests(unittest.TestCase):
             f'<input type="hidden" name="hdCodigoBarras" value="{barcode}">'
             f'<input type="hidden" name="hdPIX" value="{pix}">'
         )
-        bill = CPFL.parse_bill_message(self.message(), self.config)
-        with patch.object(CPFL, "_open_portal", return_value=(bill.portal_url, page)):
-            payment = CPFL.retrieve_payment_data(bill, self.config)
+        request = CPFL.build_request(self.link, self.entity_ref)
+        with patch.object(CPFL, "_open_portal", return_value=(self.link, page)):
+            payment = CPFL.retrieve_payment_data(request)
         summary = {
             "barcode": CPFL.validate_barcode(payment["payment"]["barcode"]),
             "pix": CPFL.validate_pix(payment["payment"]["pix"]),
         }
+
         self.assertTrue(summary["barcode"]["febraban_collection_line"])
         self.assertTrue(summary["pix"]["crc16_valid"])
         self.assertNotIn(barcode, str(summary))
         self.assertNotIn(pix, str(summary))
 
     def test_private_output_is_idempotent_and_confined_to_data(self) -> None:
-        data_root = PROJECT_ROOT / "data"
-        target = data_root / "test-cpfl-output.json"
+        target = PROJECT_ROOT / "data" / "test-cpfl-output.json"
         payload = {"payment": {"barcode": "fake", "pix": "fake"}}
         try:
             self.assertTrue(CPFL.write_private_json(target, payload, overwrite=False))
             self.assertFalse(CPFL.write_private_json(target, payload, overwrite=False))
         finally:
             target.unlink(missing_ok=True)
-        with self.assertRaisesRegex(CPFL.CpflError, "dentro de 'data/'"):
-            CPFL._safe_output_path(Path(self.temporary_directory.name) / "outside.json", "id")
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(CPFL.CpflError, "dentro de 'data/'"):
+                CPFL._safe_output_path(Path(temporary) / "outside.json", "id")
 
-    def test_doctor_requires_protected_cpf(self) -> None:
+    def test_doctor_requires_protected_cpf_without_gmail(self) -> None:
         inspection = {
-            "attributes": [
-                {"name": "CPF", "present": True, "protected": True}
-            ]
+            "attributes": [{"name": "CPF", "present": True, "protected": True}]
         }
-        with (
-            patch.object(CPFL, "_run_gmail", return_value={"ok": True}),
-            patch.object(CPFL, "inspect_entry", return_value=inspection),
-        ):
-            result = CPFL.command_doctor(self.config)
+        with patch.object(CPFL, "inspect_entry", return_value=inspection):
+            result = CPFL.command_doctor(self.entity_ref)
+
         self.assertTrue(result["cpf_protected"])
+        self.assertFalse(result["configuration_required"])
         self.assertFalse(result["secrets_exposed"])
 
 

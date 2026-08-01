@@ -7,7 +7,7 @@ Scripts exclusivos de uma capacidade devem permanecer dentro da própria skill.
 Ferramentas compartilhadas por várias skills pertencem a `scripts/`.
 
 Capacidades disponíveis incluem Cloudflare, Forward Email, Omie, Todoist, Notion,
-Gmail, Calendar, Drive, Contacts e contas digitais da CPFL.
+Gmail, Calendar, Drive, Contacts e consulta direta de contas da CPFL.
 
 Exemplos de capacidades futuras:
 

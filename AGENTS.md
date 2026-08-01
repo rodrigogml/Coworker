@@ -353,6 +353,13 @@ bruta de ferramentas e nunca usar `--dangerously-bypass-approvals-and-sandbox`.
 O comando `/new` somente desvincula a sessão ativa; `/resume` exige resposta a uma
 mensagem da Coworker com thread conhecida.
 
+Modelo, esforço de raciocínio, velocidade e verbosity podem ser escolhidos pela pessoa
+proprietária com `/settings` e comandos equivalentes. Consultar modelos e esforços por
+`model/list`, validar novamente cada callback e persistir preferências somente no
+SQLite operacional. Essas preferências afetam solicitações futuras e não autorizam
+alterar backend, sandbox, rede, aprovações, diretórios, provedor ou modo super pelo
+Telegram. Nunca aceitar uma chave `--config` arbitrária recebida na conversa.
+
 Cada execução usa `data/telegram/jobs/<job-id>/`; somente arquivos validados dentro de
 `output/` podem ser transmitidos. Respostas e artefatos devem referenciar nativamente a
 solicitação, e os IDs devolvidos devem ser persistidos. Upload interrompido em estado
@@ -488,13 +495,15 @@ Quando os escopos forem ampliados, orientar nova execução de
 ### CPFL
 
 Para contas digitais da CPFL, usar `skills/cpfl/SKILL.md` e executar
-`python skills/cpfl/scripts/cpfl.py --profile NOME`. A skill compõe Gmail e o cadastro
-protegido da pessoa titular; CPF nunca deve ser aceito como argumento.
+`python skills/cpfl/scripts/cpfl.py`. A skill não possui configuração privada, perfil
+ou dependência de Gmail. Receber o link individual somente por arquivo ou entrada
+padrão, nunca como argumento, e validar internamente o host e caminho oficiais. CPF
+nunca deve ser aceito como argumento; informar somente a referência da pessoa no
+cofre, e o script deve ler internamente apenas o atributo `CPF` protegido.
 
-`latest` localiza somente mensagens autenticadas do remetente oficial. `payment-data`
-obtém PIX e linha digitável sem reCAPTCHA, grava os valores exclusivamente dentro de
-`data/` e devolve somente validações e o caminho do arquivo. Obter esses dados não
-autoriza pagamento.
+`payment-data` obtém PIX e linha digitável sem reCAPTCHA, grava os valores
+exclusivamente dentro de `data/` e devolve somente validações e o caminho do arquivo.
+Obter esses dados não autoriza pagamento.
 
 O PDF exige navegador e reCAPTCHA. Não improvisar bypass, não expor o link individual
 e seguir a confirmação específica do navegador antes de resolver CAPTCHA. Quando
