@@ -165,12 +165,45 @@ raiz de confiança da instalação.
 - `/secret NomeDoServico`: prepara a captura protegida da próxima mensagem de texto;
 - `/help`: lista os comandos.
 
-`/secret` não exige conhecer a estrutura do KeePassXC. Por exemplo, `/secret Todoist`
-usa a entrada `APIs/Todoist`. A mensagem seguinte é interceptada antes de ser gravada
-no SQLite, incluída em um job ou enviada ao Codex. O gateway salva o valor no campo
-`Password`, registra somente `[Censurado por segurança]` e solicita `deleteMessage` à
-Bot API. Se o Telegram não permitir a exclusão, a resposta orienta apagar a mensagem
-manualmente sem repetir o segredo. `/cancel` abandona uma captura pendente.
+`/secret` reconhece deterministicamente aliases das integrações simples mantidas pelo
+projeto. Por exemplo, `/secret atualize o token do Todoist` resolve para
+`APIs/Todoist`; o gateway mostra o destino antes de preparar a captura. A mensagem
+seguinte é interceptada antes de ser gravada no SQLite, incluída em um job ou enviada
+ao Codex. O gateway salva o valor no campo `Password`, registra somente
+`[Censurado por segurança]` e solicita `deleteMessage` à Bot API.
+
+Os aliases conhecidos são Todoist, Notion, Cloudflare, Forward Email e Telegram. O
+texto pode conter palavras auxiliares, mas deve identificar exatamente um serviço. Um
+destino desconhecido é recusado; credenciais personalizadas continuam possíveis com
+um caminho explícito, por exemplo `/secret APIs/ServicoPersonalizado`. A mensagem
+sensível nunca é enviada à IA para classificação. Se o Telegram não permitir a
+exclusão, a resposta orienta apagar a mensagem manualmente sem repetir o segredo.
+`/cancel` abandona uma captura pendente.
+
+O fluxo normal não exige que a pessoa usuária execute `/secret`. Quando o Codex
+identifica uma credencial ausente, ele chama o broker local:
+
+```powershell
+python interfaces/telegram/scripts/request_credential.py `
+  --entry "APIs/Omie" `
+  --field "username:App Key" `
+  --field "password:App Secret" `
+  --prompt "Informe as credenciais para ativar a integração Omie."
+```
+
+O script recebe `chat_id` e caixa do trabalho somente pelo ambiente definido pelo
+gateway. Ele nunca recebe o valor protegido: publica apenas a descrição da necessidade
+e aguarda. O gateway pergunta cada campo diretamente no Telegram, intercepta e tenta
+apagar cada resposta, mantém valores intermediários somente em memória, grava
+`Username` e `Password` juntos e devolve ao processo apenas sucesso ou erro. Enquanto
+a captura estiver ativa, o prazo do turno é estendido de forma limitada.
+
+O caminho é escolhido pelo Codex conforme a skill e o perfil da integração. Assim,
+contas diferentes podem usar entradas como `APIs/Omie/EmpresaA` e
+`APIs/Omie/EmpresaB`, sem expor a estrutura do cofre à pessoa usuária. Uma captura
+simples aceita `password`; a captura dupla aceita `username` e `password`. Valores
+adicionais devem usar entradas protegidas separadas até existir contrato público para
+atributos personalizados. O comando `/secret` permanece somente como fallback manual.
 
 Responder a uma mensagem inclui um único nível de contexto, quote e anexos conhecidos,
 sem trocar a thread ativa. A confirmação, a resposta final e o primeiro artefato usam

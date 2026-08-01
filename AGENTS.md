@@ -329,6 +329,17 @@ Telegram e informar quando a exclusão não for possível. Nunca afirmar que um 
 foi apagado sem confirmação da Bot API. Agentes devem orientar esse fluxo sempre que
 precisarem solicitar um segredo; mensagens de captura nunca devem chegar ao modelo.
 
+Quando o próprio Codex identificar uma credencial necessária durante um trabalho do
+Telegram, ele deve preferir o broker protegido e executar
+`python interfaces/telegram/scripts/request_credential.py`. Informar o caminho canônico
+da entrada, uma explicação curta e um campo `password:Rótulo`; para integrações como a
+Omie, informar dois campos, `username:App Key` e `password:App Secret`. O gateway
+solicita cada valor diretamente à pessoa usuária, remove as mensagens quando possível,
+grava os campos no KeePassXC e devolve ao processo somente sucesso ou erro. O valor não
+pode entrar no prompt, no job, em argumentos ou no retorno da ferramenta. Caminhos de
+perfis distintos devem ser definidos pelo Codex conforme a configuração da integração;
+a pessoa usuária não deve precisar conhecer a estrutura interna do cofre.
+
 Usar o backend configurado em `codex.backend`: `exec` permanece o fallback compatível
 e `app-server` usa somente a API estável por stdio. Enviar prompts sem shell, capturar
 `thread_id` e `turn_id` quando disponíveis, não retransmitir raciocínio, logs ou saída

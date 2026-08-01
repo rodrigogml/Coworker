@@ -354,6 +354,14 @@ class StateStore:
         row = self.connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
         return str(row["status"]) if row else None
 
+    def job_accepts_credential_request(self, job_id: int, chat_id: int) -> bool:
+        row = self.connection.execute(
+            """SELECT 1 FROM jobs
+               WHERE id=? AND chat_id=? AND status='running'""",
+            (job_id, chat_id),
+        ).fetchone()
+        return row is not None
+
     def cancel_queued_jobs(self, chat_id: int) -> int:
         cursor = self.connection.execute(
             "UPDATE jobs SET status='cancelled',finished_at=? WHERE chat_id=? AND status='queued'",

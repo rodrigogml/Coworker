@@ -410,7 +410,7 @@ class CodexAdapter:
                 errors="replace",
                 shell=False,
                 creationflags=flags,
-                env=self._job_environment(job_output),
+                env=self._job_environment(job_output, chat_id),
             )
         except OSError as exc:
             raise CodexExecutionError("Não foi possível iniciar o Codex CLI configurado.") from exc
@@ -444,12 +444,16 @@ class CodexAdapter:
         stdout_thread.start()
         stderr_thread.start()
         deadline = time.monotonic() + self.config.timeout_seconds
+        hard_deadline = deadline + 1800
         finished_streams: set[str] = set()
         final_messages: list[str] = []
         discovered_thread = thread_id
         malformed_events = 0
         try:
             while len(finished_streams) < 2 or process.poll() is None:
+                deadline = self._extend_for_credential_capture(
+                    deadline, hard_deadline, job_output
+                )
                 if time.monotonic() >= deadline:
                     process.terminate()
                     raise CodexExecutionError("A execução do Codex excedeu o tempo configurado.")
@@ -494,14 +498,36 @@ class CodexAdapter:
             raise CodexExecutionError("O Codex concluiu sem devolver uma resposta final.")
         return CodexResult(discovered_thread, final_messages[-1])
 
-    def _job_environment(self, job_output: Path | None) -> dict[str, str]:
+    def _job_environment(
+        self,
+        job_output: Path | None,
+        chat_id: int | None = None,
+    ) -> dict[str, str]:
         environment = self._environment()
         if job_output is not None:
             environment["COWORKER_JOB_OUTPUT"] = str(job_output)
+        if chat_id is not None:
+            environment["COWORKER_CHAT_ID"] = str(chat_id)
         return environment
 
+    @staticmethod
+    def _extend_for_credential_capture(
+        deadline: float,
+        hard_deadline: float,
+        job_output: Path | None,
+    ) -> float:
+        if job_output is None:
+            return deadline
+        request_path = job_output.parent / "credential-request.json"
+        if not request_path.is_file():
+            return deadline
+        return min(hard_deadline, max(deadline, time.monotonic() + 5))
+
     def _start_app_server(
-        self, reader_name: str, job_output: Path | None = None
+        self,
+        reader_name: str,
+        job_output: Path | None = None,
+        chat_id: int | None = None,
     ) -> tuple[subprocess.Popen[str], queue.Queue[str | None]]:
         command = [str(self.config.executable), "app-server", "--listen", "stdio://"]
         for override in self.permission_overrides():
@@ -520,7 +546,7 @@ class CodexAdapter:
                 errors="replace",
                 shell=False,
                 creationflags=flags,
-                env=self._job_environment(job_output),
+                env=self._job_environment(job_output, chat_id),
             )
         except OSError as exc:
             raise CodexExecutionError("Não foi possível iniciar o Codex App Server.") from exc
@@ -570,9 +596,12 @@ class CodexAdapter:
         output_schema: Path | None,
         job_output: Path | None,
     ) -> CodexResult:
-        process, responses = self._start_app_server("coworker-codex-turn", job_output)
+        process, responses = self._start_app_server(
+            "coworker-codex-turn", job_output, chat_id
+        )
         self.registry.register(chat_id, process)
         deadline = time.monotonic() + self.config.timeout_seconds
+        hard_deadline = deadline + 1800
         discovered_thread = thread_id
         turn_id: str | None = None
         final_messages: list[str] = []
@@ -627,7 +656,27 @@ class CodexAdapter:
                     },
                 ),
             )
-            while time.monotonic() < deadline:
+            while True:
+                deadline = self._extend_for_credential_capture(
+                    deadline, hard_deadline, job_output
+                )
+                if time.monotonic() >= deadline:
+                    try:
+                        self._send_app_server_message(
+                            process,
+                            {
+                                "method": "turn/interrupt",
+                                "id": 100,
+                                "params": {
+                                    "threadId": discovered_thread,
+                                    "turnId": turn_id,
+                                },
+                            },
+                        )
+                    finally:
+                        raise CodexExecutionError(
+                            "A execução do Codex excedeu o tempo configurado."
+                        )
                 try:
                     line = responses.get(timeout=0.25)
                 except queue.Empty:
@@ -648,14 +697,6 @@ class CodexAdapter:
                     completed = params_value.get("turn")
                     status = str(completed.get("status", "failed")) if isinstance(completed, dict) else "failed"
                     break
-            else:
-                try:
-                    self._send_app_server_message(
-                        process,
-                        {"method": "turn/interrupt", "id": 100, "params": {"threadId": discovered_thread, "turnId": turn_id}},
-                    )
-                finally:
-                    raise CodexExecutionError("A execução do Codex excedeu o tempo configurado.")
         finally:
             self.registry.unregister(chat_id, process)
             self._stop_process(process)

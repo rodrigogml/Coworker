@@ -1,6 +1,8 @@
 authorization_endpoint = "https://accounts.google.com/o/oauth2/v2/auth"
 token_endpoint = "https://oauth2.googleapis.com/token"
 userinfo_endpoint = "https://openidconnect.googleapis.com/v1/userinfo"
+client_id = "504604731310-7i85a4kdqjlt6mao2pbvd41u7uv9kl6n.apps.googleusercontent.com"
+# O Client Secret compartilhado permanece protegido no cofre de cada instância.
 client_credential_ref = "APIs/Google/OAuthClient"
 timeout_seconds = 30
 authorization_timeout_seconds = 300

@@ -481,6 +481,7 @@ def _write_entry_password(
     config_path: Path = DEFAULT_CONFIG,
 ) -> None:
     """Grava um segredo, com usuário opcional, sem expô-lo em argumentos."""
+    ensure_keepassxc_gui_closed()
     normalized_entry = validate_entry_path(entry)
     normalized_username = str(username).strip() if username is not None else None
     if normalized_username is not None and (
@@ -553,6 +554,99 @@ def write_entry_secret(
         entry,
         None,
         secret,
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )
+
+
+def remove_entry(
+    entry: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Remove uma entrada conhecida sem listar ou revelar seu conteúdo."""
+    ensure_keepassxc_gui_closed()
+    normalized_entry = validate_entry_path(entry)
+    if cli_path is None or vault_path is None or credential_target is None:
+        config = load_vault_config(config_path)
+        cli_path = cli_path or config.cli_path
+        vault_path = vault_path or config.vault_path
+        credential_target = credential_target or config.credential_target
+    require_file(cli_path, "KeePassXC CLI")
+    require_file(vault_path, "Cofre")
+    master_password = read_windows_credential(credential_target)
+    try:
+        completed = run_keepassxc(
+            cli_path,
+            ["rm", "--quiet", str(vault_path), normalized_entry],
+            master_password,
+        )
+    finally:
+        master_password = ""
+    if completed.returncode != 0:
+        raise VaultToolError(
+            f"Não foi possível remover a credencial antiga '{normalized_entry}'."
+        )
+
+
+def ensure_keepassxc_gui_closed() -> None:
+    """Impede gravações concorrentes com a interface do KeePassXC no Windows."""
+    if os.name != "nt":
+        return
+    completed = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq KeePassXC.exe", "/FO", "CSV", "/NH"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    if "keepassxc.exe" in completed.stdout.casefold():
+        raise VaultToolError(
+            "Feche a interface do KeePassXC antes de gravar no cofre."
+        )
+
+
+def migrate_entry_secret(
+    source: str,
+    target: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Copia um segredo internamente para o destino e remove a entrada antiga."""
+    normalized_source = validate_entry_path(source)
+    normalized_target = validate_entry_path(target)
+    if normalized_source == normalized_target:
+        raise VaultToolError("Origem e destino da migração são iguais.")
+    secret = read_entry_secret(
+        normalized_source,
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )
+    try:
+        write_entry_secret(
+            normalized_target,
+            secret,
+            cli_path=cli_path,
+            vault_path=vault_path,
+            credential_target=credential_target,
+            config_path=config_path,
+        )
+    finally:
+        secret = ""
+    remove_entry(
+        normalized_source,
         cli_path=cli_path,
         vault_path=vault_path,
         credential_target=credential_target,
@@ -865,6 +959,29 @@ def command_store(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_migrate(args: argparse.Namespace) -> dict[str, Any]:
+    """Migra uma credencial entre caminhos sem devolver seu conteúdo."""
+    if not args.confirm:
+        raise VaultToolError("A migração exige a opção '--confirm'.")
+    source = validate_entry_path(args.source)
+    target = validate_entry_path(args.target)
+    migrate_entry_secret(
+        source,
+        target,
+        cli_path=resolved_path(args.cli),
+        vault_path=resolved_path(args.vault),
+        credential_target=args.credential_target,
+    )
+    return {
+        "ok": True,
+        "source": source,
+        "target": target,
+        "migrated": True,
+        "source_removed": True,
+        "secret_exposed": False,
+    }
+
+
 def command_enroll(args: argparse.Namespace) -> dict[str, Any]:
     """Abre o cadastro local e seguro da senha mestra."""
     cli_path = resolved_path(args.cli)
@@ -1021,6 +1138,14 @@ def build_parser(config: VaultConfig | None = None) -> argparse.ArgumentParser:
     store_parser.add_argument("entry")
     store_parser.add_argument("--stdin", action="store_true")
     store_parser.set_defaults(handler=command_store)
+
+    migrate_parser = commands.add_parser(
+        "migrate", help="Migra uma credencial sem expor seu segredo."
+    )
+    migrate_parser.add_argument("source")
+    migrate_parser.add_argument("target")
+    migrate_parser.add_argument("--confirm", action="store_true")
+    migrate_parser.set_defaults(handler=command_migrate)
 
     enroll_parser = commands.add_parser(
         "enroll", help="Cadastra a senha mestra nesta máquina."

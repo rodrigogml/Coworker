@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -14,6 +15,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from interfaces.telegram.codex import CodexAdapter, CodexCancelledError, ProcessRegistry
+from interfaces.telegram.credential_broker import (
+    create_request,
+    parse_field_spec,
+)
 from interfaces.telegram.gateway import Gateway
 from interfaces.telegram.config import (
     CodexConfig,
@@ -151,6 +156,32 @@ class StructuredStateTests(unittest.TestCase):
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_credential_request_uses_only_gateway_job_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = JobWorkspace.create(root / "jobs", 7)
+            environment = {
+                "COWORKER_JOB_OUTPUT": str(workspace.output_dir),
+                "COWORKER_CHAT_ID": "10",
+            }
+            with patch.dict(os.environ, environment, clear=False):
+                request = create_request(
+                    "APIs/Omie",
+                    "Informe as credenciais da Omie.",
+                    [
+                        parse_field_spec("username:App Key"),
+                        parse_field_spec("password:App Secret"),
+                    ],
+                    600,
+                )
+
+            payload = json.loads(request.request_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(7, payload["job_id"])
+        self.assertEqual(10, payload["chat_id"])
+        self.assertEqual(["username", "password"], [item["name"] for item in payload["fields"]])
+        self.assertNotIn("value", str(payload).lower())
+
     def test_structured_and_legacy_results_are_supported(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = JobWorkspace.create(Path(temporary), 1)
@@ -373,6 +404,17 @@ class AppServerBackendTests(unittest.TestCase):
         self.assertEqual("thread-1", result.thread_id)
         self.assertEqual("turn-1", result.turn_id)
 
+    def test_job_environment_exposes_only_broker_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = self._adapter(root)
+            output = root / "jobs" / "1" / "output"
+
+            environment = adapter._job_environment(output, 10)
+
+        self.assertEqual(str(output), environment["COWORKER_JOB_OUTPUT"])
+        self.assertEqual("10", environment["COWORKER_CHAT_ID"])
+
     def test_app_server_interrupted_turn_is_reported_as_cancelled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -504,6 +546,78 @@ class GatewayContextTests(unittest.TestCase):
         self.assertNotIn("token-secreto", sent)
         self.assertEqual([(10, 21)], deleted)
         self.assertEqual(0, queued)
+
+    def test_codex_broker_captures_username_and_password_without_plaintext(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            gateway = self._gateway(root)
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            gateway.state.update_seen(1)
+            job_id = gateway.state.create_job(1, 10)
+            gateway.state.update_job(job_id, "running", pid=123)
+            workspace = JobWorkspace.create(root / "jobs", job_id)
+            with patch.dict(
+                os.environ,
+                {
+                    "COWORKER_JOB_OUTPUT": str(workspace.output_dir),
+                    "COWORKER_CHAT_ID": "10",
+                },
+                clear=False,
+            ):
+                request = create_request(
+                    "APIs/Omie",
+                    "Ative a integração Omie.",
+                    [
+                        parse_field_spec("username:App Key"),
+                        parse_field_spec("password:App Secret"),
+                    ],
+                    600,
+                )
+            gateway._scan_credential_requests()
+            username = {
+                "message": {
+                    "message_id": 21,
+                    "chat": {"id": 10, "type": "private"},
+                    "from": {"id": 10},
+                    "text": "app-key-protegida",
+                }
+            }
+            password = {
+                "message": {
+                    "message_id": 22,
+                    "chat": {"id": 10, "type": "private"},
+                    "from": {"id": 10},
+                    "text": "app-secret-protegido",
+                }
+            }
+            with patch(
+                "interfaces.telegram.gateway.write_entry_credentials"
+            ) as write:
+                gateway._handle_update(2, username)
+                gateway._handle_update(3, password)
+
+            response = json.loads(request.response_path.read_text(encoding="utf-8"))
+            stored_username = gateway.state.message(10, 21)
+            stored_password = gateway.state.message(10, 22)
+            sent = str(gateway.api.sent)
+            deleted = list(gateway.api.deleted)
+            gateway.close()
+
+        write.assert_called_once_with(
+            "APIs/Omie", "app-key-protegida", "app-secret-protegido"
+        )
+        self.assertTrue(response["ok"])
+        self.assertFalse(response["secret_exposed"])
+        self.assertEqual("[Censurado por segurança]", stored_username["text"])
+        self.assertEqual("[Censurado por segurança]", stored_password["text"])
+        self.assertNotIn("app-key-protegida", sent)
+        self.assertNotIn("app-secret-protegido", sent)
+        self.assertEqual([(10, 21), (10, 22)], deleted)
 
     def test_reference_without_persisted_content_uses_update_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

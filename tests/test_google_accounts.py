@@ -46,14 +46,15 @@ class GoogleAccountsTests(unittest.TestCase):
             ),
         )
         return google.GoogleConfig(
-            "https://accounts.google.com/o/oauth2/v2/auth",
-            "https://oauth2.googleapis.com/token",
-            "https://openidconnect.googleapis.com/v1/userinfo",
-            "APIs/Google/OAuthClient",
-            30,
-            300,
-            "pessoal",
-            {"pessoal": profile},
+            authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
+            token_endpoint="https://oauth2.googleapis.com/token",
+            userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
+            client_id="client-id-publico.apps.googleusercontent.com",
+            client_credential_ref="APIs/Google/OAuthClient",
+            timeout_seconds=30,
+            authorization_timeout_seconds=300,
+            default_profile="pessoal",
+            profiles={"pessoal": profile},
         )
 
     def test_load_config_and_select_profile(self):
@@ -65,6 +66,7 @@ class GoogleAccountsTests(unittest.TestCase):
                 'token_endpoint = "https://oauth2.googleapis.com/token"\n'
                 'userinfo_endpoint = '
                 '"https://openidconnect.googleapis.com/v1/userinfo"\n'
+                'client_id = "client-id-publico.apps.googleusercontent.com"\n'
                 'client_credential_ref = "APIs/Google/OAuthClient"\n'
                 "timeout_seconds = 20\n"
                 "authorization_timeout_seconds = 180\n"
@@ -88,6 +90,7 @@ class GoogleAccountsTests(unittest.TestCase):
                 'token_endpoint = "https://example.com/token"\n'
                 'userinfo_endpoint = '
                 '"https://openidconnect.googleapis.com/v1/userinfo"\n'
+                'client_id = "client-id-publico.apps.googleusercontent.com"\n'
                 'client_credential_ref = "APIs/Google/OAuthClient"\n'
                 "timeout_seconds = 20\n"
                 "authorization_timeout_seconds = 180\n"
@@ -100,7 +103,50 @@ class GoogleAccountsTests(unittest.TestCase):
             with self.assertRaises(google.GoogleAccountError):
                 google.load_google_config(path)
 
-    def test_refresh_uses_two_vault_entries_and_returns_ephemeral_access(self):
+    def test_load_config_accepts_legacy_vault_client(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "google.toml"
+            path.write_text(
+                'authorization_endpoint = '
+                '"https://accounts.google.com/o/oauth2/v2/auth"\n'
+                'token_endpoint = "https://oauth2.googleapis.com/token"\n'
+                'userinfo_endpoint = '
+                '"https://openidconnect.googleapis.com/v1/userinfo"\n'
+                'client_credential_ref = "APIs/Google/OAuthClient"\n'
+                'default_profile = "pessoal"\n'
+                '[profiles.pessoal]\n'
+                'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
+                'scopes = ["openid", "email"]\n',
+                encoding="utf-8",
+            )
+
+            config = google.load_google_config(path)
+
+        self.assertEqual("", config.client_id)
+        self.assertEqual("APIs/Google/OAuthClient", config.client_credential_ref)
+
+    def test_load_config_requires_vault_reference_for_client_secret(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "google.toml"
+            path.write_text(
+                'authorization_endpoint = '
+                '"https://accounts.google.com/o/oauth2/v2/auth"\n'
+                'token_endpoint = "https://oauth2.googleapis.com/token"\n'
+                'userinfo_endpoint = '
+                '"https://openidconnect.googleapis.com/v1/userinfo"\n'
+                'client_id = ""\n'
+                'client_credential_ref = ""\n'
+                'default_profile = "pessoal"\n'
+                '[profiles.pessoal]\n'
+                'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
+                'scopes = ["openid", "email"]\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(google.GoogleAccountError):
+                google.load_google_config(path)
+
+    def test_refresh_uses_public_client_and_secret_from_vault(self):
         requests = []
 
         def opener(request, *, timeout):
@@ -128,7 +174,7 @@ class GoogleAccountsTests(unittest.TestCase):
             google,
             "read_entry_credentials",
             side_effect=[
-                ("client-id", "client-secret"),
+                ("client-id-publico.apps.googleusercontent.com", "client-secret"),
                 ("pessoal@example.com", "refresh-secreto"),
             ],
         ) as read:
@@ -145,10 +191,37 @@ class GoogleAccountsTests(unittest.TestCase):
             ],
             [call.args for call in read.call_args_list],
         )
+        token_body = requests[0].data.decode("ascii")
+        self.assertIn(
+            "client_id=client-id-publico.apps.googleusercontent.com",
+            token_body,
+        )
+        self.assertIn("client_secret=client-secret", token_body)
         self.assertEqual("pessoal@example.com", access.email)
         self.assertEqual("access-secreto", access.access_token)
         access.close()
         self.assertEqual("", access.access_token)
+
+    def test_vault_client_must_match_public_client(self):
+        config = self.config()
+        config = google.GoogleConfig(
+            authorization_endpoint=config.authorization_endpoint,
+            token_endpoint=config.token_endpoint,
+            userinfo_endpoint=config.userinfo_endpoint,
+            client_id=config.client_id,
+            client_credential_ref="APIs/Google/OAuthClient",
+            timeout_seconds=config.timeout_seconds,
+            authorization_timeout_seconds=config.authorization_timeout_seconds,
+            default_profile=config.default_profile,
+            profiles=config.profiles,
+        )
+        with patch.object(
+            google,
+            "read_entry_credentials",
+            return_value=("client-id-privado", "client-secret"),
+        ):
+            with self.assertRaises(google.GoogleAccountError):
+                google._read_oauth_client(config)
 
     def test_launch_enrollment_never_passes_credentials(self):
         with patch.object(google.subprocess, "Popen") as popen:

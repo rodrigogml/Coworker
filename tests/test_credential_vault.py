@@ -372,6 +372,43 @@ class CredentialVaultTest(unittest.TestCase):
         self.assertNotIn("token-secreto", str(result))
         self.assertFalse(result["secret_exposed"])
 
+    def test_write_is_blocked_while_keepassxc_gui_is_open(self) -> None:
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='"KeePassXC.exe","47300"',
+            stderr="",
+        )
+        with (
+            patch.object(CREDENTIAL_VAULT.os, "name", "nt"),
+            patch.object(
+                CREDENTIAL_VAULT.subprocess,
+                "run",
+                return_value=completed,
+            ),
+            self.assertRaisesRegex(CREDENTIAL_VAULT.VaultToolError, "Feche"),
+        ):
+            CREDENTIAL_VAULT.ensure_keepassxc_gui_closed()
+
+    def test_migrate_moves_secret_without_returning_it(self) -> None:
+        arguments = self.arguments()
+        arguments.source = "APIs/app Notion"
+        arguments.target = "APIs/Notion"
+        arguments.confirm = True
+        with patch.object(CREDENTIAL_VAULT, "migrate_entry_secret") as migrate:
+            result = CREDENTIAL_VAULT.command_migrate(arguments)
+
+        migrate.assert_called_once_with(
+            "APIs/app Notion",
+            "APIs/Notion",
+            cli_path=self.cli,
+            vault_path=self.vault,
+            credential_target="Coworker/Test",
+        )
+        self.assertNotIn("token-secreto", str(result))
+        self.assertTrue(result["source_removed"])
+        self.assertFalse(result["secret_exposed"])
+
     def test_add_prepares_groups_and_updates_an_existing_entry(self) -> None:
         self.vault.touch()
         arguments = self.arguments()

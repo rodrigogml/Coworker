@@ -392,6 +392,17 @@ python skills/contacts/scripts/contacts.py --profile default doctor
 python skills/cpfl/scripts/cpfl.py --profile default doctor
 ```
 
+Quando uma captura protegida tiver sido associada a um caminho incorreto, migrar a
+entrada sem imprimir ou aceitar o segredo em argumentos. Fechar primeiro a interface
+do KeePassXC e usar caminhos absolutos dentro do cofre:
+
+```powershell
+python scripts/credential_vault.py migrate "APIs/Origem" "APIs/Destino" --confirm
+```
+
+O comando grava o destino antes de remover a origem. Se a remoção falhar, informa o
+erro e preserva a cópia já gravada no destino para evitar perda do segredo.
+
 Se a entrada da Cloudflare não existir, a IA deve orientar:
 
 ```powershell
@@ -441,7 +452,8 @@ compartilhada pode aparecer como inexistente.
 1. Criar um projeto no Google Cloud e configurar a tela de consentimento OAuth.
 2. Habilitar Gmail API, Google Calendar API, Google Drive API e People API.
 3. Criar um OAuth Client ID do tipo **Desktop app**.
-4. Abrir o KeePassXC e criar `APIs/Google/OAuthClient`, usando o Client ID em
+4. Usar o Client ID público compartilhado em `config/google.example.toml` e criar no
+   KeePassXC a entrada indicada por `client_credential_ref`, com o mesmo Client ID em
    `Username` e o Client Secret em `Password`.
 5. Ajustar os perfis e escopos em `data/config/google.toml`.
 6. Autorizar cada conta pelo navegador:
@@ -454,6 +466,11 @@ O comando abre um console separado e o navegador. Após o consentimento, o refre
 token é escrito diretamente na entrada `APIs/Google/Accounts/Default`; ele não aparece
 na conversa nem no terminal do agente. O perfil utiliza o e-mail autorizado em
 `Username` e o refresh token em `Password`.
+
+O Client ID público identifica a distribuição Coworker e pode ser reutilizado por
+todas as instâncias. O Client Secret exigido pelo endpoint do Google e as autorizações
+de cada conta permanecem protegidos no cofre local. O fluxo Desktop também usa PKCE;
+nenhum segredo é publicado no repositório.
 
 Para adicionar outra conta:
 
@@ -721,6 +738,12 @@ Depois da vinculação, `/secret NomeDoServico` inicia uma captura de uso único
 senhas e tokens. A mensagem seguinte não é enviada ao Codex: o gateway a grava
 diretamente no KeePassXC, mantém apenas `[Censurado por segurança]` no estado local e
 tenta excluir o original do Telegram.
+
+Durante um trabalho, o caminho preferencial é o broker iniciado pelo próprio Codex com
+`interfaces/telegram/scripts/request_credential.py`. A pessoa usuária recebe perguntas
+com rótulos úteis, como App Key e App Secret, sem precisar conhecer nomes de entradas.
+As respostas são interceptadas pelo gateway e o Codex recebe somente o resultado da
+gravação. `/secret` permanece como fallback manual e compatível.
 
 ## Privacidade e publicação
 

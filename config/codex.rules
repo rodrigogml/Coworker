@@ -14,6 +14,7 @@ prefix_rule(pattern=["python", "scripts/google_accounts.py"], decision="allow")
 prefix_rule(pattern=["python", "scripts/memory.py"], decision="allow")
 prefix_rule(pattern=["python", "scripts/vault_entities.py"], decision="allow")
 prefix_rule(pattern=["python", "interfaces/telegram/scripts/publish_artifact.py"], decision="allow")
+prefix_rule(pattern=["python", "interfaces/telegram/scripts/request_credential.py"], decision="allow")
 prefix_rule(pattern=["python", "interfaces/telegram/scripts/restart_gateway.py", "request"], decision="allow")
 
 prefix_rule(pattern=["python", "skills/calendar/scripts/calendar.py"], decision="allow")

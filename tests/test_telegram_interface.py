@@ -14,7 +14,9 @@ from unittest.mock import Mock, patch
 from interfaces.telegram.gateway import (
     BOT_COMMANDS,
     Gateway,
+    GatewayError,
     build_prompt,
+    credential_entry,
     format_rate_limits,
     help_text,
 )
@@ -110,6 +112,30 @@ class TelegramStateTests(unittest.TestCase):
 
 
 class TelegramContentTests(unittest.TestCase):
+    def test_secret_service_aliases_resolve_natural_language(self) -> None:
+        self.assertEqual("APIs/Notion", credential_entry("app Notion"))
+        self.assertEqual(
+            "APIs/Todoist",
+            credential_entry("atualize a chave do Todoist"),
+        )
+        self.assertEqual(
+            "APIs/Telegram/rodriclone",
+            credential_entry(
+                "token do Telegram",
+                telegram_credential_ref="APIs/Telegram/rodriclone",
+            ),
+        )
+
+    def test_secret_destination_requires_one_known_alias_or_explicit_path(self) -> None:
+        self.assertEqual(
+            "APIs/Servico Personalizado",
+            credential_entry("APIs/Servico Personalizado"),
+        )
+        with self.assertRaisesRegex(GatewayError, "não reconhecido"):
+            credential_entry("serviço misterioso")
+        with self.assertRaisesRegex(GatewayError, "mais de um serviço"):
+            credential_entry("Notion e Todoist")
+
     def test_http_rate_limit_preserves_retry_without_exposing_request_url(self) -> None:
         api = TelegramApi("secret-token", 10)
         response = io.BytesIO(
@@ -538,6 +564,7 @@ class CodexIsolationTests(unittest.TestCase):
             "scripts/memory.py",
             "scripts/vault_entities.py",
             "interfaces/telegram/scripts/restart_gateway.py",
+            "interfaces/telegram/scripts/request_credential.py",
             "skills/calendar/scripts/calendar.py",
             "skills/cloudflare/scripts/cloudflare.py",
             "skills/contacts/scripts/contacts.py",

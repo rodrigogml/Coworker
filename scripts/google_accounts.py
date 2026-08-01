@@ -71,6 +71,7 @@ class GoogleConfig:
     authorization_endpoint: str
     token_endpoint: str
     userinfo_endpoint: str
+    client_id: str
     client_credential_ref: str
     timeout_seconds: int
     authorization_timeout_seconds: int
@@ -159,13 +160,16 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
             f"Não foi possível carregar a configuração Google '{path}'."
         ) from exc
 
+    client_id = str(values.get("client_id", "")).strip()
     client_ref = str(values.get("client_credential_ref", "")).strip()
     default_profile = str(values.get("default_profile", "")).strip()
     timeout = values.get("timeout_seconds", 30)
     authorization_timeout = values.get("authorization_timeout_seconds", 300)
     raw_profiles = values.get("profiles")
     if not client_ref:
-        raise GoogleAccountError("'client_credential_ref' não pode ficar vazio.")
+        raise GoogleAccountError(
+            "'client_credential_ref' deve apontar para o Client Secret no cofre."
+        )
     if not isinstance(timeout, int) or not 1 <= timeout <= 120:
         raise GoogleAccountError("'timeout_seconds' deve estar entre 1 e 120.")
     if (
@@ -221,12 +225,32 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
         ),
         _validated_endpoint("token_endpoint", values.get("token_endpoint")),
         _validated_endpoint("userinfo_endpoint", values.get("userinfo_endpoint")),
+        client_id,
         client_ref,
         timeout,
         authorization_timeout,
         default_profile,
         profiles,
     )
+
+
+def _read_oauth_client(config: GoogleConfig) -> tuple[str, str]:
+    """Combina o Client ID público com o Client Secret protegido."""
+    stored_id, client_secret = read_entry_credentials(
+        config.client_credential_ref
+    )
+    client_id = config.client_id or stored_id
+    if config.client_id and stored_id and config.client_id != stored_id:
+        client_secret = ""
+        raise GoogleAccountError(
+            "O Client ID do cofre não corresponde ao cliente Coworker configurado."
+        )
+    if not client_id or not client_secret:
+        client_secret = ""
+        raise GoogleAccountError(
+            "A credencial OAuth do Google deve conter Client ID e Client Secret."
+        )
+    return client_id, client_secret
 
 
 def _json_request(
@@ -309,19 +333,18 @@ def refresh_google_access(
 ) -> GoogleAccess:
     """Troca um refresh token do cofre por acesso efêmero."""
     profile = config.select(requested_profile)
-    client_id, client_secret = read_entry_credentials(
-        config.client_credential_ref
-    )
+    client_id, client_secret = _read_oauth_client(config)
     account_email, refresh_token = read_entry_credentials(profile.credential_ref)
     try:
+        token_fields = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }
         response = _post_form(
             config.token_endpoint,
-            {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
+            token_fields,
             timeout=config.timeout_seconds,
             opener=opener,
         )
@@ -398,9 +421,7 @@ def enroll_google_profile(
 ) -> dict[str, Any]:
     """Executa consentimento no navegador e persiste somente o refresh token."""
     profile = config.select(requested_profile)
-    client_id, client_secret = read_entry_credentials(
-        config.client_credential_ref
-    )
+    client_id, client_secret = _read_oauth_client(config)
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(
@@ -447,16 +468,17 @@ def enroll_google_profile(
         client_secret = ""
         raise GoogleAccountError("O Google não devolveu o código de autorização.")
     try:
+        token_fields = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "code_verifier": verifier,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        }
         token_response = _post_form(
             config.token_endpoint,
-            {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "code": code,
-                "code_verifier": verifier,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
+            token_fields,
             timeout=config.timeout_seconds,
             opener=opener,
         )

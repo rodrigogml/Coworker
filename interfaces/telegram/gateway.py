@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import re
 import shutil
 import subprocess
 import signal
 import sys
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +35,13 @@ from interfaces.telegram.contracts import (  # noqa: E402
     CodexDelivery,
     InboundMessage,
     ReplyContext,
+)
+from interfaces.telegram.credential_broker import (  # noqa: E402
+    REQUEST_FILENAME,
+    CredentialBrokerError,
+    CredentialRequest,
+    load_request,
+    write_response,
 )
 from interfaces.telegram.config import (  # noqa: E402
     DEFAULT_CONFIG,
@@ -69,6 +78,7 @@ from scripts.credential_vault import (  # noqa: E402
     VaultToolError,
     read_entry_secret,
     validate_entry_path,
+    write_entry_credentials,
     write_entry_secret,
 )
 
@@ -85,6 +95,14 @@ BOT_COMMANDS = (
 )
 
 REDACTED_SECRET = "[Censurado por segurança]"
+
+SECRET_SERVICE_ENTRIES = {
+    "cloudflare": "APIs/Cloudflare",
+    "forward email": "APIs/ForwardEmail",
+    "forwardemail": "APIs/ForwardEmail",
+    "notion": "APIs/Notion",
+    "todoist": "APIs/Todoist",
+}
 
 
 class GatewayError(RuntimeError):
@@ -106,6 +124,12 @@ class AlbumBuffer:
     messages: list[dict[str, Any]] = field(default_factory=list)
     message_record_ids: list[int] = field(default_factory=list)
     timer: threading.Timer | None = None
+
+
+@dataclass
+class CredentialCapture:
+    request: CredentialRequest
+    values: dict[str, str] = field(default_factory=dict)
 
 
 def print_json(value: Any, *, stream: Any = sys.stdout) -> None:
@@ -137,14 +161,59 @@ def help_text() -> str:
     return "\n".join(lines)
 
 
-def credential_entry(label: str) -> str:
-    """Converte um nome amigável em caminho do cofre sem exigir sua estrutura."""
+def _normalized_secret_label(label: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", label.casefold())
+    plain = "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    return re.sub(r"[^a-z0-9]+", " ", plain).strip()
+
+
+def credential_entry(
+    label: str,
+    *,
+    telegram_credential_ref: str | None = None,
+) -> str:
+    """Resolve aliases conhecidos ou aceita um caminho explícito do cofre."""
     value = label.strip()
     if not value:
-        raise GatewayError("Informe o serviço, por exemplo: /secret Todoist")
-    candidate = value if "/" in value else f"APIs/{value}"
+        raise GatewayError(
+            "Informe o serviço, por exemplo: /secret Todoist ou /secret Notion."
+        )
+    if value.startswith("APIs/"):
+        try:
+            return validate_entry_path(value)
+        except VaultToolError as exc:
+            raise GatewayError("O caminho informado para a credencial é inválido.") from exc
+    if "/" in value:
+        raise GatewayError(
+            "Para um destino personalizado, informe o caminho completo iniciado por APIs/."
+        )
+
+    normalized = _normalized_secret_label(value)
+    matches = {
+        entry
+        for alias, entry in SECRET_SERVICE_ENTRIES.items()
+        if re.search(rf"(?:^|\s){re.escape(alias)}(?:\s|$)", normalized)
+    }
+    if telegram_credential_ref and re.search(
+        r"(?:^|\s)telegram(?:\s|$)", normalized
+    ):
+        matches.add(validate_entry_path(telegram_credential_ref))
+    if len(matches) > 1:
+        raise GatewayError(
+            "Encontrei mais de um serviço. Use apenas um nome por comando /secret."
+        )
+    if not matches:
+        known = "Todoist, Notion, Cloudflare, Forward Email e Telegram"
+        raise GatewayError(
+            f"Serviço não reconhecido. Opções conhecidas: {known}. "
+            "Para outro destino, use explicitamente /secret APIs/NomeDoServico."
+        )
     try:
-        return validate_entry_path(candidate)
+        return validate_entry_path(matches.pop())
     except VaultToolError as exc:
         raise GatewayError("O nome informado para a credencial é inválido.") from exc
 
@@ -226,18 +295,29 @@ class Gateway:
         self.stop_event = threading.Event()
         self.restart_event = threading.Event()
         self.worker = threading.Thread(target=self._worker_loop, name="coworker-codex", daemon=True)
+        self.credential_broker = threading.Thread(
+            target=self._credential_broker_loop,
+            name="coworker-credential-broker",
+            daemon=True,
+        )
         self.albums: dict[tuple[int, str], AlbumBuffer] = {}
         self.album_lock = threading.Lock()
         self.secret_captures: dict[int, str] = {}
+        self.credential_lock = threading.RLock()
+        self.credential_captures: dict[int, CredentialCapture] = {}
+        self.credential_requests_seen: set[str] = set()
 
     def close(self) -> None:
         self.stop_event.set()
+        self._cancel_all_credential_requests("A interface foi encerrada.")
         with self.album_lock:
             for album in self.albums.values():
                 if album.timer:
                     album.timer.cancel()
             self.albums.clear()
         self.secret_captures.clear()
+        if self.credential_broker.is_alive():
+            self.credential_broker.join(timeout=2)
         self.registry.cancel_all()
         self.work.put(None)
         if self.worker.is_alive():
@@ -253,12 +333,15 @@ class Gateway:
             for album in self.albums.values():
                 if album.timer:
                     album.timer.cancel()
-            self.albums.clear()
+        self.albums.clear()
         self.secret_captures.clear()
+        self._cancel_all_credential_requests("A interface foi reiniciada.")
         self.work.put(None)
         if self.worker.is_alive():
             self.worker.join()
         self.stop_event.set()
+        if self.credential_broker.is_alive():
+            self.credential_broker.join(timeout=2)
         if not self.worker.is_alive():
             with self.state_lock:
                 self.state.close()
@@ -272,6 +355,7 @@ class Gateway:
         self._sync_public_metadata()
         self.api.delete_webhook()
         self.worker.start()
+        self.credential_broker.start()
         offset: int | None = None
         while (
             not self.stop_event.is_set() and not self.restart_event.is_set()
@@ -382,6 +466,18 @@ class Gateway:
         media_group_id = str(message.get("media_group_id") or "") or None
         content = message_attachments(message)
         pending_secret = self.secret_captures.get(chat_id)
+        with self.credential_lock:
+            pending_credential = self.credential_captures.get(chat_id)
+        if pending_credential and command != "/cancel":
+            self._capture_credential_value(
+                update_id,
+                chat_id,
+                message_id,
+                text,
+                content,
+                pending_credential,
+            )
+            return
         if pending_secret and command != "/cancel":
             self._capture_secret(
                 update_id,
@@ -491,6 +587,168 @@ class Gateway:
             chat_id,
             f"Segredo salvo no cofre como {entry}. {deletion}",
         )
+
+    def _credential_broker_loop(self) -> None:
+        while not self.stop_event.wait(0.25):
+            try:
+                self._scan_credential_requests()
+            except (OSError, CredentialBrokerError, TelegramApiError):
+                continue
+
+    def _scan_credential_requests(self) -> None:
+        for path in self.config.media.jobs_dir.glob(f"*/{REQUEST_FILENAME}"):
+            try:
+                request = load_request(path, self.config.media.jobs_dir)
+            except CredentialBrokerError:
+                continue
+            with self.credential_lock:
+                if request.request_id in self.credential_requests_seen:
+                    continue
+                self.credential_requests_seen.add(request.request_id)
+            with self.state_lock:
+                accepted = self.state.job_accepts_credential_request(
+                    request.job_id, request.chat_id
+                )
+            if not accepted:
+                write_response(
+                    request,
+                    ok=False,
+                    error="O trabalho não está ativo ou autorizado.",
+                )
+                continue
+            if time.time() >= request.expires_at:
+                write_response(request, ok=False, error="A captura protegida expirou.")
+                continue
+            with self.credential_lock:
+                if request.chat_id in self.credential_captures:
+                    write_response(
+                        request,
+                        ok=False,
+                        error="Já existe uma captura protegida ativa nesta conversa.",
+                    )
+                    continue
+                capture = CredentialCapture(request)
+                self.credential_captures[request.chat_id] = capture
+            first = request.fields[0]
+            try:
+                self._send(
+                    request.chat_id,
+                    f"{request.prompt}\n\nDestino protegido: {request.entry}\n"
+                    f"Envie agora: {first.label}. A resposta não será repassada ao "
+                    f"{self.config.identity.display_name}. Use /cancel para desistir.",
+                )
+            except TelegramApiError:
+                self._finish_credential_capture(
+                    capture,
+                    ok=False,
+                    error="Não foi possível solicitar o campo protegido pelo Telegram.",
+                )
+
+    def _capture_credential_value(
+        self,
+        update_id: int,
+        chat_id: int,
+        message_id: int,
+        value: str,
+        attachments: list[Attachment],
+        capture: CredentialCapture,
+    ) -> None:
+        if not value or attachments:
+            self._send(
+                chat_id,
+                "A captura aceita somente uma mensagem de texto. Use /cancel para desistir.",
+                update_id=update_id,
+            )
+            with self.state_lock:
+                self.state.finish_update(update_id, "invalid")
+            return
+        field_index = len(capture.values)
+        field = capture.request.fields[field_index]
+        capture.values[field.name] = value
+        deleted = False
+        try:
+            deleted = self.api.delete_message(chat_id, message_id)
+        except TelegramApiError:
+            deleted = False
+        with self.state_lock:
+            self.state.record_message(
+                update_id,
+                chat_id,
+                message_id,
+                "in",
+                REDACTED_SECRET,
+                "secured",
+                content_type="credential",
+            )
+            self.state.finish_update(update_id, "secured")
+        if len(capture.values) < len(capture.request.fields):
+            next_field = capture.request.fields[len(capture.values)]
+            deletion = " A mensagem anterior foi removida." if deleted else (
+                " Não consegui apagar a mensagem anterior; remova-a manualmente."
+            )
+            self._send(chat_id, f"Agora envie: {next_field.label}.{deletion}")
+            return
+        try:
+            if set(capture.values) == {"username", "password"}:
+                write_entry_credentials(
+                    capture.request.entry,
+                    capture.values["username"],
+                    capture.values["password"],
+                )
+            else:
+                write_entry_secret(
+                    capture.request.entry,
+                    capture.values["password"],
+                )
+        except VaultToolError:
+            self._finish_credential_capture(
+                capture,
+                ok=False,
+                error="Não foi possível salvar a credencial no cofre.",
+            )
+            self._send(
+                chat_id,
+                "Não foi possível salvar a credencial. Nenhum valor foi enviado ao Codex.",
+            )
+            return
+        self._finish_credential_capture(capture, ok=True)
+        deletion = "A última mensagem foi removida." if deleted else (
+            "Não consegui apagar a última mensagem; remova-a manualmente."
+        )
+        self._send(
+            chat_id,
+            f"Credencial armazenada com segurança. {deletion} A execução continuará.",
+        )
+
+    def _finish_credential_capture(
+        self,
+        capture: CredentialCapture,
+        *,
+        ok: bool,
+        error: str | None = None,
+    ) -> None:
+        with self.credential_lock:
+            self.credential_captures.pop(capture.request.chat_id, None)
+        try:
+            write_response(
+                capture.request,
+                ok=ok,
+                credential_stored=ok,
+                entry=capture.request.entry,
+                fields=[field.name for field in capture.request.fields],
+                secret_exposed=False,
+                **({"error": error} if error else {}),
+            )
+        finally:
+            for name in list(capture.values):
+                capture.values[name] = ""
+            capture.values.clear()
+
+    def _cancel_all_credential_requests(self, reason: str) -> None:
+        with self.credential_lock:
+            captures = list(self.credential_captures.values())
+        for capture in captures:
+            self._finish_credential_capture(capture, ok=False, error=reason)
 
     def _queue_album(
         self, inbound: InboundMessage, message: dict[str, Any], message_record_id: int
@@ -656,14 +914,22 @@ class Gateway:
             self._send(chat_id, message, update_id=update_id)
         elif command == "/cancel":
             capture_cancelled = self.secret_captures.pop(chat_id, None) is not None
+            with self.credential_lock:
+                credential_capture = self.credential_captures.get(chat_id)
+            if credential_capture is not None:
+                self._finish_credential_capture(
+                    credential_capture,
+                    ok=False,
+                    error="Captura protegida cancelada pelo usuário.",
+                )
             cancelled = self.registry.cancel(chat_id)
             with self.state_lock:
                 cancelled_queued = self.state.cancel_queued_jobs(chat_id)
             self._send(
                 chat_id,
                 (
-                    "Captura de segredo cancelada."
-                    if capture_cancelled
+                    "Captura protegida cancelada."
+                    if capture_cancelled or credential_capture is not None
                     else "Solicitação de cancelamento enviada."
                     if cancelled
                     else "Não há uma execução ativa para cancelar."
@@ -672,13 +938,17 @@ class Gateway:
             )
         elif command == "/secret":
             try:
-                entry = credential_entry(argument)
+                entry = credential_entry(
+                    argument,
+                    telegram_credential_ref=self.config.credential_ref,
+                )
             except GatewayError as exc:
                 self._send(chat_id, str(exc), update_id=update_id)
             else:
                 self.secret_captures[chat_id] = entry
                 self._send(
                     chat_id,
+                    f"Destino reconhecido: {entry}. "
                     "Envie agora a senha ou o token em uma única mensagem de texto. "
                     "Ela será salva diretamente no cofre, não será enviada ao RodriClone "
                     "e o gateway tentará removê-la do Telegram. Use /cancel para desistir.",
@@ -995,6 +1265,12 @@ def build_structured_prompt(
             "Coloque em output/ somente arquivos destinados ao usuário.",
             "Se uma imagem gerada estiver fora de output/, publique-a executando diretamente "
             "`python interfaces/telegram/scripts/publish_artifact.py <arquivo>`; o gateway já definiu COWORKER_JOB_OUTPUT.",
+            "Quando uma integração precisar de credencial ausente ou substituída, não peça ao usuário "
+            "para escolher o caminho nem receber valores na conversa do Codex. Execute diretamente "
+            "`python interfaces/telegram/scripts/request_credential.py --entry CAMINHO --field "
+            "password:RÓTULO --prompt TEXTO`; para identificador e segredo, repita `--field` com "
+            "`username:RÓTULO` e `password:RÓTULO`. O gateway fará a captura protegida e devolverá "
+            "somente o resultado, permitindo continuar este mesmo trabalho.",
             "Declare caminhos de artefatos relativos a output/ e respeite integralmente o schema de resposta.",
         ]
     )
