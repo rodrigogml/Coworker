@@ -208,7 +208,7 @@ class TodoistClient:
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._token}",
-            "User-Agent": "BOTina-Todoist/1.0",
+            "User-Agent": "Coworker-Todoist/1.0",
         }
         body = None
         if payload is not None:

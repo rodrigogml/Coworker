@@ -333,7 +333,7 @@ class _FormParser(HTMLParser):
 def _open_portal(message: BillMessage, config: CpflConfig) -> tuple[str, str]:
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    headers = {"User-Agent": "Mozilla/5.0 BOTina/1.0"}
+    headers = {"User-Agent": "Mozilla/5.0 Coworker/1.0"}
     try:
         with opener.open(
             urllib.request.Request(message.portal_url, headers=headers),

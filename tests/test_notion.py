@@ -121,7 +121,7 @@ class NotionTests(unittest.TestCase):
                 {
                     "id": PAGE_ID,
                     "token": "response-secret",
-                    "name": "BOTina token-de-teste",
+                    "name": "Coworker token-de-teste",
                 }
             )
 
@@ -142,7 +142,7 @@ class NotionTests(unittest.TestCase):
         )
         self.assertNotIn("token-de-teste", json.dumps(result))
         self.assertNotIn("response-secret", json.dumps(result))
-        self.assertEqual("BOTina [REDACTED]", result["name"])
+        self.assertEqual("Coworker [REDACTED]", result["name"])
         client.close()
         self.assertEqual("", client._token)
 

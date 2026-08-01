@@ -31,7 +31,7 @@ class CredentialVaultTest(unittest.TestCase):
         root = Path(self.temporary_directory.name)
         self.gui = root / "KeePassXC.exe"
         self.cli = root / "keepassxc-cli.exe"
-        self.vault = root / "botina.kdbx"
+        self.vault = root / "vault.kdbx"
         self.gui.touch()
         self.cli.touch()
 
@@ -41,7 +41,7 @@ class CredentialVaultTest(unittest.TestCase):
             gui=str(self.gui),
             cli=str(self.cli),
             vault=str(self.vault),
-            credential_target="BOTina/Test",
+            credential_target="Coworker/Test",
         )
 
     def test_status_does_not_expose_secrets(self) -> None:
@@ -73,15 +73,15 @@ class CredentialVaultTest(unittest.TestCase):
             'gui = "tools/KeePassXC.exe"\n'
             'cli = "tools/keepassxc-cli.exe"\n\n'
             "[vault]\n"
-            'path = "data/secrets/botina.kdbx"\n\n'
+            'path = "data/secrets/vault.kdbx"\n\n'
             "[windows_credential]\n"
-            'target = "BOTina/Test"\n',
+            'target = "Coworker/Test"\n',
             encoding="utf-8",
         )
         config = CREDENTIAL_VAULT.load_vault_config(config_path)
-        self.assertEqual("BOTina/Test", config.credential_target)
+        self.assertEqual("Coworker/Test", config.credential_target)
         self.assertEqual(
-            CREDENTIAL_VAULT.PROJECT_ROOT / "data" / "secrets" / "botina.kdbx",
+            CREDENTIAL_VAULT.PROJECT_ROOT / "data" / "secrets" / "vault.kdbx",
             config.vault_path,
         )
 
@@ -179,7 +179,7 @@ class CredentialVaultTest(unittest.TestCase):
                 "APIs/Omie",
                 cli_path=self.cli,
                 vault_path=self.vault,
-                credential_target="BOTina/Test",
+                credential_target="Coworker/Test",
             )
 
         self.assertEqual(("usuario-de-teste", "senha-de-teste"), credentials)
@@ -224,7 +224,7 @@ class CredentialVaultTest(unittest.TestCase):
                 "APIs/Omie",
                 cli_path=self.cli,
                 vault_path=self.vault,
-                credential_target="BOTina/Test",
+                credential_target="Coworker/Test",
             )
 
         self.assertNotIn("segredo-que-nao-pode-vazar", str(raised.exception))
@@ -261,7 +261,7 @@ class CredentialVaultTest(unittest.TestCase):
                 "refresh-token-secreto",
                 cli_path=self.cli,
                 vault_path=self.vault,
-                credential_target="BOTina/Test",
+                credential_target="Coworker/Test",
             )
 
         arguments = run.call_args.args[0]
@@ -310,7 +310,7 @@ class CredentialVaultTest(unittest.TestCase):
                 "refresh-token-secreto",
                 cli_path=self.cli,
                 vault_path=self.vault,
-                credential_target="BOTina/Test",
+                credential_target="Coworker/Test",
             )
 
         self.assertNotIn("refresh-token-secreto", str(raised.exception))

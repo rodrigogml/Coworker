@@ -6,7 +6,7 @@ subconjunto HTML aceito pelo Telegram, com escape obrigatório do conteúdo. Tí
 caminhos locais são apresentados como texto, pois não são acessíveis pelo aplicativo.
 
 Esta aplicação conecta uma conversa particular do Telegram a sessões não interativas
-do Codex CLI. Ela é uma interface da BOTina, não uma skill: recebe mensagens e mídias,
+do Codex CLI. Ela é uma interface da Coworker, não uma skill: recebe mensagens e mídias,
 controla autorização, mantém uma fila local e devolve a resposta final do Codex.
 
 ## Limites atuais
@@ -27,64 +27,75 @@ seguros.
 
 ## Preparação
 
-1. Crie um bot usando o BotFather e mantenha desabilitada sua participação em grupos.
-2. Inicialize a configuração sem sobrescrever uma existente:
+1. Execute o instalador da raiz. Ele coleta a identidade e cria a configuração sem
+   sobrescrever arquivos existentes:
 
    ```powershell
-   python interfaces/telegram/botina_telegram.py init
+   .\install.ps1
    ```
 
-3. Cadastre o token na entrada `APIs/Telegram/BOTina` do KeePassXC:
+2. Crie um bot usando o BotFather e mantenha desabilitada sua participação em grupos.
+   O `@username` é definido no BotFather e pode ser diferente do nome da instância.
+3. O instalador cadastra o token na referência específica da instância, com o formato:
 
-   ```powershell
-   python scripts/credential_vault.py add "APIs/Telegram/BOTina"
+   ```text
+   APIs/Telegram/<instance_id>
    ```
+
+4. O próprio instalador publica nome, descrições e comandos, abre o pareamento,
+   apresenta os IDs numéricos para confirmação local e inicia o gateway. A vinculação
+   continua exigindo confirmação humana na máquina; validar o PIN no Telegram não é
+   suficiente.
 
 4. Instale e autentique uma distribuição autônoma do Codex CLI. O executável interno
    do aplicativo desktop não deve ser presumido como acessível a processos externos.
 5. Se o comando `codex` não estiver no `PATH`, registre o caminho comprovado no campo
    `codex.executable` de `data/config/telegram.toml`.
 6. O campo `codex.home_dir` identifica a instância isolada usada pelo gateway. Quando
-   vazio, assume `%LOCALAPPDATA%\BOTina\codex`; não deve apontar para o diretório do
+   vazio, assume
+   `%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`; não deve apontar para o diretório do
    Codex Desktop.
 7. Mantenha `codex.network_access = false` até decidir habilitar integrações externas.
    Para Gmail, Notion e outras APIs, altere-o para `true` após autorização explícita.
 8. Execute o diagnóstico:
 
    ```powershell
-   python interfaces/telegram/botina_telegram.py doctor
+   python interfaces/telegram/gateway.py doctor
    ```
 
-O backend padrão continua sendo `exec`. Para ativar gradualmente o App Server nesta
-instalação, altere manualmente apenas o arquivo privado:
+O instalador usa o App Server como backend inicial, mantendo `exec` disponível como
+fallback. Para selecionar explicitamente o fallback, altere somente o arquivo privado:
 
 ```toml
 [codex]
-backend = "app-server"
+backend = "exec"
 ```
 
 Depois reinicie o processo e execute `doctor`. A interface não troca esse valor nem
 reescreve configurações privadas. Ambos os backends usam o mesmo schema de entrega;
 `exec` usa `--output-schema`, enquanto o App Server usa `turn/start.outputSchema`.
 
-O gateway mantém as regras de execução do `config/codex-botina.rules` sincronizadas
-em `<codex.home_dir>/rules/botina.rules`. Elas liberam comandos de leitura e os pontos
+O gateway mantém as regras de execução do `config/codex.rules` sincronizadas
+em `<codex.home_dir>/rules/gateway.rules`. Elas liberam comandos de leitura e os pontos
 de entrada públicos das integrações, mantendo comandos arbitrários sujeitos à política
 do Codex. A sincronização ocorre ao iniciar o polling e também pode ser administrada
 localmente:
 
 ```powershell
-python interfaces/telegram/botina_telegram.py permissions status
-python interfaces/telegram/botina_telegram.py permissions sync
+python interfaces/telegram/gateway.py permissions status
+python interfaces/telegram/gateway.py permissions sync
 ```
 
 Ao iniciar o polling, a aplicação publica automaticamente no Telegram o menu de
-comandos válidos para conversas particulares. Para consultar ou reaplicar essa
-configuração sem reiniciar o gateway, use:
+comandos válidos, o nome e as descrições derivados de `data/config/identity.toml`.
+O username não pode ser alterado pela Bot API. Para consultar ou reaplicar essas
+configurações sem reiniciar o gateway, use:
 
 ```powershell
-python interfaces/telegram/botina_telegram.py commands status
-python interfaces/telegram/botina_telegram.py commands sync
+python interfaces/telegram/gateway.py commands status
+python interfaces/telegram/gateway.py commands sync
+python interfaces/telegram/gateway.py profile status
+python interfaces/telegram/gateway.py profile sync
 ```
 
 A lista publicada e a resposta de `/help` usam a mesma definição no código. Assim,
@@ -95,26 +106,26 @@ uma instalação nova precisa apenas ter o token cadastrado antes da primeira ex
 Abra o polling em um terminal:
 
 ```powershell
-python interfaces/telegram/botina_telegram.py run
+python interfaces/telegram/gateway.py run
 ```
 
 Em outro terminal, gere um PIN temporário:
 
 ```powershell
-python interfaces/telegram/botina_telegram.py pairing begin
+python interfaces/telegram/gateway.py pairing begin
 ```
 
 Envie `/pair 123456` na conversa particular, usando o PIN realmente apresentado. A
 mensagem valida o PIN, mas ainda não autoriza a conta. Consulte localmente a solicitação:
 
 ```powershell
-python interfaces/telegram/botina_telegram.py pairing status
+python interfaces/telegram/gateway.py pairing status
 ```
 
 Confira nome, username, `user_id` e `chat_id`. Somente então use o `approval_code`:
 
 ```powershell
-python interfaces/telegram/botina_telegram.py pairing approve ABC123
+python interfaces/telegram/gateway.py pairing approve ABC123
 ```
 
 O PIN possui seis dígitos, é armazenado somente como PBKDF2-HMAC, expira, aceita um
@@ -124,7 +135,7 @@ raiz de confiança da instalação.
 ## Conversa
 
 - `/new`: desvincula a sessão atual; não apaga o histórico do Codex;
-- `/resume`: quando enviado como resposta a uma mensagem anterior da BOTina, torna a
+- `/resume`: quando enviado como resposta a uma mensagem anterior da Coworker, torna a
   thread daquela mensagem explicitamente ativa;
 - `/status`: mostra sessão e fila;
 - `/usage`: consulta as janelas de franquia da conta autenticada no Codex;
@@ -164,7 +175,7 @@ JPEG/WebP e PNG sem alpha como foto; PNG com alpha e arquivos genéricos como do
 GIF como animação; áudio convencional como áudio; OGG como voz; vídeo como vídeo.
 
 O publicador `interfaces/telegram/scripts/publish_artifact.py` é o único comando de
-cópia liberado ao Codex. Ele recebe o destino somente por `BOTINA_JOB_OUTPUT`, não
+cópia liberado ao Codex. Ele recebe o destino somente por `COWORKER_JOB_OUTPUT`, não
 sobrescreve arquivos e devolve apenas metadados seguros. Arquivos em
 `<CODEX_HOME>/generated_images` são concedidos somente para leitura.
 
@@ -192,7 +203,8 @@ sem alterar variáveis globais do Windows.
 
 ## Dados e segurança
 
-Por padrão, o SQLite operacional fica em `%LOCALAPPDATA%\BOTina\telegram`. Isso evita
+Por padrão, o SQLite operacional fica em
+`%LOCALAPPDATA%\Coworker\instances\<instance_id>\telegram`. Isso evita
 sincronização concorrente de um banco ativo. Entradas, derivados e saídas ficam em
 `data/telegram/jobs/`, com metadados, tamanho e SHA-256, e permanecem ignorados pelo Git.
 
@@ -202,9 +214,11 @@ Codex. Arquivos recebidos são tratados como conteúdo não confiável e nunca s
 executados pelo gateway.
 
 Use `workspace-write` como sandbox inicial. O gateway converte essa opção em um perfil
-de permissões explícito do Codex, com escrita somente nas raízes do workspace. O campo
+de permissões explícito do Codex: o projeto é somente leitura e apenas `data/` recebe
+escrita. O campo
 `codex.network_access` controla separadamente a rede dos comandos executados. Libere
-outros diretórios individualmente em `codex.additional_directories`; não use
+outros diretórios para leitura em `codex.additional_directories` ou, deliberadamente,
+para escrita em `codex.writable_directories`; não use
 `danger-full-access` para compensar uma configuração incompleta.
 
 Com `approval_policy = "never"`, um comando que não corresponda às regras públicas é
@@ -215,8 +229,8 @@ o interpretador Python ou o PowerShell de forma genérica.
 ## Estado e recuperação
 
 ```powershell
-python interfaces/telegram/botina_telegram.py status
-python interfaces/telegram/botina_telegram.py pairing cancel
+python interfaces/telegram/gateway.py status
+python interfaces/telegram/gateway.py pairing cancel
 ```
 
 O `update_id` do Telegram é persistido antes do processamento para impedir execução

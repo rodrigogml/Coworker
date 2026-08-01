@@ -2,7 +2,7 @@
 
 ## Versões atendidas
 
-Enquanto a BOTina estiver em estágio experimental, somente a versão mais recente da
+Enquanto a Coworker estiver em estágio experimental, somente a versão mais recente da
 branch `main` recebe correções de segurança.
 
 ## Como relatar uma vulnerabilidade

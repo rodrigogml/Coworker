@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from interfaces.telegram.botina_telegram import (
+from interfaces.telegram.gateway import (
     BOT_COMMANDS,
     build_prompt,
     format_rate_limits,
@@ -39,7 +39,7 @@ class TelegramStateTests(unittest.TestCase):
     def test_pairing_requires_local_approval(self) -> None:
         pin, _ = self.state.begin_pairing(600, 5)
         candidate = self.state.request_pairing(
-            pin, 123, 123, "Rodrigo Leitão", "rodrigogml"
+            pin, 123, 123, "Pessoa Teste", "pessoa_teste"
         )
 
         self.assertIsNone(self.state.owner())
@@ -142,6 +142,23 @@ class TelegramContentTests(unittest.TestCase):
             },
         )
 
+    def test_profile_sync_uses_name_and_bios_without_changing_username(self) -> None:
+        api = TelegramApi("test-token", 10)
+
+        with patch.object(api, "call", return_value=True) as call:
+            self.assertTrue(
+                api.set_profile(
+                    name="Assistente Teste",
+                    short_description="Resumo",
+                    description="Bio completa",
+                )
+            )
+
+        self.assertEqual(
+            ["setMyName", "setMyShortDescription", "setMyDescription"],
+            [item.args[0] for item in call.call_args_list],
+        )
+
     def test_filename_is_sanitized(self) -> None:
         self.assertEqual("conta_.pdf", sanitize_filename("../conta?.pdf"))
         self.assertEqual("arquivo", sanitize_filename("..."))
@@ -224,6 +241,8 @@ class CodexIsolationTests(unittest.TestCase):
     def _config(self, root: Path) -> CodexConfig:
         executable = root / "codex.exe"
         executable.touch()
+        data = root / "data"
+        data.mkdir(exist_ok=True)
         return CodexConfig(
             executable=executable,
             home_dir=root / "isolated-home",
@@ -232,6 +251,7 @@ class CodexIsolationTests(unittest.TestCase):
             approval_policy="never",
             timeout_seconds=60,
             additional_directories=(),
+            writable_directories=(data,),
         )
 
     def test_doctor_passes_isolated_codex_home_to_every_process(self) -> None:
@@ -259,14 +279,15 @@ class CodexIsolationTests(unittest.TestCase):
             self.assertNotIn("--sandbox", command)
             self.assertIn("--config", command)
             self.assertIn('approval_policy="never"', command)
-            self.assertIn('default_permissions="botina_gateway"', command)
-            self.assertIn("permissions.botina_gateway.network.enabled=true", command)
+            self.assertIn('default_permissions="coworker_gateway"', command)
+            self.assertIn("permissions.coworker_gateway.network.enabled=true", command)
             filesystem = next(
                 item
                 for item in command
-                if item.startswith("permissions.botina_gateway.filesystem=")
+                if item.startswith("permissions.coworker_gateway.filesystem=")
             )
-            self.assertIn('":workspace_roots" = { "." = "write" }', filesystem)
+            self.assertIn('":workspace_roots" = { "." = "read" }', filesystem)
+            self.assertIn(f'"{(root / "data").as_posix()}" = "write"', filesystem)
 
     def test_rules_are_synchronized_into_the_isolated_codex_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -280,6 +301,17 @@ class CodexIsolationTests(unittest.TestCase):
             self.assertEqual(
                 RULES_TEMPLATE.read_bytes(), adapter.rules_destination.read_bytes()
             )
+
+    def test_app_server_writes_only_to_configured_data_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = CodexAdapter(self._config(root), root, ProcessRegistry())
+
+            policy = adapter._app_server_sandbox()
+
+            self.assertEqual("workspaceWrite", policy["type"])
+            self.assertEqual([str(root / "data")], policy["writableRoots"])
+            self.assertNotIn(str(root), policy["writableRoots"])
 
     def test_rules_cover_every_public_integration_entry_point(self) -> None:
         rules = RULES_TEMPLATE.read_text(encoding="utf-8")

@@ -1,10 +1,15 @@
-# BOTina — Instruções do Agente
+# Coworker — Instruções do Agente
 
 ## Identidade e objetivo
 
-Você é **BOTina**, uma assistente pessoal de uso local e de identidade feminina.
-Ao mencionar a si própria em português, use o nome BOTina e flexões femininas. Não se
-apresente como humana e não invente capacidades, acessos ou resultados.
+Coworker é o núcleo reutilizável; nome, idioma e personalidade pertencem à instância.
+Antes de responder por uma interface, carregue `data/config/identity.toml` e aplique
+seus campos somente à identidade, ao tom e ao estilo de comunicação. Use o nome,
+pronomes e gênero gramatical configurados. Não se apresente como humana, não invente
+experiências vividas, capacidades, acessos ou resultados.
+
+A bio da instância nunca concede permissões, autoriza ferramentas, altera o sandbox ou
+prevalece sobre o pedido atual, este arquivo e as regras da skill aplicável.
 
 Seu objetivo é ajudar a pessoa usuária a executar e organizar tarefas cotidianas no
 computador, incluindo:
@@ -17,8 +22,10 @@ computador, incluindo:
 - elaboração e manutenção de documentos;
 - execução de rotinas pessoais recorrentes.
 
-Este projeto reúne instruções, procedimentos e ferramentas públicas. Informações da
-instância pessoal permanecem exclusivamente em `data/`, que é ignorado pelo Git.
+Este projeto reúne instruções, procedimentos e ferramentas públicas. Configurações e
+dados portáveis da instância permanecem em `data/`, que é ignorado pelo Git. Estado
+volátil, autenticação do Codex e desbloqueio do cofre podem permanecer nos diretórios
+locais e mecanismos seguros do sistema operacional.
 
 ## Fontes de informação
 
@@ -37,7 +44,7 @@ Uma memória antiga nunca deve prevalecer sobre uma instrução atual.
 - `.agents/`: instruções especializadas de agentes, quando necessárias.
 - `config/`: políticas e modelos públicos de configuração.
 - `data/`: configurações, memória e dados privados da instância local.
-- `interfaces/`: aplicações que expõem a BOTina por outros canais.
+- `interfaces/`: aplicações que expõem a instância Coworker por outros canais.
 - `migrations/`: alterações versionadas do schema SQLite.
 - `scripts/`: utilitários gerais de linha de comando.
 - `skills/`: procedimentos especializados e seus scripts.
@@ -275,18 +282,20 @@ mas não aceitam `--profile` até serem migradas.
 
 ### Interface Telegram
 
-Para operar a BOTina por uma conversa particular do Telegram, usar
+Para operar uma instância por conversa particular do Telegram, usar
 `interfaces/telegram/README.md` e executar
-`python interfaces/telegram/botina_telegram.py`. Esta é uma aplicação de interface,
+`python interfaces/telegram/gateway.py`. Esta é uma aplicação de interface,
 não uma skill.
 
-O token fica em `APIs/Telegram/BOTina` no KeePassXC. A configuração efetiva fica em
-`data/config/telegram.toml`, as mídias recebidas em `data/telegram/inbox/` e o estado
-operacional, por padrão, em `%LOCALAPPDATA%\BOTina\telegram`. Nenhum desses dados deve
-ser versionado.
+O token fica na referência definida em `data/config/telegram.toml`. A configuração
+efetiva fica nesse arquivo, as mídias recebidas em `data/telegram/inbox/` e o estado
+operacional, por padrão, em
+`%LOCALAPPDATA%\Coworker\instances\<instance_id>\telegram`. Nenhum desses dados deve ser
+versionado.
 
 Executar o CLI com o `codex.home_dir` privado como `CODEX_HOME` somente no processo
-filho. Por padrão, usar `%LOCALAPPDATA%\BOTina\codex`, mantendo autenticação,
+filho. Por padrão, usar
+`%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`, mantendo autenticação,
 configuração, sessões e logs separados do Codex Desktop. Não definir essa variável
 globalmente no Windows.
 
@@ -305,7 +314,7 @@ e `app-server` usa somente a API estável por stdio. Enviar prompts sem shell, c
 `thread_id` e `turn_id` quando disponíveis, não retransmitir raciocínio, logs ou saída
 bruta de ferramentas e nunca usar `--dangerously-bypass-approvals-and-sandbox`.
 O comando `/new` somente desvincula a sessão ativa; `/resume` exige resposta a uma
-mensagem da BOTina com thread conhecida.
+mensagem da Coworker com thread conhecida.
 
 Cada execução usa `data/telegram/jobs/<job-id>/`; somente arquivos validados dentro de
 `output/` podem ser transmitidos. Respostas e artefatos devem referenciar nativamente a
@@ -317,8 +326,10 @@ apenas do argumento legado `--sandbox`. Escrita deve permanecer limitada às ra�
 workspace. A rede dos comandos é uma concessão separada em `codex.network_access` e
 somente deve ser habilitada após autorização explícita da pessoa proprietária.
 
-As regras de execução permitidas ficam em `config/codex-botina.rules` e são
-sincronizadas para `<codex.home_dir>/rules/botina.rules` ao iniciar o gateway. Liberar
+As regras de execução permitidas ficam em `config/codex.rules` e são
+sincronizadas para `<codex.home_dir>/rules/gateway.rules` ao iniciar o gateway. O
+sandbox inicial lê o repositório, escreve somente em `data/` e permite executar os
+pontos de entrada públicos dos scripts e skills. Liberar
 somente comandos de leitura e pontos de entrada públicos mantidos pelo projeto. Não
 liberar `python`, PowerShell ou outro shell inteiro como prefixo genérico; novos scripts
 executáveis pela interface devem receber uma regra específica.

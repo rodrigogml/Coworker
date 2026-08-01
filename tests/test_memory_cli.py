@@ -1,4 +1,4 @@
-"""Testes de contrato da interface de memória da BOTina."""
+"""Testes de contrato da interface de memória da Coworker."""
 
 from __future__ import annotations
 

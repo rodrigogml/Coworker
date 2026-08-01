@@ -46,7 +46,7 @@ class VaultEntitiesTests(unittest.TestCase):
             "[vault]\n"
             f'path = "{self.vault.as_posix()}"\n\n'
             "[windows_credential]\n"
-            'target = "BOTina/Test"\n',
+            'target = "Coworker/Test"\n',
             encoding="utf-8",
         )
         self.entry = "Pessoas/Fisicas/Pessoa Teste"

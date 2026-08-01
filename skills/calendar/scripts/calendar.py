@@ -373,7 +373,7 @@ def event_create(
     if args.google_meet:
         payload["conferenceData"] = {
             "createRequest": {
-                "requestId": f"botina-{uuid.uuid4().hex}",
+                "requestId": f"coworker-{uuid.uuid4().hex}",
                 "conferenceSolutionKey": {"type": "hangoutsMeet"},
             }
         }

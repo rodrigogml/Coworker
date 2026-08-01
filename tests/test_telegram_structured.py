@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from interfaces.telegram.codex import CodexAdapter, CodexCancelledError, ProcessRegistry
-from interfaces.telegram.botina_telegram import Gateway
+from interfaces.telegram.gateway import Gateway
 from interfaces.telegram.config import (
     CodexConfig,
     MediaConfig,
@@ -25,6 +25,7 @@ from interfaces.telegram.config import (
     load_config,
 )
 from interfaces.telegram.contracts import Attachment, InboundMessage, ReplyContext, TelegramReceipt
+from interfaces.telegram.identity import InstanceIdentity
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry
 from interfaces.telegram.state import StateStore
 from interfaces.telegram.telegram_api import TelegramApi
@@ -33,6 +34,21 @@ from interfaces.telegram.workspace import (
     WorkspaceError,
     parse_delivery,
     validate_artifact,
+)
+
+
+TEST_IDENTITY = InstanceIdentity(
+    "teste",
+    "Assistente Teste",
+    "pt-BR",
+    "neutral",
+    "",
+    "Assistente usada em testes.",
+    "direto",
+    "nenhum",
+    "moderada",
+    "conciso",
+    "Identidade fictícia usada somente pelos testes automatizados.",
 )
 
 
@@ -107,6 +123,10 @@ class StructuredStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config_path = root / "telegram.toml"
+            (root / "identity.toml").write_text(
+                '''[identity]\ninstance_id = "teste"\ndisplay_name = "Assistente Teste"\nlanguage = "pt-BR"\ngrammatical_gender = "neutral"\npronouns = ""\nsummary = "Assistente usada em testes."\ntone = "direto"\nhumor = "nenhum"\nenthusiasm = "moderada"\nwriting_style = "conciso"\nbio = "Identidade fictícia usada somente pelos testes automatizados."\n''',
+                encoding="utf-8",
+            )
             normalized = root.as_posix()
             config_path.write_text(
                 f'''transport = "polling"\ncredential_ref = "entry"\nproject_root = "{normalized}"\nstate_dir = "{normalized}/state"\n'''
@@ -210,7 +230,7 @@ class WorkspaceTests(unittest.TestCase):
             source = root / "image.png"
             source.write_bytes(b"image")
             script = Path(__file__).resolve().parents[1] / "interfaces" / "telegram" / "scripts" / "publish_artifact.py"
-            environment = {**__import__("os").environ, "BOTINA_JOB_OUTPUT": str(output)}
+            environment = {**__import__("os").environ, "COWORKER_JOB_OUTPUT": str(output)}
             first = subprocess.run(
                 [sys.executable, str(script), str(source)], capture_output=True,
                 text=True, encoding="utf-8", env=environment, check=False,
@@ -382,13 +402,16 @@ class _FakeTelegramApi:
     def close(self) -> None:
         pass
 
+    def set_profile(self, **_values):
+        return True
+
 
 class GatewayContextTests(unittest.TestCase):
     def _gateway(self, root: Path) -> Gateway:
         executable = root / "codex.exe"
         executable.touch()
         config = TelegramConfig(
-            "polling", "credential", root, root / "state", 10, 10,
+            TEST_IDENTITY, "polling", "credential", root, root / "state", 10, 10,
             PairingConfig(600, 5),
             CodexConfig(executable, root / "codex", "workspace-write", False, "never", 60, ()),
             MediaConfig(root / "inbox", root / "jobs", 1000, 1000),
@@ -426,7 +449,9 @@ class GatewayContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             gateway = self._gateway(Path(temporary))
             gateway.state.update_seen(1)
-            context = ReplyContext(20, "BOTina", thread_id="thread-1", turn_id="turn-1")
+            context = ReplyContext(
+                20, TEST_IDENTITY.display_name, thread_id="thread-1", turn_id="turn-1"
+            )
             gateway._handle_command(1, 10, "/resume", "", context)
             active = gateway.state.session(10)
             gateway.close()
@@ -485,7 +510,7 @@ class GatewayContextTests(unittest.TestCase):
             second_record = gateway.state.record_message(2, 10, 12, "in", None, "received")
             first = InboundMessage((1,), 10, 10, (11,), "legenda", "album", (Attachment("current", "f1"),))
             second = InboundMessage((2,), 10, 10, (12,), "", "album", (Attachment("current", "f2"),))
-            with patch("interfaces.telegram.botina_telegram.threading.Timer", Timer):
+            with patch("interfaces.telegram.gateway.threading.Timer", Timer):
                 gateway._queue_album(first, {"message_id": 11}, first_record)
                 gateway._queue_album(second, {"message_id": 12}, second_record)
             gateway._flush_album((10, "album"))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gerencia operações interativas seguras do cofre KeePassXC da BOTina."""
+"""Gerencia operações interativas seguras do cofre KeePassXC da Coworker."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ DEFAULT_CONFIG = PROJECT_ROOT / "data" / "config" / "secrets.toml"
 EXAMPLE_CONFIG = PROJECT_ROOT / "config" / "secrets.example.toml"
 FALLBACK_GUI = Path("KeePassXC.exe")
 FALLBACK_CLI = Path("keepassxc-cli.exe")
-FALLBACK_VAULT = PROJECT_ROOT / "data" / "secrets" / "botina.kdbx"
-FALLBACK_CREDENTIAL_TARGET = "BOTina/KeePassXC/MasterPassword"
+FALLBACK_VAULT = PROJECT_ROOT / "data" / "secrets" / "vault.kdbx"
+FALLBACK_CREDENTIAL_TARGET = "Coworker/KeePassXC/MasterPassword"
 
 CRED_TYPE_GENERIC = 1
 CRED_PERSIST_LOCAL_MACHINE = 2
@@ -156,7 +156,7 @@ def write_windows_credential(target: str, secret: str) -> None:
     credential = CredentialW()
     credential.Type = CRED_TYPE_GENERIC
     credential.TargetName = target
-    credential.Comment = "BOTina - senha mestra do cofre KeePassXC"
+    credential.Comment = "Coworker - senha mestra do cofre KeePassXC"
     credential.CredentialBlobSize = len(blob)
     credential.CredentialBlob = ctypes.cast(
         blob_buffer, ctypes.POINTER(ctypes.c_ubyte)
@@ -616,7 +616,7 @@ def enrollment_worker(raw_arguments: list[str]) -> int:
 
     if os.name == "nt":
         ctypes.windll.kernel32.SetConsoleTitleW(
-            "BOTina - Cadastrar senha mestra nesta máquina"
+            "Coworker - Cadastrar senha mestra nesta máquina"
         )
 
     try:
@@ -714,7 +714,7 @@ def command_create(args: argparse.Namespace) -> dict[str, Any]:
     process_id = launch_interactive(
         cli_path,
         ["db-create", "--set-password", str(vault_path)],
-        "BOTina - Criar cofre",
+        "Coworker - Criar cofre",
     )
     return {
         "ok": True,
@@ -764,7 +764,7 @@ def command_add(args: argparse.Namespace) -> dict[str, Any]:
     process_id = launch_interactive(
         cli_path,
         command_arguments,
-        "BOTina - Adicionar credencial",
+        "Coworker - Adicionar credencial",
     )
     return {
         "ok": True,
@@ -849,7 +849,7 @@ def command_check(args: argparse.Namespace) -> dict[str, Any]:
     process_id = launch_interactive(
         cli_path,
         ["show", "--attributes", "Title", str(vault_path), entry_path],
-        "BOTina - Verificar credencial",
+        "Coworker - Verificar credencial",
         result_path=result_path,
     )
     return {
@@ -897,7 +897,7 @@ def build_parser(config: VaultConfig | None = None) -> argparse.ArgumentParser:
         FALLBACK_CREDENTIAL_TARGET,
     )
     parser = argparse.ArgumentParser(
-        description="Operações seguras do cofre KeePassXC da BOTina."
+        description="Operações seguras do cofre KeePassXC da Coworker."
     )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--gui", default=str(settings.gui_path))

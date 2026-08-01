@@ -356,7 +356,7 @@ class OmieClient:
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "BOTina-Omie/1",
+                "User-Agent": "Coworker-Omie/1",
             },
         )
         try:

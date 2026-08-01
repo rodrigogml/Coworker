@@ -1,1 +1,1 @@
-"""Interfaces executáveis da BOTina."""
+"""Interfaces executáveis da Coworker."""

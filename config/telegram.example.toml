@@ -1,6 +1,6 @@
 # Copie para data/config/telegram.toml e ajuste somente valores locais.
 transport = "polling"
-credential_ref = "APIs/Telegram/BOTina"
+credential_ref = "APIs/Telegram/INSTANCE_ID"
 project_root = "."
 state_dir = ""
 poll_timeout_seconds = 45
@@ -20,6 +20,7 @@ network_access = false
 approval_policy = "never"
 timeout_seconds = 1800
 additional_directories = []
+writable_directories = ["data"]
 
 [media]
 inbox_dir = "data/telegram/inbox"
@@ -37,6 +38,6 @@ max_frames = 100
 
 [webhook]
 public_url = ""
-secret_credential_ref = "APIs/Telegram/BOTinaWebhook"
+secret_credential_ref = "APIs/Telegram/INSTANCE_ID-webhook"
 listen_host = "127.0.0.1"
 listen_port = 8787

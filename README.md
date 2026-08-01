@@ -1,7 +1,9 @@
-# BOTina
+# Coworker
 
-BOTina é uma assistente pessoal local, de identidade feminina, orientada por arquivos
-de instruções e capaz de executar ferramentas de linha de comando com segurança.
+Coworker é um núcleo reutilizável para instanciar assistentes pessoais locais,
+orientadas por arquivos de instruções e capazes de executar ferramentas de linha de
+comando com segurança. Nome, gênero gramatical, tom e bio são
+definidos privadamente para cada instância.
 
 O repositório contém apenas o núcleo reutilizável: instruções, skills, scripts,
 migrations, testes e modelos. Memória, configurações locais, bancos e credenciais
@@ -35,9 +37,11 @@ permanecem em `data/`, fora do Git.
 ## Estrutura
 
 ```text
-BOTina/
+Coworker/
 ├── AGENTS.md
 ├── README.md
+├── install.ps1
+├── install.sh
 ├── .gitignore
 ├── .agents/
 ├── config/
@@ -49,6 +53,7 @@ BOTina/
 │   ├── forwardemail.example.toml
 │   ├── gmail.example.toml
 │   ├── google.example.toml
+│   ├── identity.example.toml
 │   ├── omie.example.toml
 │   ├── notion.example.toml
 │   ├── telegram.example.toml
@@ -58,6 +63,7 @@ BOTina/
 │   └── vault-entities.toml
 ├── data/                         # privado e ignorado pelo Git
 │   ├── config/
+│   │   └── identity.toml
 │   ├── memory/
 │   ├── secrets/
 │   └── memory.sqlite3
@@ -88,7 +94,7 @@ Instalar as dependências Python antes do bootstrap:
 python -m pip install -r requirements.txt
 ```
 
-PyKeePass permite que a BOTina leia e grave atributos personalizados protegidos no
+PyKeePass permite que a Coworker leia e grave atributos personalizados protegidos no
 arquivo KDBX. As demais ferramentas continuam preferindo a biblioteca padrão.
 
 Antes do bootstrap, a IA deve diagnosticar o ambiente:
@@ -105,11 +111,42 @@ estiver autorizada. Caso não possa, deve orientar a instalação pelo
 de adicionar o Python ao `PATH` seja habilitada e retomar pelo comando
 `python --version`.
 
-Git não é necessário para executar a BOTina. Se a tarefa exigir versionamento e ele
+Git não é necessário para executar a Coworker. Se a tarefa exigir versionamento e ele
 estiver ausente, aplicar a mesma regra: instalar quando autorizado ou orientar a
 instalação pelo [site oficial do Git](https://git-scm.com/download/win).
 
-## Bootstrap da instância local
+## Instalação de uma instância
+
+O instalador cria somente a base da instância: identidade, configuração do cofre,
+interface Telegram e sandbox do Codex. Configurações de skills e contas externas são
+feitas posteriormente em conversa com a própria instância.
+
+No Windows:
+
+```powershell
+.\install.ps1
+```
+
+No Linux ou macOS:
+
+```sh
+sh ./install.sh
+```
+
+O processo solicita nome, idioma, gênero gramatical, pronomes, tom,
+estilo e bio. Arquivos existentes não são sobrescritos. O bot precisa ser criado
+previamente no BotFather; depois de o token ser guardado no cofre, o instalador
+sincroniza o nome e as descrições públicas. O `@username` permanece aquele definido no
+BotFather. Em seguida, o instalador abre o pareamento, aguarda `/pair`, apresenta os
+IDs numéricos para confirmação local, aprova a pessoa proprietária e inicia o gateway
+em segundo plano. Use `-NoStart` no PowerShell ou `--no-start` no shell quando o
+processo for administrado por outro mecanismo.
+
+O sandbox inicial concede leitura ao diretório do projeto, escrita somente em `data/`,
+execução dos pontos de entrada públicos das skills e nenhuma rede. A rede pode ser
+habilitada posteriormente, quando uma integração configurada realmente precisar dela.
+
+## Bootstrap manual da instância local
 
 Uma IA deve executar estas etapas de forma idempotente. Arquivos existentes nunca
 devem ser sobrescritos.
@@ -120,19 +157,9 @@ devem ser sobrescritos.
 New-Item -ItemType Directory -Force data/config, data/memory, data/secrets | Out-Null
 
 $modelos = @{
+  "config/identity.example.toml" = "data/config/identity.toml"
   "config/secrets.example.toml" = "data/config/secrets.toml"
-  "config/calendar.example.toml" = "data/config/calendar.toml"
-  "config/cloudflare.example.toml" = "data/config/cloudflare.toml"
-  "config/contacts.example.toml" = "data/config/contacts.toml"
-  "config/cpfl.example.toml" = "data/config/cpfl.toml"
-  "config/drive.example.toml" = "data/config/drive.toml"
-  "config/forwardemail.example.toml" = "data/config/forwardemail.toml"
-  "config/gmail.example.toml" = "data/config/gmail.toml"
-  "config/google.example.toml" = "data/config/google.toml"
-  "config/omie.example.toml" = "data/config/omie.toml"
-  "config/notion.example.toml" = "data/config/notion.toml"
   "config/telegram.example.toml" = "data/config/telegram.toml"
-  "config/todoist.example.toml" = "data/config/todoist.toml"
   "templates/memory/README.md" = "data/memory/README.md"
   "templates/memory/profile.md" = "data/memory/profile.md"
   "templates/memory/preferences.md" = "data/memory/preferences.md"
@@ -166,10 +193,12 @@ O agente pode corrigir automaticamente caminhos comprovadamente encontrados na
 configuração privada. Não deve gravar caminhos pessoais no modelo público, inventar
 um caminho ou substituir outras configurações locais sem necessidade.
 
-Scripts da BOTina são executados diretamente por seus caminhos no repositório. O
+Scripts da Coworker são executados diretamente por seus caminhos no repositório. O
 bootstrap não deve criar wrappers ou atalhos em diretórios externos.
 
-Editar `data/config/cloudflare.toml` apenas quando a referência da credencial ou o
+As configurações abaixo não fazem parte da instalação inicial. A própria instância
+deve criar a cópia do modelo correspondente quando a pessoa usuária pedir a ativação
+de uma skill. Por exemplo, editar `data/config/cloudflare.toml` apenas quando a referência da credencial ou o
 endpoint forem diferentes do modelo. Nunca gravar o token nesse arquivo.
 
 Aplicar a mesma regra a `data/config/forwardemail.toml`: ele contém somente o endpoint,
@@ -258,7 +287,7 @@ Marco Antônio (Salgadeiro)
 Não usar aspas, dados sensíveis ou características passageiras como referência. Se
 ainda houver colisão, acrescentar contexto estável, como
 `Gustavo (Padaria Central - Centro)`. Os títulos devem ser únicos dentro de cada grupo,
-pois as ferramentas da BOTina os acessam pelo caminho completo.
+pois as ferramentas da Coworker os acessam pelo caminho completo.
 
 Quando o nome completo se tornar conhecido, atualizar `NOME_TIPO` para `COMPLETO`. A
 referência pode continuar no título e no atributo `REFERENCIA` quando ainda ajudar na
@@ -639,21 +668,20 @@ artefatos em um SQLite local da máquina. Respostas podem referenciar mensagens 
 mídias nativas validadas.
 
 O gateway executa o CLI com um `CODEX_HOME` próprio, por padrão em
-`%LOCALAPPDATA%\BOTina\codex`. Autenticação, configuração, sessões e logs da interface
-ficam separados do Codex Desktop. O perfil de permissões limita escrita às raízes do
-workspace; acesso de rede e regras para os scripts oficiais são configurados
+`%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`. Autenticação, configuração, sessões e logs da interface
+ficam separados do Codex Desktop. O perfil inicial permite ler o projeto e escrever
+somente em `data/`; acesso de rede e regras para os scripts oficiais são configurados
 explicitamente pela interface.
 
-O backend padrão é `exec`; `app-server` pode ser ativado explicitamente no TOML privado
-para eventos estruturados e cancelamento por turno. A configuração nunca é migrada
-automaticamente. Consulte o README da interface para formatos, processadores e
-recuperação de uploads ambíguos.
+O instalador seleciona `app-server` para eventos estruturados e cancelamento por turno,
+mantendo `exec` como fallback configurável no TOML privado. Consulte o README da
+interface para formatos, processadores e recuperação de uploads ambíguos.
 
 ```powershell
-python interfaces/telegram/botina_telegram.py init
-python interfaces/telegram/botina_telegram.py doctor
-python interfaces/telegram/botina_telegram.py pairing begin
-python interfaces/telegram/botina_telegram.py run
+python interfaces/telegram/gateway.py init
+python interfaces/telegram/gateway.py doctor
+python interfaces/telegram/gateway.py pairing begin
+python interfaces/telegram/gateway.py run
 ```
 
 O primeiro usuário somente se torna a pessoa proprietária depois de validar um PIN

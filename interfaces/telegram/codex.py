@@ -16,7 +16,7 @@ from typing import Any, Callable
 from interfaces.telegram.config import CodexConfig
 
 
-RULES_TEMPLATE = Path(__file__).resolve().parents[2] / "config" / "codex-botina.rules"
+RULES_TEMPLATE = Path(__file__).resolve().parents[2] / "config" / "codex.rules"
 
 
 class CodexExecutionError(RuntimeError):
@@ -103,7 +103,7 @@ class CodexAdapter:
 
     @property
     def rules_destination(self) -> Path:
-        return self.config.home_dir / "rules" / "botina.rules"
+        return self.config.home_dir / "rules" / "gateway.rules"
 
     def rules_status(self) -> dict[str, Any]:
         try:
@@ -169,7 +169,7 @@ class CodexAdapter:
         if login.returncode != 0:
             raise CodexExecutionError(
                 "O Codex CLI isolado ainda não está autenticado. Execute 'codex login' "
-                "com o CODEX_HOME configurado para a BOTina."
+                "com o CODEX_HOME configurado para esta instância."
             )
         return {
             "executable": str(self.config.executable),
@@ -192,7 +192,7 @@ class CodexAdapter:
             return "unavailable"
 
     def _app_server_probe(self) -> str:
-        process, responses = self._start_app_server("botina-codex-doctor")
+        process, responses = self._start_app_server("coworker-codex-doctor")
         try:
             self._initialize_app_server(process, responses, time.monotonic() + 15)
             return "initialized"
@@ -228,7 +228,7 @@ class CodexAdapter:
             finally:
                 responses.put(None)
 
-        reader = threading.Thread(target=read_stdout, name="botina-codex-account", daemon=True)
+        reader = threading.Thread(target=read_stdout, name="coworker-codex-account", daemon=True)
         reader.start()
         deadline = time.monotonic() + 30
         try:
@@ -239,8 +239,8 @@ class CodexAdapter:
                     "id": 1,
                     "params": {
                         "clientInfo": {
-                            "name": "botina_telegram",
-                            "title": "BOTina Telegram",
+                            "name": "coworker_telegram",
+                            "title": "Coworker Telegram",
                             "version": "0.1.0",
                         }
                     },
@@ -335,20 +335,23 @@ class CodexAdapter:
         """Traduz a política pública para os perfis atuais de permissão do Codex."""
         if self.config.sandbox == "danger-full-access":
             return ('default_permissions=":danger-full-access"',)
-        workspace_access = "write" if self.config.sandbox == "workspace-write" else "read"
         network = str(self.config.network_access).lower()
         direct_paths = ""
         for directory in self.config.additional_directories:
             additional = directory.as_posix().replace('"', '\\"')
-            direct_paths += f', "{additional}" = "{workspace_access}"'
+            direct_paths += f', "{additional}" = "read"'
+        if self.config.sandbox == "workspace-write":
+            for directory in self.config.writable_directories:
+                writable = directory.as_posix().replace('"', '\\"')
+                direct_paths += f', "{writable}" = "write"'
         if self.config.generated_images_dir is not None:
             generated = self.config.generated_images_dir.as_posix().replace('"', '\\"')
             direct_paths += f', "{generated}" = "read"'
         return (
-            'default_permissions="botina_gateway"',
-            "permissions.botina_gateway.filesystem="
-            f'{{ ":minimal" = "read", ":workspace_roots" = {{ "." = "{workspace_access}" }}{direct_paths} }}',
-            f"permissions.botina_gateway.network.enabled={network}",
+            'default_permissions="coworker_gateway"',
+            "permissions.coworker_gateway.filesystem="
+            f'{{ ":minimal" = "read", ":workspace_roots" = {{ "." = "read" }}{direct_paths} }}',
+            f"permissions.coworker_gateway.network.enabled={network}",
         )
 
     def run(
@@ -480,7 +483,7 @@ class CodexAdapter:
     def _job_environment(self, job_output: Path | None) -> dict[str, str]:
         environment = self._environment()
         if job_output is not None:
-            environment["BOTINA_JOB_OUTPUT"] = str(job_output)
+            environment["COWORKER_JOB_OUTPUT"] = str(job_output)
         return environment
 
     def _start_app_server(
@@ -533,8 +536,8 @@ class CodexAdapter:
                 "id": 1,
                 "params": {
                     "clientInfo": {
-                        "name": "botina_telegram",
-                        "title": "BOTina Telegram",
+                        "name": "coworker_telegram",
+                        "title": "Coworker Telegram",
                         "version": "0.2.0",
                     }
                 },
@@ -553,7 +556,7 @@ class CodexAdapter:
         output_schema: Path | None,
         job_output: Path | None,
     ) -> CodexResult:
-        process, responses = self._start_app_server("botina-codex-turn", job_output)
+        process, responses = self._start_app_server("coworker-codex-turn", job_output)
         self.registry.register(chat_id, process)
         deadline = time.monotonic() + self.config.timeout_seconds
         discovered_thread = thread_id
@@ -656,8 +659,7 @@ class CodexAdapter:
         return {
             "type": "workspaceWrite",
             "writableRoots": [
-                str(self.project_root),
-                *(str(path) for path in self.config.additional_directories),
+                *(str(path) for path in self.config.writable_directories),
             ],
             "networkAccess": self.config.network_access,
         }

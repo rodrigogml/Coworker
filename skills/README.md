@@ -1,6 +1,6 @@
 # Skills
 
-Cada subdiretório representa uma capacidade específica da BOTina e deve conter um
+Cada subdiretório representa uma capacidade específica da Coworker e deve conter um
 arquivo `SKILL.md` com instruções operacionais.
 
 Scripts exclusivos de uma capacidade devem permanecer dentro da própria skill.

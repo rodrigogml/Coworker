@@ -1,6 +1,6 @@
 # Migrations
 
-Este diretório contém os schemas versionados dos bancos SQLite da BOTina. Os arquivos
+Este diretório contém os schemas versionados dos bancos SQLite da Coworker. Os arquivos
 da raiz pertencem à memória estruturada; `telegram/` pertence ao estado operacional da
 interface Telegram.
 
@@ -13,4 +13,5 @@ jobs, threads, turnos e artefatos são acrescentadas por `002_structured_deliver
 preservando bancos já existentes.
 
 Os bancos locais não são versionados. A memória fica em `data/memory.sqlite3`; o banco
-do Telegram fica, por padrão, em `%LOCALAPPDATA%\BOTina\telegram\telegram.sqlite3`.
+do Telegram fica, por padrão, em
+`%LOCALAPPDATA%\Coworker\instances\<instance_id>\telegram\telegram.sqlite3`.

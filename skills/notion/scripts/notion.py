@@ -254,7 +254,7 @@ class NotionClient:
             "Accept": "application/json",
             "Authorization": f"Bearer {self._token}",
             "Notion-Version": self.config.api_version,
-            "User-Agent": "BOTina-Notion/1.0",
+            "User-Agent": "Coworker-Notion/1.0",
         }
         body = None
         if payload is not None:

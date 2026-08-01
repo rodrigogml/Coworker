@@ -130,7 +130,7 @@ class GoogleApiClient:
         headers = {
             "Accept": "application/json" if expect_json else "*/*",
             "Authorization": f"Bearer {self._access_token}",
-            "User-Agent": f"BOTina-{self.service}/1.0",
+            "User-Agent": f"Coworker-{self.service}/1.0",
         }
         request_body = body
         if payload is not None:

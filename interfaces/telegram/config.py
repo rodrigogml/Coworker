@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from interfaces.telegram.identity import InstanceIdentity, load_identity
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "data" / "config" / "telegram.toml"
@@ -36,6 +38,7 @@ class CodexConfig:
     additional_directories: tuple[Path, ...]
     backend: str = "exec"
     generated_images_dir: Path | None = None
+    writable_directories: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,7 @@ class WebhookConfig:
 
 @dataclass(frozen=True)
 class TelegramConfig:
+    identity: InstanceIdentity
     transport: str
     credential_ref: str
     project_root: Path
@@ -96,17 +100,17 @@ def _resolve(raw: Any, base: Path, *, allow_empty: bool = False) -> Path | None:
     return path.resolve() if path.is_absolute() else (base / path).resolve()
 
 
-def default_state_dir() -> Path:
+def default_state_dir(instance_id: str) -> Path:
     """Mantém o estado volátil fora do diretório sincronizado do projeto."""
     local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
     if local_app_data:
-        return Path(local_app_data) / "BOTina" / "telegram"
-    return Path.home() / ".botina" / "telegram"
+        return Path(local_app_data) / "Coworker" / "instances" / instance_id / "telegram"
+    return Path.home() / ".coworker" / "instances" / instance_id / "telegram"
 
 
-def default_codex_home() -> Path:
+def default_codex_home(instance_id: str) -> Path:
     """Isola autenticação, configuração e sessões usadas pela interface remota."""
-    return default_state_dir().parent / "codex"
+    return default_state_dir(instance_id).parent / "codex"
 
 
 def discover_codex(raw: Any) -> Path:
@@ -140,6 +144,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise TelegramConfigError("A configuração do Telegram não pôde ser lida.") from exc
 
+    identity = load_identity(resolved.parent / "identity.toml")
     pairing_values = _mapping(values, "pairing")
     codex_values = _mapping(values, "codex")
     media_values = _mapping(values, "media")
@@ -156,7 +161,9 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         raise TelegramConfigError(f"Projeto do Codex não encontrado em '{project_root}'.")
     raw_state = str(values.get("state_dir", "")).strip()
     state_dir = (
-        _resolve(raw_state, PROJECT_ROOT) if raw_state else default_state_dir().resolve()
+        _resolve(raw_state, PROJECT_ROOT)
+        if raw_state
+        else default_state_dir(identity.instance_id).resolve()
     )
     assert state_dir is not None
     inbox_dir = _resolve(media_values.get("inbox_dir"), PROJECT_ROOT)
@@ -172,7 +179,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     codex_home = (
         _resolve(raw_codex_home, PROJECT_ROOT)
         if raw_codex_home
-        else default_codex_home().resolve()
+        else default_codex_home(identity.instance_id).resolve()
     )
     assert codex_home is not None
     raw_generated_images = str(codex_values.get("generated_images_dir", "")).strip()
@@ -184,6 +191,11 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     additional = tuple(
         path
         for item in codex_values.get("additional_directories", [])
+        if (path := _resolve(item, PROJECT_ROOT)) is not None
+    )
+    writable = tuple(
+        path
+        for item in codex_values.get("writable_directories", ["data"])
         if (path := _resolve(item, PROJECT_ROOT)) is not None
     )
     sandbox = str(codex_values.get("sandbox", "workspace-write")).strip()
@@ -232,6 +244,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     if any(value <= 0 for value in processor_limits):
         raise TelegramConfigError("Os limites de [processors] devem ser positivos.")
     return TelegramConfig(
+        identity=identity,
         transport=transport,
         credential_ref=credential_ref,
         project_root=project_root,
@@ -240,15 +253,16 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         request_timeout_seconds=request_timeout,
         pairing=PairingConfig(ttl, attempts),
         codex=CodexConfig(
-            executable,
-            codex_home,
-            sandbox,
-            network_access,
-            approval,
-            codex_timeout,
-            additional,
-            backend,
-            generated_images,
+            executable=executable,
+            home_dir=codex_home,
+            sandbox=sandbox,
+            network_access=network_access,
+            approval_policy=approval,
+            timeout_seconds=codex_timeout,
+            additional_directories=additional,
+            backend=backend,
+            generated_images_dir=generated_images,
+            writable_directories=writable,
         ),
         media=MediaConfig(inbox_dir, jobs_dir, max_download, max_upload),
         processors=ProcessorConfig(*processor_limits),

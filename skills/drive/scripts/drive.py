@@ -284,7 +284,7 @@ def file_export(
 
 
 def _multipart(metadata: dict[str, Any], content: bytes, mime_type: str) -> tuple[bytes, str]:
-    boundary = f"botina-{uuid.uuid4().hex}"
+    boundary = f"coworker-{uuid.uuid4().hex}"
     body = (
         f"--{boundary}\r\n"
         "Content-Type: application/json; charset=UTF-8\r\n\r\n"

@@ -29,9 +29,9 @@ def main() -> int:
     parser.add_argument("--name", default="")
     parser.add_argument("--max-bytes", type=int, default=20 * 1024 * 1024)
     args = parser.parse_args()
-    output_value = os.environ.get("BOTINA_JOB_OUTPUT", "").strip()
+    output_value = os.environ.get("COWORKER_JOB_OUTPUT", "").strip()
     if not output_value:
-        raise RuntimeError("BOTINA_JOB_OUTPUT não foi definido pelo gateway.")
+        raise RuntimeError("COWORKER_JOB_OUTPUT não foi definido pelo gateway.")
     source = Path(args.source).expanduser().resolve(strict=True)
     output = Path(output_value).expanduser().resolve(strict=True)
     if not source.is_file() or source.is_symlink():

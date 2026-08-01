@@ -35,11 +35,14 @@ class DownloadedFile:
 
 
 class TelegramApi:
-    def __init__(self, token: str, timeout_seconds: int):
+    def __init__(
+        self, token: str, timeout_seconds: int, assistant_name: str = "A assistente"
+    ):
         self._token = token
         self._base = f"https://api.telegram.org/bot{token}/"
         self._file_base = f"https://api.telegram.org/file/bot{token}/"
         self.timeout_seconds = timeout_seconds
+        self.assistant_name = assistant_name.strip() or "A assistente"
 
     def close(self) -> None:
         self._token = ""
@@ -51,7 +54,7 @@ class TelegramApi:
         request = urllib.request.Request(
             self._base + method,
             data=body,
-            headers={"Content-Type": "application/json", "User-Agent": "BOTina-Telegram/1.0"},
+            headers={"Content-Type": "application/json", "User-Agent": "Coworker-Telegram/1.0"},
             method="POST",
         )
         try:
@@ -81,6 +84,26 @@ class TelegramApi:
         }
         return bool(self.call("setMyCommands", payload))
 
+    def get_profile(self) -> dict[str, str]:
+        """Consulta os campos públicos editáveis do bot."""
+        name = self.call("getMyName") or {}
+        short = self.call("getMyShortDescription") or {}
+        description = self.call("getMyDescription") or {}
+        return {
+            "name": str(name.get("name", "")),
+            "short_description": str(short.get("short_description", "")),
+            "description": str(description.get("description", "")),
+        }
+
+    def set_profile(self, *, name: str, short_description: str, description: str) -> bool:
+        """Sincroniza nome e bios; o username continua sob controle do BotFather."""
+        results = (
+            self.call("setMyName", {"name": name}),
+            self.call("setMyShortDescription", {"short_description": short_description}),
+            self.call("setMyDescription", {"description": description}),
+        )
+        return all(bool(item) for item in results)
+
     def delete_webhook(self) -> None:
         self.call("deleteWebhook", {"drop_pending_updates": False})
 
@@ -101,7 +124,7 @@ class TelegramApi:
         fields: dict[str, Any],
         files: dict[str, Path],
     ) -> Any:
-        boundary = f"botina-{uuid.uuid4().hex}"
+        boundary = f"coworker-{uuid.uuid4().hex}"
         body = bytearray()
         for name, value in fields.items():
             body.extend(f"--{boundary}\r\n".encode())
@@ -125,7 +148,7 @@ class TelegramApi:
             data=bytes(body),
             headers={
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "BOTina-Telegram/1.0",
+                "User-Agent": "Coworker-Telegram/1.0",
             },
             method="POST",
         )
@@ -141,6 +164,8 @@ class TelegramApi:
     def send_text(
         self, chat_id: int, text: str, *, reply_to_message_id: int | None = None
     ) -> list[TelegramReceipt]:
+        if not text.strip():
+            text = f"{self.assistant_name} concluiu sem produzir uma mensagem de texto."
         chunks = telegram_html_chunks(text)
         receipts: list[TelegramReceipt] = []
         for index, chunk in enumerate(chunks):
@@ -242,7 +267,7 @@ class TelegramApi:
         folder.mkdir(parents=True, exist_ok=True)
         safe_name = sanitize_filename(original_name or Path(remote_path).name or "arquivo")
         destination = unique_path(folder / safe_name)
-        request = urllib.request.Request(self._file_base + urllib.parse.quote(remote_path, safe="/"), headers={"User-Agent": "BOTina-Telegram/1.0"})
+        request = urllib.request.Request(self._file_base + urllib.parse.quote(remote_path, safe="/"), headers={"User-Agent": "Coworker-Telegram/1.0"})
         digest = hashlib.sha256()
         size = 0
         try:
@@ -297,7 +322,7 @@ def unique_path(path: Path) -> Path:
 
 
 def split_text(text: str, limit: int = 3900) -> list[str]:
-    normalized = text.strip() or "A BOTina concluiu sem produzir uma mensagem de texto."
+    normalized = text.strip() or "A assistente concluiu sem produzir uma mensagem de texto."
     chunks: list[str] = []
     while len(normalized) > limit:
         boundary = normalized.rfind("\n", 0, limit)
@@ -357,7 +382,7 @@ def markdown_to_telegram_html(value: str) -> str:
 
     if inside_code:
         output.append(_code_block(code_lines, code_language))
-    return "\n".join(output).strip() or "A BOTina concluiu sem produzir uma mensagem de texto."
+    return "\n".join(output).strip() or "A assistente concluiu sem produzir uma mensagem de texto."
 
 
 def _format_markdown_line(line: str) -> str:
@@ -379,7 +404,7 @@ def _format_inline_markdown(value: str) -> str:
     protected: list[str] = []
 
     def preserve(rendered: str) -> str:
-        token = f"\x02BOTINA{len(protected)}\x03"
+        token = f"\x02COWORKER{len(protected)}\x03"
         protected.append(rendered)
         return token
 
@@ -403,7 +428,7 @@ def _format_inline_markdown(value: str) -> str:
     value = re.sub(r"~~([^~\r\n]+)~~", r"<s>\1</s>", value)
     value = re.sub(r"(?<!\*)\*([^*\r\n]+)\*(?!\*)", r"<i>\1</i>", value)
     for index, rendered in enumerate(protected):
-        value = value.replace(html.escape(f"\x02BOTINA{index}\x03", quote=False), rendered)
+        value = value.replace(html.escape(f"\x02COWORKER{index}\x03", quote=False), rendered)
     return value
 
 

@@ -1,4 +1,4 @@
-# Memória privada da BOTina
+# Memória privada da Coworker
 
 Este diretório contém informações duradouras da instância pessoal.
 

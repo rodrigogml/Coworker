@@ -200,7 +200,7 @@ class CloudflareClient:
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self._token}",
                 "Content-Type": "application/json",
-                "User-Agent": "BOTina-Cloudflare/1",
+                "User-Agent": "Coworker-Cloudflare/1",
             },
         )
         try:

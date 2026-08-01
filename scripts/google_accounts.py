@@ -272,7 +272,7 @@ def _post_form(
         headers={
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "BOTina-Google/1.0",
+            "User-Agent": "Coworker-Google/1.0",
         },
         method="POST",
     )
@@ -290,7 +290,7 @@ def _userinfo(
         headers={
             "Accept": "application/json",
             "Authorization": f"Bearer {access_token}",
-            "User-Agent": "BOTina-Google/1.0",
+            "User-Agent": "Coworker-Google/1.0",
         },
         method="GET",
     )
@@ -372,7 +372,7 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
             if values
         }
         body = (
-            "<html><body><h1>BOTina</h1>"
+            "<html><body><h1>Coworker</h1>"
             "<p>Autorização recebida. Você pode fechar esta janela.</p>"
             "</body></html>"
         ).encode("utf-8")

@@ -54,7 +54,7 @@ armazenada em um cofre externo.
 
 ## Cofre KeePassXC
 
-`credential_vault.py` integra a BOTina ao KeePassXC conforme
+`credential_vault.py` integra a Coworker ao KeePassXC conforme
 `data/config/secrets.toml`.
 
 Se a configuração local ainda não existir, copiar `config/secrets.example.toml` e

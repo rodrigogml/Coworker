@@ -232,7 +232,7 @@ class ForwardEmailClient:
                 "Accept-Language": "en",
                 "Authorization": self._authorization,
                 "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": "BOTina-ForwardEmail/1",
+                "User-Agent": "Coworker-ForwardEmail/1",
             },
         )
         try:

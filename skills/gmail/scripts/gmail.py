@@ -185,7 +185,7 @@ class GmailClient:
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._access_token}",
-            "User-Agent": "BOTina-Gmail/1.0",
+            "User-Agent": "Coworker-Gmail/1.0",
         }
         body = None
         if payload is not None:

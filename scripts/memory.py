@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interface de linha de comando para a memória SQLite da BOTina."""
+"""Interface de linha de comando para a memória SQLite da Coworker."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ def database_path(raw_path: str) -> Path:
 
 
 def connect(path: Path, *, create: bool = False) -> sqlite3.Connection:
-    """Abre uma conexão SQLite configurada para o uso local da BOTina."""
+    """Abre uma conexão SQLite configurada para o uso local da Coworker."""
     if not path.exists() and not create:
         raise MemoryError(
             f"Banco não encontrado em '{path}'. Execute primeiro o comando 'init'."
@@ -600,7 +600,7 @@ def add_query_filters(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     """Constrói o parser da interface de linha de comando."""
     parser = argparse.ArgumentParser(
-        description="Memória SQLite local da assistente BOTina."
+        description="Memória SQLite local da assistente Coworker."
     )
     parser.add_argument(
         "--database",
