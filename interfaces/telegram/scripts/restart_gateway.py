@@ -178,6 +178,8 @@ def schedule_restart(config_path: Path) -> dict[str, Any]:
 def spawn_relauncher(config_path: Path, expected_pid: int) -> int:
     resolved = config_path.expanduser().resolve()
     config = load_config(resolved, require_codex=False)
+    if config.codex.access_mode != "super":
+        raise RestartError('O relançador exige codex.access_mode = "super".')
     lock_path = config.state_dir / LOCK_FILENAME
     log_path = config.state_dir / LOG_FILENAME
     lock = _read_json(lock_path)
@@ -260,6 +262,8 @@ def run_worker(
 ) -> dict[str, Any]:
     resolved = config_path.expanduser().resolve()
     config = load_config(resolved, require_codex=False)
+    if config.codex.access_mode != "super":
+        raise RestartError('O relançador exige codex.access_mode = "super".')
     lock_path = config.state_dir / LOCK_FILENAME
     log_path = config.state_dir / LOG_FILENAME
     lock = _read_json(lock_path)
@@ -278,7 +282,7 @@ def run_worker(
         requested = request_restart(config.state_dir)
         if not requested["requested"] or requested["pid"] != expected_pid:
             raise RestartError("O gateway mudou antes da solicitação de reinício.")
-        timeout = max(300, min(config.codex.timeout_seconds + 180, 7200))
+        timeout = max(1800, min(config.codex.timeout_seconds * 4 + 600, 86400))
         _wait_for_old_gateway(expected_pid, timeout)
         _log(log_path, f"gateway PID {expected_pid} encerrado; iniciando substituto")
         for attempt in range(1, 4):

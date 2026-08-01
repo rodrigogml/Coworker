@@ -298,7 +298,7 @@ class GatewayRestartTests(unittest.TestCase):
             )
             config = SimpleNamespace(
                 state_dir=state_dir,
-                codex=SimpleNamespace(timeout_seconds=60),
+                codex=SimpleNamespace(timeout_seconds=60, access_mode="super"),
             )
             with (
                 patch.object(restart_gateway, "load_config", return_value=config),
