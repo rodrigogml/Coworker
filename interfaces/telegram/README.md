@@ -47,17 +47,20 @@ seguros.
    continua exigindo confirmação humana na máquina; validar o PIN no Telegram não é
    suficiente.
 
-4. Instale e autentique uma distribuição autônoma do Codex CLI. O executável interno
-   do aplicativo desktop não deve ser presumido como acessível a processos externos.
-5. Se o comando `codex` não estiver no `PATH`, registre o caminho comprovado no campo
-   `codex.executable` de `data/config/telegram.toml`.
-6. O campo `codex.home_dir` identifica a instância isolada usada pelo gateway. Quando
-   vazio, assume
-   `%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`; não deve apontar para o diretório do
-   Codex Desktop.
-7. Mantenha `codex.network_access = false` até decidir habilitar integrações externas.
+5. No menu do configurador, abra **Codex CLI, CODEX_HOME e permissões**. O Codex CLI é
+   obrigatório: a seção informa se o executável foi localizado, mostra sua versão,
+   cria o `CODEX_HOME` exclusivo da instância e permite autenticar a conta isolada.
+   O executável interno do aplicativo desktop não deve ser presumido como acessível a
+   processos externos.
+6. Se o comando `codex` não estiver no `PATH`, informe o caminho comprovado nessa
+   seção. O valor é registrado em `codex.executable`.
+7. O campo `codex.home_dir` identifica a instância isolada usada pelo gateway. O
+   configurador grava explicitamente o padrão
+   `%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`; ele não deve apontar para o
+   diretório do Codex Desktop.
+8. Mantenha `codex.network_access = false` até decidir habilitar integrações externas.
    Para Gmail, Notion e outras APIs, altere-o para `true` após autorização explícita.
-8. Execute o diagnóstico:
+9. Execute o diagnóstico:
 
    ```powershell
    python interfaces/telegram/gateway.py doctor

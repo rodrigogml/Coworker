@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inicializa uma instância local do Coworker sem configurar suas skills."""
+"""Configura e valida uma instância local do Coworker sem configurar suas skills."""
 
 from __future__ import annotations
 
@@ -55,6 +55,10 @@ def _slug(value: str) -> str:
 
 def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_array(values: list[str] | tuple[str, ...]) -> str:
+    return "[" + ", ".join(_toml_string(value) for value in values) + "]"
 
 
 def _ask(label: str, default: str = "") -> str:
@@ -202,9 +206,57 @@ def _load_identity_values() -> dict[str, Any]:
     return {key: getattr(identity, key) for key, _label in IDENTITY_FIELDS}
 
 
-def _telegram_content(instance_id: str) -> str:
+def _default_codex_home(instance_id: str) -> Path:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from interfaces.telegram.config import default_codex_home
+
+    return default_codex_home(instance_id).resolve()
+
+
+def _default_telegram_values(instance_id: str) -> dict[str, Any]:
     executable = shutil.which("codex") or shutil.which("codex.exe") or ""
-    executable_value = str(Path(executable).resolve()) if executable else ""
+    return {
+        "executable": str(Path(executable).resolve()) if executable else "",
+        "home_dir": str(_default_codex_home(instance_id)),
+        "backend": "app-server",
+        "generated_images_dir": "",
+        "sandbox": "workspace-write",
+        "network_access": False,
+        "approval_policy": "never",
+        "timeout_seconds": 1800,
+        "additional_directories": [],
+        "writable_directories": ["data"],
+    }
+
+
+def _load_telegram_values(instance_id: str) -> dict[str, Any]:
+    values = _default_telegram_values(instance_id)
+    if not TELEGRAM_CONFIG.is_file():
+        return values
+    try:
+        with TELEGRAM_CONFIG.open("rb") as stream:
+            root = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise InstallError(
+            f"Não foi possível ler a configuração '{TELEGRAM_CONFIG}'."
+        ) from exc
+    codex = root.get("codex", {})
+    if isinstance(codex, dict):
+        for key in values:
+            if key in codex:
+                values[key] = codex[key]
+    if not str(values.get("home_dir", "")).strip():
+        values["home_dir"] = str(_default_codex_home(instance_id))
+    return values
+
+
+def _telegram_content(
+    instance_id: str, codex_values: dict[str, Any] | None = None
+) -> str:
+    settings = _default_telegram_values(instance_id)
+    if codex_values:
+        settings.update(codex_values)
     credential_ref = f"APIs/Telegram/{instance_id}"
     webhook_ref = f"APIs/Telegram/{instance_id}-webhook"
     return f'''# Configuração privada da interface Telegram.
@@ -220,15 +272,16 @@ ttl_seconds = 600
 max_attempts = 5
 
 [codex]
-executable = {_toml_string(executable_value)}
-home_dir = ""
-backend = "app-server"
-sandbox = "workspace-write"
-network_access = false
-approval_policy = "never"
-timeout_seconds = 1800
-additional_directories = []
-writable_directories = ["data"]
+executable = {_toml_string(str(settings['executable']))}
+home_dir = {_toml_string(str(settings['home_dir']))}
+backend = {_toml_string(str(settings['backend']))}
+generated_images_dir = {_toml_string(str(settings['generated_images_dir']))}
+sandbox = {_toml_string(str(settings['sandbox']))}
+network_access = {str(bool(settings['network_access'])).lower()}
+approval_policy = {_toml_string(str(settings['approval_policy']))}
+timeout_seconds = {int(settings['timeout_seconds'])}
+additional_directories = {_toml_array([str(value) for value in settings['additional_directories']])}
+writable_directories = {_toml_array([str(value) for value in settings['writable_directories']])}
 
 [media]
 inbox_dir = "data/telegram/inbox"
@@ -250,6 +303,23 @@ secret_credential_ref = {_toml_string(webhook_ref)}
 listen_host = "127.0.0.1"
 listen_port = 8787
 '''
+
+
+def _save_codex_values(instance_id: str, values: dict[str, Any]) -> None:
+    """Atualiza somente [codex], preservando as demais opções privadas."""
+    generated = _telegram_content(instance_id, values)
+    codex_block = generated.split("[codex]\n", 1)[1].split("\n[media]", 1)[0]
+    if not TELEGRAM_CONFIG.is_file():
+        _write_new(TELEGRAM_CONFIG, generated)
+        return
+    current = TELEGRAM_CONFIG.read_text(encoding="utf-8")
+    pattern = re.compile(r"(?ms)^\[codex\]\n.*?(?=^\[[^]]+\]\n|\Z)")
+    replacement = f"[codex]\n{codex_block}\n"
+    if pattern.search(current):
+        updated = pattern.sub(lambda _match: replacement, current, count=1)
+    else:
+        updated = current.rstrip() + "\n\n" + replacement
+    _replace_config(TELEGRAM_CONFIG, updated)
 
 
 def _secrets_content(
@@ -316,18 +386,31 @@ def _known_executable_paths(filename: str) -> tuple[Path, ...]:
     from_path = shutil.which(filename)
     if from_path:
         candidates.append(Path(from_path))
-    for environment_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
-        base = os.environ.get(environment_name)
-        if not base:
-            continue
-        root = Path(base)
-        candidates.extend(
-            (
-                root / "KeePassXC" / filename,
-                root / "Programs" / "KeePassXC" / filename,
+    if os.name == "nt":
+        for environment_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(environment_name)
+            if not base:
+                continue
+            root = Path(base)
+            candidates.extend(
+                (
+                    root / "KeePassXC" / filename,
+                    root / "Programs" / "KeePassXC" / filename,
+                )
             )
+    else:
+        candidates.extend(
+            Path(root) / filename
+            for root in ("/usr/bin", "/usr/local/bin", "/snap/bin")
         )
     return tuple(candidates)
+
+
+def _keepass_filenames() -> tuple[str, str]:
+    return ("KeePassXC.exe", "keepassxc-cli.exe") if os.name == "nt" else (
+        "keepassxc",
+        "keepassxc-cli",
+    )
 
 
 def _discover_executable(configured: str, filename: str) -> Path | None:
@@ -359,10 +442,8 @@ def _prompt_executable(label: str, filename: str) -> Path | None:
 def edit_vault_executables(values: dict[str, str]) -> dict[str, str]:
     """Permite revisar os caminhos locais do KeePassXC sem tocar em segredos."""
     updated = dict(values)
-    fields = (
-        ("gui", "KeePassXC.exe"),
-        ("cli", "keepassxc-cli.exe"),
-    )
+    gui_filename, cli_filename = _keepass_filenames()
+    fields = (("gui", gui_filename), ("cli", cli_filename))
     while True:
         print("\nExecutáveis do cofre:")
         for index, (key, label) in enumerate(fields, start=1):
@@ -399,20 +480,21 @@ def configure_vault_executables(
             )
     if existed and not non_interactive:
         values = edit_vault_executables(values)
-    gui = _discover_executable(values["gui"], "KeePassXC.exe")
-    cli = _discover_executable(values["cli"], "keepassxc-cli.exe")
+    gui_filename, cli_filename = _keepass_filenames()
+    gui = _discover_executable(values["gui"], gui_filename)
+    cli = _discover_executable(values["cli"], cli_filename)
     if gui is not None and cli is None:
-        sibling = str(gui.with_name("keepassxc-cli.exe"))
-        cli = _discover_executable(sibling, "keepassxc-cli.exe")
+        sibling = str(gui.with_name(cli_filename))
+        cli = _discover_executable(sibling, cli_filename)
     if cli is not None and gui is None:
-        sibling = str(cli.with_name("KeePassXC.exe"))
-        gui = _discover_executable(sibling, "KeePassXC.exe")
+        sibling = str(cli.with_name(gui_filename))
+        gui = _discover_executable(sibling, gui_filename)
     if not non_interactive:
-        gui = gui or _prompt_executable("KeePassXC", "KeePassXC.exe")
+        gui = gui or _prompt_executable("KeePassXC", gui_filename)
         if gui is not None and cli is None:
-            sibling = str(gui.with_name("keepassxc-cli.exe"))
-            cli = _discover_executable(sibling, "keepassxc-cli.exe")
-        cli = cli or _prompt_executable("KeePassXC CLI", "keepassxc-cli.exe")
+            sibling = str(gui.with_name(cli_filename))
+            cli = _discover_executable(sibling, cli_filename)
+        cli = cli or _prompt_executable("KeePassXC CLI", cli_filename)
     content = _secrets_content(
         instance_id,
         gui=str(gui or ""),
@@ -449,7 +531,9 @@ def _run_json(command: list[str], *, timeout: int = 120) -> dict[str, Any]:
     try:
         result = json.loads(output)
     except json.JSONDecodeError as exc:
-        raise InstallError("Uma ferramenta de instalação devolveu uma resposta inválida.") from exc
+        raise InstallError(
+            "Uma ferramenta de instalação devolveu uma resposta inválida."
+        ) from exc
     if completed.returncode != 0 or result.get("ok") is False:
         raise InstallError(str(result.get("error") or "Uma etapa da instalação falhou."))
     return result
@@ -463,18 +547,23 @@ def configure_vault(*, non_interactive: bool) -> bool:
     """Prepara o cofre sem receber senha ou segredo pelo processo instalador."""
     vault = DATA_DIR / "secrets" / "vault.kdbx"
     if non_interactive:
-        return vault.is_file()
+        return os.name == "nt" and vault.is_file()
     if not vault.is_file():
-        print("\nO cofre ainda não existe. A senha será solicitada em uma janela separada.")
-        completed = subprocess.run(
-            [sys.executable, str(VAULT_TOOL), "create"],
-            cwd=PROJECT_ROOT,
-            check=False,
-            shell=False,
-        )
+        if os.name == "nt":
+            print("\nO cofre ainda não existe. A senha será solicitada em uma janela separada.")
+            command = [sys.executable, str(VAULT_TOOL), "create"]
+        else:
+            values = _load_secrets_values(str(_load_identity_values()["instance_id"]))
+            cli = _discover_executable(values["cli"], _keepass_filenames()[1])
+            if cli is None:
+                raise InstallError("O KeePassXC CLI precisa ser configurado antes do cofre.")
+            print("\nO cofre ainda não existe. A senha será solicitada neste terminal.")
+            command = [str(cli), "db-create", "--set-password", str(vault)]
+        completed = subprocess.run(command, cwd=PROJECT_ROOT, check=False, shell=False)
         if completed.returncode != 0:
             raise InstallError("Não foi possível iniciar a criação do cofre.")
-        input("Conclua a criação na janela segura e pressione Enter aqui para continuar.")
+        if os.name == "nt":
+            input("Conclua a criação na janela segura e pressione Enter aqui para continuar.")
         if not vault.is_file():
             raise InstallError("O arquivo do cofre não foi criado.")
     enrolled = False
@@ -498,7 +587,218 @@ def configure_vault(*, non_interactive: bool) -> bool:
         if completed.returncode != 0:
             raise InstallError("Não foi possível iniciar o cadastro local do cofre.")
         input("Conclua o cadastro na janela segura e pressione Enter aqui para continuar.")
+    if os.name != "nt":
+        print(
+            "O cofre foi localizado, mas o desbloqueio automático para Telegram ainda "
+            "não possui backend seguro implementado neste sistema."
+        )
+        return False
     return True
+
+
+def _resolve_configured_path(raw: str) -> Path:
+    path = Path(raw).expanduser()
+    return path.resolve() if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+
+
+def _discover_codex(configured: str = "") -> Path | None:
+    candidates: list[Path] = []
+    if configured.strip():
+        candidates.append(_resolve_configured_path(configured.strip().strip('"')))
+    discovered = shutil.which("codex") or shutil.which("codex.exe")
+    if discovered:
+        candidates.append(Path(discovered).resolve())
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _codex_command(
+    executable: Path, home_dir: Path, *arguments: str, timeout: int = 60
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment["CODEX_HOME"] = str(home_dir)
+    return subprocess.run(
+        [str(executable), *arguments],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        shell=False,
+    )
+
+
+def _codex_status(values: dict[str, Any]) -> dict[str, Any]:
+    executable = _discover_codex(str(values.get("executable", "")))
+    home_dir = _resolve_configured_path(str(values["home_dir"]))
+    result: dict[str, Any] = {
+        "executable": executable,
+        "home_dir": home_dir,
+        "version": "não disponível",
+        "authenticated": False,
+        "login_detail": "Codex CLI não localizado.",
+    }
+    if executable is None:
+        return result
+    try:
+        version = _codex_command(executable, home_dir, "--version", timeout=20)
+        result["version"] = (
+            version.stdout.strip() or version.stderr.strip() or "versão não informada"
+        )
+        login = _codex_command(executable, home_dir, "login", "status", timeout=30)
+        detail = login.stdout.strip() or login.stderr.strip() or "status não informado"
+        result["authenticated"] = login.returncode == 0 and "not logged in" not in detail.casefold()
+        result["login_detail"] = detail
+    except (OSError, subprocess.SubprocessError) as exc:
+        result["login_detail"] = f"Falha ao executar o Codex CLI: {exc}"
+    return result
+
+
+def _ask_directory_list(label: str, current: list[str]) -> list[str]:
+    print(f"{label} atuais: {', '.join(current) if current else '(nenhum)'}")
+    answer = input(
+        "Informe caminhos separados por ponto e vírgula; deixe vazio para manter: "
+    ).strip()
+    if not answer:
+        return current
+    if answer == "-":
+        return []
+    return [item.strip().strip('"') for item in answer.split(";") if item.strip()]
+
+
+def configure_codex(instance_id: str) -> dict[str, Any]:
+    """Configura o Codex CLI isolado usado exclusivamente por esta instância."""
+    values = _load_telegram_values(instance_id)
+    changed = False
+    initial_status = _codex_status(values)
+    Path(initial_status["home_dir"]).mkdir(parents=True, exist_ok=True)
+    values["home_dir"] = str(initial_status["home_dir"])
+    if initial_status["executable"] is not None:
+        values["executable"] = str(initial_status["executable"])
+    changed = True
+    while True:
+        status = _codex_status(values)
+        executable = status["executable"]
+        print("\nCodex CLI (obrigatório para a interface Telegram):")
+        print(f"  1. Executável: {executable or '(não localizado)'}")
+        print(f"     Versão: {status['version']}")
+        print(f"  2. CODEX_HOME privado: {status['home_dir']}")
+        print(
+            "  3. Autenticação desta instância: "
+            + ("OK" if status["authenticated"] else "PENDENTE")
+        )
+        print(f"  4. Backend: {values['backend']}")
+        print(f"  5. Sandbox: {values['sandbox']}")
+        print(
+            "  6. Rede dos comandos: "
+            + ("habilitada" if values["network_access"] else "bloqueada")
+        )
+        print(
+            "  7. Diretórios adicionais de leitura: "
+            f"{values['additional_directories'] or '(nenhum)'}"
+        )
+        print(f"  8. Diretórios com escrita: {values['writable_directories'] or '(nenhum)'}")
+        print(f"  9. Tempo máximo por solicitação: {values['timeout_seconds']} segundos")
+        print("  0. Voltar ao menu principal")
+        answer = input("Escolha uma opção: ").strip()
+        if answer in {"", "0"}:
+            break
+        if answer == "1":
+            raw = _ask("Caminho do executável Codex CLI", str(executable or values["executable"]))
+            candidate = _discover_codex(raw)
+            if candidate is None:
+                print("Executável não encontrado. O valor anterior foi mantido.")
+            else:
+                values["executable"] = str(candidate)
+                changed = True
+        elif answer == "2":
+            raw = _ask("CODEX_HOME privado desta instância", str(status["home_dir"]))
+            home = _resolve_configured_path(raw)
+            home.mkdir(parents=True, exist_ok=True)
+            values["home_dir"] = str(home)
+            changed = True
+        elif answer == "3":
+            if executable is None:
+                print("Localize primeiro o executável do Codex CLI na opção 1.")
+                continue
+            home = Path(status["home_dir"])
+            home.mkdir(parents=True, exist_ok=True)
+            print(f"A autenticação será salva somente em {home}.")
+            environment = os.environ.copy()
+            environment["CODEX_HOME"] = str(home)
+            completed = subprocess.run(
+                [str(executable), "login"],
+                cwd=PROJECT_ROOT,
+                env=environment,
+                check=False,
+                shell=False,
+            )
+            if completed.returncode != 0:
+                print("O login do Codex não foi concluído.")
+        elif answer == "4":
+            backend = _ask("Backend (app-server ou exec)", str(values["backend"])).casefold()
+            if backend not in {"app-server", "exec"}:
+                print("Use app-server ou exec.")
+            else:
+                values["backend"] = backend
+                changed = True
+        elif answer == "5":
+            sandbox = _ask(
+                "Sandbox (read-only, workspace-write ou danger-full-access)",
+                str(values["sandbox"]),
+            ).casefold()
+            if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+                print("Perfil de sandbox inválido.")
+            elif sandbox == "danger-full-access" and not _yes_no(
+                "Confirmar acesso irrestrito ao sistema de arquivos", default=False
+            ):
+                print("Alteração cancelada.")
+            else:
+                values["sandbox"] = sandbox
+                changed = True
+        elif answer == "6":
+            enable = _yes_no("Permitir acesso de rede aos comandos", default=False)
+            if enable and not _yes_no(
+                "Confirmar a concessão de rede para esta instância", default=False
+            ):
+                print("Alteração cancelada.")
+            else:
+                values["network_access"] = enable
+                changed = True
+        elif answer == "7":
+            values["additional_directories"] = _ask_directory_list(
+                "Diretórios adicionais de leitura",
+                [str(value) for value in values["additional_directories"]],
+            )
+            changed = True
+        elif answer == "8":
+            values["writable_directories"] = _ask_directory_list(
+                "Diretórios com escrita",
+                [str(value) for value in values["writable_directories"]],
+            )
+            changed = True
+        elif answer == "9":
+            raw = _ask("Tempo máximo em segundos", str(values["timeout_seconds"]))
+            try:
+                timeout_seconds = int(raw)
+            except ValueError:
+                print("Informe um número inteiro.")
+                continue
+            if not 30 <= timeout_seconds <= 86400:
+                print("Use um valor entre 30 e 86400 segundos.")
+            else:
+                values["timeout_seconds"] = timeout_seconds
+                changed = True
+        else:
+            print("Escolha uma opção válida.")
+    if changed or not TELEGRAM_CONFIG.is_file():
+        _save_codex_values(instance_id, values)
+    return _codex_status(values)
 
 
 def _gateway_process() -> subprocess.Popen[bytes]:
@@ -613,6 +913,355 @@ def configure_telegram(
     return {"configured": True, "paired": paired, "process_id": process_id}
 
 
+def _validation_item(
+    status: str, component: str, detail: str, cause: str = ""
+) -> dict[str, str]:
+    return {
+        "status": status,
+        "component": component,
+        "detail": detail,
+        "cause": cause,
+    }
+
+
+def validate_installation(instance_id: str) -> list[dict[str, str]]:
+    """Valida a instância sem solicitar senhas, tokens ou alterar estado externo."""
+    items: list[dict[str, str]] = []
+    items.append(
+        _validation_item(
+            "OK",
+            "Python",
+            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        )
+    )
+    try:
+        identity = _load_identity_values()
+        items.append(
+            _validation_item(
+                "OK",
+                "Identidade",
+                f"{identity['display_name']} ({identity['instance_id']})",
+            )
+        )
+    except (OSError, RuntimeError) as exc:
+        items.append(_validation_item("ERRO", "Identidade", "inválida", str(exc)))
+
+    vault_values = _load_secrets_values(instance_id)
+    gui = _discover_executable(vault_values["gui"], _keepass_filenames()[0])
+    cli = _discover_executable(vault_values["cli"], _keepass_filenames()[1])
+    items.append(
+        _validation_item(
+            "OK" if gui else "PENDENTE",
+            "KeePassXC",
+            str(gui or "não localizado"),
+            "É necessário para abrir e administrar o cofre." if not gui else "",
+        )
+    )
+    items.append(
+        _validation_item(
+            "OK" if cli else "PENDENTE",
+            "KeePassXC CLI",
+            str(cli or "não localizado"),
+            "É necessário para o agente ler e gravar credenciais." if not cli else "",
+        )
+    )
+    raw_vault = vault_values["vault_path"] or "data/secrets/vault.kdbx"
+    vault_path = _resolve_configured_path(raw_vault)
+    items.append(
+        _validation_item(
+            "OK" if vault_path.is_file() else "PENDENTE",
+            "Cofre",
+            str(vault_path),
+            "O arquivo criptografado ainda não foi criado." if not vault_path.is_file() else "",
+        )
+    )
+    master_enrolled = False
+    if os.name == "nt" and cli and vault_path.is_file():
+        try:
+            status = _run_json([sys.executable, str(VAULT_TOOL), "status"], timeout=30)
+            master_enrolled = bool(status.get("master_password_enrolled"))
+        except InstallError:
+            master_enrolled = False
+        items.append(
+            _validation_item(
+                "OK" if master_enrolled else "PENDENTE",
+                "Desbloqueio local do cofre",
+                "cadastrado no Windows" if master_enrolled else "não cadastrado",
+                "Sem ele, o Telegram não consegue salvar ou usar segredos automaticamente."
+                if not master_enrolled
+                else "",
+            )
+        )
+    elif os.name != "nt":
+        items.append(
+            _validation_item(
+                "LIMITAÇÃO",
+                "Desbloqueio local do cofre",
+                "backend seguro ainda não implementado neste sistema",
+                "O menu é compartilhado, mas a automação de segredos do Telegram "
+                "permanece indisponível.",
+            )
+        )
+
+    items.append(
+        _validation_item(
+            "OK" if (DATA_DIR / "memory.sqlite3").is_file() else "PENDENTE",
+            "Memória SQLite",
+            str(DATA_DIR / "memory.sqlite3"),
+            "Execute a seção Memória para inicializar o banco."
+            if not (DATA_DIR / "memory.sqlite3").is_file()
+            else "",
+        )
+    )
+
+    telegram_configured = TELEGRAM_CONFIG.is_file()
+    if not telegram_configured:
+        items.append(
+            _validation_item(
+                "PENDENTE",
+                "Telegram",
+                "configuração ausente",
+                "Abra a seção Telegram para criar a configuração.",
+            )
+        )
+
+    try:
+        codex_values = _load_telegram_values(instance_id)
+        codex = _codex_status(codex_values)
+        executable = codex["executable"]
+        items.append(
+            _validation_item(
+                "OK" if executable else "PENDENTE",
+                "Codex CLI obrigatório",
+                f"{executable or 'não localizado'} ({codex['version']})",
+                "Instale o Codex CLI ou informe seu executável na seção Codex CLI."
+                if not executable
+                else "",
+            )
+        )
+        home = Path(codex["home_dir"])
+        items.append(
+            _validation_item(
+                "OK" if home.is_dir() else "PENDENTE",
+                "CODEX_HOME privado",
+                str(home),
+                "A pasta isolada ainda não foi criada; abra a seção Codex CLI."
+                if not home.is_dir()
+                else "",
+            )
+        )
+        items.append(
+            _validation_item(
+                "OK" if codex["authenticated"] else "PENDENTE",
+                "Autenticação do Codex",
+                "conta própria autenticada" if codex["authenticated"] else "não autenticada",
+                codex["login_detail"] if not codex["authenticated"] else "",
+            )
+        )
+        items.append(
+            _validation_item(
+                "OK",
+                "Permissões do Codex",
+                f"sandbox={codex_values['sandbox']}; "
+                f"rede={'sim' if codex_values['network_access'] else 'não'}; "
+                f"escrita={codex_values['writable_directories']}",
+            )
+        )
+        if os.name == "nt" and master_enrolled:
+            credential_ref = f"APIs/Telegram/{instance_id}"
+            try:
+                token = _run_json(
+                    [sys.executable, str(VAULT_TOOL), "check", credential_ref],
+                    timeout=30,
+                )
+                exists = bool(token.get("entry_exists"))
+            except InstallError:
+                exists = False
+            items.append(
+                _validation_item(
+                    "OK" if exists else "PENDENTE",
+                    "Token do Telegram",
+                    "presente no cofre" if exists else "não encontrado no cofre",
+                    "Cadastre o token na seção Telegram." if not exists else "",
+                )
+            )
+        else:
+            items.append(
+                _validation_item(
+                    "NÃO VERIFICADO",
+                    "Token do Telegram",
+                    "o cofre não pode ser destrancado automaticamente",
+                    "Conclua primeiro a configuração do cofre.",
+                )
+            )
+        if telegram_configured:
+            try:
+                pairing = _gateway("pairing", "status", timeout=30)
+                owner = pairing.get("owner")
+                paired = isinstance(owner, dict)
+                items.append(
+                    _validation_item(
+                        "OK" if paired else "PENDENTE",
+                        "Pareamento do Telegram",
+                        "pessoa proprietária vinculada"
+                        if paired
+                        else "sem proprietária vinculada",
+                        "Abra a seção Telegram e conclua o pareamento local."
+                        if not paired
+                        else "",
+                    )
+                )
+            except (InstallError, OSError, subprocess.SubprocessError) as exc:
+                items.append(
+                    _validation_item(
+                        "ERRO",
+                        "Pareamento do Telegram",
+                        "não foi possível consultar o estado",
+                        str(exc),
+                    )
+                )
+        else:
+            items.append(
+                _validation_item(
+                    "PENDENTE",
+                    "Pareamento do Telegram",
+                    "configuração do Telegram ausente",
+                    "Crie a configuração antes de iniciar o pareamento.",
+                )
+            )
+    except (InstallError, OSError, ValueError, TypeError) as exc:
+        items.append(
+            _validation_item(
+                "ERRO", "Configuração Telegram/Codex", "inválida", str(exc)
+            )
+        )
+    return items
+
+
+def print_validation_report(instance_id: str) -> list[dict[str, str]]:
+    items = validate_installation(instance_id)
+    print(f"\nRelatório da instalação — {instance_id}")
+    print("=" * 72)
+    for item in items:
+        print(f"[{item['status']:^13}] {item['component']}: {item['detail']}")
+        if item["cause"]:
+            print(f"                Motivo/ação: {item['cause']}")
+    incomplete = sum(item["status"] != "OK" for item in items)
+    print("-" * 72)
+    if incomplete:
+        print(f"Resultado: {incomplete} item(ns) requer(em) atenção.")
+    else:
+        print("Resultado: instalação válida e pronta.")
+    return items
+
+
+def _initialize_memory() -> dict[str, Any]:
+    memory_path = DATA_DIR / "memory.sqlite3"
+    return (
+        {"ok": True, "existing": True}
+        if memory_path.is_file()
+        else _run_json([sys.executable, str(MEMORY_TOOL), "init"])
+    )
+
+
+def _vault_operational(instance_id: str) -> bool:
+    values = _load_secrets_values(instance_id)
+    tools_ready = bool(
+        _discover_executable(values["gui"], _keepass_filenames()[0])
+        and _discover_executable(values["cli"], _keepass_filenames()[1])
+    )
+    if not tools_ready or not _resolve_configured_path(values["vault_path"]).is_file():
+        return False
+    if os.name != "nt":
+        return False
+    try:
+        status = _run_json([sys.executable, str(VAULT_TOOL), "status"], timeout=30)
+    except InstallError:
+        return False
+    return bool(status.get("master_password_enrolled"))
+
+
+def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) -> dict[str, Any]:
+    """Executa o menu principal e mantém cada seção independente das demais."""
+    current = dict(identity_values)
+    last_telegram: dict[str, Any] | None = None
+    while True:
+        instance_id = str(current["instance_id"])
+        print(f"\nConfiguração da instância {current['display_name']} ({instance_id})")
+        print("  0. Validar/verificar a instalação")
+        print("  1. Identidade e personalidade")
+        print("  2. Cofre KeePassXC")
+        print("  3. Codex CLI, CODEX_HOME e permissões")
+        print("  4. Telegram, token e pareamento")
+        print("  5. Memória local")
+        print("  9. Sair do configurador")
+        answer = input("Escolha uma seção: ").strip()
+        try:
+            if answer == "0":
+                print_validation_report(instance_id)
+            elif answer == "1":
+                locked = (
+                    (DATA_DIR / "secrets" / "vault.kdbx").is_file()
+                    or TELEGRAM_CONFIG.is_file()
+                )
+                updated = edit_identity(current, allow_instance_id_change=not locked)
+                if updated != current:
+                    _replace_config(IDENTITY_CONFIG, _identity_content(updated))
+                    current = updated
+                    print("Identidade atualizada.")
+            elif answer == "2":
+                _created, tools_ready = configure_vault_executables(
+                    instance_id, non_interactive=False
+                )
+                if tools_ready:
+                    configure_vault(non_interactive=False)
+            elif answer == "3":
+                if not TELEGRAM_CONFIG.is_file():
+                    _write_new(TELEGRAM_CONFIG, _telegram_content(instance_id))
+                configure_codex(instance_id)
+            elif answer == "4":
+                if args.skip_telegram:
+                    print("A interface Telegram foi desabilitada por --skip-telegram.")
+                    continue
+                if not TELEGRAM_CONFIG.is_file():
+                    _write_new(TELEGRAM_CONFIG, _telegram_content(instance_id))
+                if not _vault_operational(instance_id):
+                    print(
+                        "O Telegram depende do cofre com desbloqueio automático. "
+                        "Conclua primeiro a seção 2."
+                    )
+                    continue
+                last_telegram = configure_telegram(
+                    instance_id,
+                    non_interactive=False,
+                    start_gateway=not args.no_start,
+                )
+            elif answer == "5":
+                result = _initialize_memory()
+                print(
+                    "Memória local pronta."
+                    if result.get("ok")
+                    else "A memória não foi inicializada."
+                )
+            elif answer == "9":
+                break
+            else:
+                print("Escolha uma opção válida do menu.")
+        except (InstallError, OSError, subprocess.SubprocessError, ValueError) as exc:
+            print(f"A seção não pôde ser concluída: {exc}")
+            print("As demais seções continuam disponíveis no menu principal.")
+    return {
+        "ok": True,
+        "instance_id": str(current["instance_id"]),
+        "display_name": str(current["display_name"]),
+        "telegram": last_telegram,
+        "configuration_complete": all(
+            item["status"] == "OK"
+            for item in validate_installation(str(current["instance_id"]))
+        ),
+    }
+
+
 def install(args: argparse.Namespace) -> dict[str, Any]:
     for relative in (
         "config",
@@ -627,17 +1276,6 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     if IDENTITY_CONFIG.exists():
         identity_values = _load_identity_values()
         previous_instance_id = str(identity_values["instance_id"])
-        if not args.non_interactive:
-            vault_exists = (DATA_DIR / "secrets" / "vault.kdbx").is_file()
-            edited_values = edit_identity(
-                identity_values,
-                allow_instance_id_change=(
-                    not vault_exists and not TELEGRAM_CONFIG.is_file()
-                ),
-            )
-            if edited_values != identity_values:
-                _replace_config(IDENTITY_CONFIG, _identity_content(edited_values))
-                identity_values = edited_values
     elif args.non_interactive:
         raise InstallError(
             "data/config/identity.toml é obrigatório no modo não interativo."
@@ -645,11 +1283,11 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     else:
         collected = collect_identity()
         identity_created = _write_new(IDENTITY_CONFIG, _identity_content(collected))
-        identity_values = {
-            "instance_id": collected["instance_id"],
-            "display_name": collected["display_name"],
-        }
+        identity_values = collected
     instance_id = str(identity_values["instance_id"])
+    if not args.non_interactive:
+        return run_configurator(args, identity_values)
+
     secrets_created, vault_tools_ready = configure_vault_executables(
         instance_id,
         non_interactive=args.non_interactive,
@@ -658,12 +1296,7 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     vault_ready = vault_tools_ready and configure_vault(
         non_interactive=args.non_interactive
     )
-    memory_path = DATA_DIR / "memory.sqlite3"
-    memory = (
-        {"ok": True, "existing": True}
-        if memory_path.is_file()
-        else _run_json([sys.executable, str(MEMORY_TOOL), "init"])
-    )
+    memory = _initialize_memory()
     telegram_created = False
     telegram_result: dict[str, Any] | None = None
     if not args.skip_telegram:

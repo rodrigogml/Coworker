@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import tempfile
+import tomllib
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -46,6 +48,23 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('approval_policy = "never"', content)
         self.assertIn("network_access = false", content)
         self.assertIn('writable_directories = ["data"]', content)
+        parsed = tomllib.loads(content)
+        self.assertTrue(parsed["codex"]["home_dir"])
+
+    def test_codex_update_preserves_unrelated_telegram_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "telegram.toml"
+            content = install_instance._telegram_content("assistente-teste")
+            content = content.replace('listen_port = 8787', 'listen_port = 9999')
+            config.write_text(content, encoding="utf-8")
+            values = install_instance._default_telegram_values("assistente-teste")
+            values["sandbox"] = "read-only"
+            with patch.object(install_instance, "TELEGRAM_CONFIG", config):
+                install_instance._save_codex_values("assistente-teste", values)
+
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual("read-only", parsed["codex"]["sandbox"])
+            self.assertEqual(9999, parsed["webhook"]["listen_port"])
 
     def test_generated_vault_config_uses_functional_filename_and_instance_target(self) -> None:
         content = install_instance._secrets_content("assistente-teste")
@@ -132,6 +151,48 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(install_instance._write_new(path, "primeiro\n"))
             self.assertFalse(install_instance._write_new(path, "segundo\n"))
             self.assertEqual("primeiro\n", path.read_text(encoding="utf-8"))
+
+    def test_main_menu_opens_validation_directly(self) -> None:
+        identity = {
+            key: f"valor-{key}" for key, _label in install_instance.IDENTITY_FIELDS
+        }
+        identity["instance_id"] = "assistente-teste"
+        identity["display_name"] = "Assistente Teste"
+        identity["grammatical_gender"] = "neutral"
+        complete = [
+            {"status": "OK", "component": "Teste", "detail": "pronto", "cause": ""}
+        ]
+        with (
+            patch("builtins.input", side_effect=["0", "9"]),
+            patch.object(
+                install_instance, "print_validation_report", return_value=complete
+            ) as report,
+            patch.object(install_instance, "validate_installation", return_value=complete),
+            patch("builtins.print"),
+        ):
+            result = install_instance.run_configurator(
+                Namespace(skip_telegram=False, no_start=True), identity
+            )
+
+        report.assert_called_once_with("assistente-teste")
+        self.assertTrue(result["configuration_complete"])
+
+    def test_codex_status_explains_when_required_cli_is_missing(self) -> None:
+        values = install_instance._default_telegram_values("assistente-teste")
+        values["executable"] = ""
+        with (
+            patch.object(install_instance, "_discover_codex", return_value=None),
+            patch.object(
+                install_instance,
+                "_default_codex_home",
+                return_value=Path("C:/isolado/codex"),
+            ),
+        ):
+            status = install_instance._codex_status(values)
+
+        self.assertIsNone(status["executable"])
+        self.assertFalse(status["authenticated"])
+        self.assertIn("não localizado", status["login_detail"])
 
     def test_pairing_waits_for_request_and_requires_local_id_confirmation(self) -> None:
         process = Mock()

@@ -135,15 +135,31 @@ sh ./install.sh
 ```
 
 Na primeira execução, o processo solicita nome, idioma, gênero gramatical, pronomes,
-tom, estilo e bio. Nas execuções seguintes, exibe os valores existentes em uma lista
-numerada: a pessoa pode escolher somente o campo que deseja alterar, usando o valor
-atual como padrão, ou continuar sem mudanças.
+tom, estilo e bio para criar a identidade mínima. Em seguida, e em todas as execuções
+posteriores, abre um menu principal que permite acessar diretamente identidade, cofre,
+Codex CLI, Telegram ou memória, sem percorrer as seções anteriores. A opção `0`
+produz um relatório somente de leitura com o estado de cada dependência, o motivo de
+cada pendência e a ação necessária para resolvê-la.
+
+O Codex CLI é obrigatório para a interface Telegram. Sua seção mostra o executável e
+a versão encontrados, cria e grava explicitamente um `CODEX_HOME` privado para a
+instância, verifica a autenticação dessa conta e permite revisar backend, sandbox,
+rede, diretórios de leitura/escrita e tempo limite. O login iniciado pelo configurador
+recebe `CODEX_HOME` somente no processo filho; ele não altera a variável global do
+Windows nem reutiliza silenciosamente a autenticação do Codex Desktop.
 
 O configurador também reutiliza caminhos válidos do KeePassXC, procura os executáveis
 no `PATH` e em instalações conhecidas e, se não os localizar, solicita os caminhos.
 Deixar os caminhos em branco mantém o cofre e as etapas dependentes como pendentes,
 sem descartar a identidade nem impedir a inicialização da memória. Basta executar o
 comando novamente depois de instalar ou localizar o KeePassXC.
+
+`install.ps1` e `install.sh` executam o mesmo configurador Python, portanto menu,
+validação, identidade e configuração do Codex são compartilhados entre Windows,
+Linux e macOS. A detecção do KeePassXC usa os nomes e caminhos próprios de cada
+sistema. O desbloqueio automático do cofre ainda usa o Gerenciador de Credenciais do
+Windows; em outros sistemas, o relatório marca essa limitação e não libera a automação
+de segredos do Telegram até existir um backend seguro equivalente.
 
 O bot precisa ser criado previamente no BotFather; depois de o token ser guardado no
 cofre, o configurador sincroniza o nome e as descrições públicas. O token é solicitado
