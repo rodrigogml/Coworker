@@ -16,7 +16,6 @@ INTEGRATIONS = {
     "calendar": "calendar",
     "cloudflare": "cloudflare",
     "contacts": "contacts",
-    "cpfl": "cpfl",
     "drive": "drive",
     "forwardemail": "forwardemail",
     "gmail": "gmail",

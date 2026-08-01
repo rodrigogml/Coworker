@@ -1,37 +1,28 @@
 ---
 name: cpfl
-description: Localizar contas digitais da CPFL no Gmail, validar links oficiais, consultar metadados da fatura e obter PIX ou linha digitável em arquivo privado. Usar quando a tarefa mencionar conta de energia, fatura, unidade consumidora, PIX, código de barras ou PDF da CPFL.
+description: Validar links individuais oficiais da CPFL e obter PIX ou linha digitável em arquivo privado usando o CPF protegido da pessoa titular. Usar quando a tarefa mencionar link de conta de energia, fatura, PIX, código de barras ou PDF da CPFL.
 ---
 
 # Consultar contas da CPFL
 
-Usar `python skills/cpfl/scripts/cpfl.py`. Selecionar a configuração com
-`--profile`; nunca fornecer CPF, link individual ou código de pagamento em argumentos.
-
-## Inicializar a configuração
-
-A CPFL compõe sua configuração com Gmail e a conta Google selecionada:
-
-```powershell
-python scripts/integration_config.py init google
-python scripts/integration_config.py init gmail
-python scripts/integration_config.py init cpfl
-```
-
-Os comandos não sobrescrevem configurações já personalizadas.
+Usar `python skills/cpfl/scripts/cpfl.py`. Esta skill não possui configuração privada,
+perfil de integração nem dependência de Gmail. Nunca fornecer CPF, link individual ou
+código de pagamento diretamente em argumentos.
 
 ## Executar o fluxo
 
-1. Executar `doctor` para validar Gmail, pessoa titular e configuração.
-2. Usar `latest` para localizar a mensagem autenticada mais recente.
-3. Usar `payment-data` para obter PIX e linha digitável em arquivo privado.
-4. Para PDF, usar o navegador conforme a seção específica.
+1. Obter o link individual por uma fonte autorizada, sem expô-lo ao modelo ou ao log.
+2. Resolver a entrada da pessoa titular no cofre.
+3. Usar `doctor` quando for necessário validar a presença e proteção do CPF.
+4. Usar `payment-data` com o link em arquivo privado ou na entrada padrão.
+5. Para PDF, usar o navegador conforme a seção específica.
 
 ```powershell
-python skills/cpfl/scripts/cpfl.py --profile pessoal doctor
-python skills/cpfl/scripts/cpfl.py --profile pessoal latest
-python skills/cpfl/scripts/cpfl.py --profile pessoal payment-data
-python skills/cpfl/scripts/cpfl.py --profile pessoal payment-data --message-id ID
+python skills/cpfl/scripts/cpfl.py doctor `
+  --entity-ref "Pessoas/Fisicas/Nome Completo"
+python skills/cpfl/scripts/cpfl.py payment-data `
+  --entity-ref "Pessoas/Fisicas/Nome Completo" `
+  --link-file data/work/cpfl/link.txt
 ```
 
 `payment-data` grava valores somente em `data/work/cpfl/` e devolve metadados de
@@ -41,7 +32,7 @@ validação. Não abrir nem reproduzir o arquivo quando a tarefa pedir apenas co
 
 O botão **Veja sua conta** usa reCAPTCHA. Não tentar contorná-lo por HTTP.
 
-1. Obter a mensagem com `latest` e recuperar internamente seu link oficial.
+1. Receber o mesmo link oficial por canal protegido.
 2. Abrir o link no navegador controlado.
 3. Ler `CPF` internamente por `scripts/vault_entities.py` e preencher somente os quatro
    primeiros dígitos.
@@ -53,8 +44,8 @@ Depois do download, usar a skill de PDF para extrair e validar os campos solicit
 
 ## Respeitar contratos
 
-- Aceitar links somente de mensagens autenticadas de `contadigital@cpfl.com.br`.
-- Aceitar somente HTTPS no host e caminho definidos na configuração.
+- Aceitar somente HTTPS no host `contadigital.cpfl.com.br` e no caminho oficial fixo.
+- Receber o link somente por `--link-file` ou `--link-stdin`; nunca por argumento.
 - Obter CPF exclusivamente da propriedade protegida da pessoa titular.
 - Nunca imprimir link individual, CPF, PIX, linha digitável, `VIEWSTATE` ou cookies.
 - Não armazenar códigos de pagamento fora de `data/`.

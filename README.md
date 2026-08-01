@@ -48,7 +48,6 @@ Coworker/
 │   ├── cloudflare.example.toml
 │   ├── calendar.example.toml
 │   ├── contacts.example.toml
-│   ├── cpfl.example.toml
 │   ├── drive.example.toml
 │   ├── forwardemail.example.toml
 │   ├── gmail.example.toml
@@ -276,8 +275,8 @@ OAuth e os perfis de contas Google. Os arquivos `calendar.toml`, `contacts.toml`
 `drive.toml` e `gmail.toml` contêm somente parâmetros operacionais de suas APIs.
 Client Secret, refresh tokens e access tokens nunca devem ser gravados nesses arquivos.
 
-`data/config/cpfl.toml` relaciona um perfil Gmail à entrada protegida da pessoa titular.
-O modelo público não contém nomes, unidades consumidoras ou referências pessoais.
+CPFL não possui configuração privada: o script recebe um link individual por arquivo
+ou entrada padrão e uma referência da pessoa titular no cofre.
 
 ### 3. Inicializar a memória
 
@@ -401,7 +400,7 @@ python skills/gmail/scripts/gmail.py --profile default doctor
 python skills/calendar/scripts/calendar.py --profile default doctor
 python skills/drive/scripts/drive.py --profile default doctor
 python skills/contacts/scripts/contacts.py --profile default doctor
-python skills/cpfl/scripts/cpfl.py --profile default doctor
+python skills/cpfl/scripts/cpfl.py doctor --entity-ref "Pessoas/Fisicas/Nome Completo"
 ```
 
 Quando uma captura protegida tiver sido associada a um caminho incorreto, migrar a
@@ -655,15 +654,17 @@ final do processo.
 ## CPFL
 
 ```powershell
-python skills/cpfl/scripts/cpfl.py --profile pessoal doctor
-python skills/cpfl/scripts/cpfl.py --profile pessoal latest
-python skills/cpfl/scripts/cpfl.py --profile pessoal payment-data
+python skills/cpfl/scripts/cpfl.py doctor `
+  --entity-ref "Pessoas/Fisicas/Nome Completo"
+python skills/cpfl/scripts/cpfl.py payment-data `
+  --entity-ref "Pessoas/Fisicas/Nome Completo" `
+  --link-file data/work/cpfl/link.txt
 ```
 
-A skill pesquisa somente mensagens autenticadas de `contadigital@cpfl.com.br`, valida
-o link individual contra uma allowlist fechada e obtém os quatro primeiros dígitos do
-CPF diretamente do cofre. `payment-data` salva PIX e linha digitável em
-`data/work/cpfl/`; esses valores não aparecem no JSON devolvido ao agente.
+A skill recebe diretamente um link individual, valida o endpoint contra uma allowlist
+fechada e obtém os quatro primeiros dígitos do CPF diretamente do cofre. Não possui
+perfil, configuração privada ou dependência de Gmail. `payment-data` salva PIX e linha
+digitável em `data/work/cpfl/`; esses valores não aparecem no JSON devolvido ao agente.
 
 O PDF usa reCAPTCHA e requer navegador. A automação deve seguir o fluxo de CAPTCHA do
 navegador e nunca tentar contornar o controle. Obter dados da conta não autoriza

@@ -16,6 +16,11 @@ SPEC.loader.exec_module(integration_config)
 
 
 class IntegrationConfigTests(unittest.TestCase):
+    def test_cpfl_is_a_direct_skill_not_a_configured_integration(self) -> None:
+        self.assertNotIn("cpfl", integration_config.INTEGRATIONS)
+        with self.assertRaises(integration_config.IntegrationConfigError):
+            integration_config.initialization_command("cpfl")
+
     def root(self, temporary: str, integration: str = "omie") -> Path:
         root = Path(temporary)
         (root / "config").mkdir()
