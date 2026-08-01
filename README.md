@@ -735,6 +735,13 @@ O instalador seleciona `app-server` para eventos estruturados e cancelamento por
 mantendo `exec` como fallback configurável no TOML privado. Consulte o README da
 interface para formatos, processadores e recuperação de uploads ambíguos.
 
+Depois do pareamento, `/settings` abre painéis inline para selecionar dinamicamente o
+modelo disponível na conta, reasoning, velocidade e verbosity. As preferências ficam
+no SQLite operacional da instância, valem para solicitações futuras e podem ser
+restauradas com `/codex reset`. `/status` oferece controles para atualizar a fila,
+cancelar, iniciar nova conversa e consultar franquia. Configurações de segurança como
+sandbox, rede, backend, aprovações e modo super continuam exclusivamente locais.
+
 ```powershell
 python interfaces/telegram/gateway.py init
 python interfaces/telegram/gateway.py doctor

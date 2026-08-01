@@ -72,10 +72,16 @@ fallback. Para selecionar explicitamente o fallback, altere somente o arquivo pr
 ```toml
 [codex]
 backend = "exec"
+model = ""
+reasoning_effort = ""
+speed = "standard"
+verbosity = ""
 ```
 
-Depois reinicie o processo e execute `doctor`. A interface não troca esse valor nem
-reescreve configurações privadas. Ambos os backends usam o mesmo schema de entrega;
+Os quatro últimos campos são padrões opcionais da instância. Valores vazios herdam a
+seleção da conta ou do modelo. Depois reinicie o processo e execute `doctor`. A
+interface não troca o backend nem reescreve configurações privadas. Ambos os backends
+usam o mesmo schema de entrega;
 `exec` usa `--output-schema`, enquanto o App Server usa `turn/start.outputSchema`.
 
 O gateway mantém as regras de execução do `config/codex.rules` sincronizadas
@@ -158,12 +164,39 @@ raiz de confiança da instalação.
 - `/new`: desvincula a sessão atual; não apaga o histórico do Codex;
 - `/resume`: quando enviado como resposta a uma mensagem anterior da Coworker, torna a
   thread daquela mensagem explicitamente ativa;
-- `/status`: mostra sessão e fila;
+- `/settings` ou `/codex`: abre o painel de configuração do Codex;
+- `/model [MODELO|default]`: lista ou seleciona um modelo anunciado pela conta;
+- `/reasoning [NÍVEL|default]`: lista ou seleciona somente esforços compatíveis;
+- `/speed [standard|fast]`: consulta ou altera a velocidade; Fast exige confirmação;
+- `/verbosity [low|medium|high|default]`: controla o detalhamento da resposta;
+- `/codex diagnose`: verifica CLI, autenticação, App Server e catálogo de modelos;
+- `/codex reset`: restaura os padrões da instância após confirmação;
+- `/status`: abre o painel de sessão e fila, com atualização, cancelamento, nova
+  conversa, franquia e acesso às configurações;
 - `/usage`: consulta as janelas de franquia da conta autenticada no Codex;
 - `/cancel`: solicita o encerramento da execução ativa;
 - `/thread`: mostra o identificador da sessão;
 - `/secret NomeDoServico`: prepara a captura protegida da próxima mensagem de texto;
 - `/help`: lista os comandos.
+
+Os painéis usam teclados inline e editam a mesma mensagem durante a navegação. Todo
+`callback_query` é interceptado antes do SQLite de mensagens, da fila e do Codex,
+revalida `user_id` e `private_chat_id` e expira depois de quinze minutos. Os botões de
+modelo carregam identificadores opacos; o valor é resolvido e validado novamente no
+catálogo oficial `model/list` antes da gravação.
+
+Preferências da conversa ficam no SQLite operacional e sobrevivem ao reinício do
+gateway. Elas valem para as solicitações enviadas depois da alteração e continuam
+ativas após `/new`. A precedência é preferência do Telegram, padrão em
+`data/config/telegram.toml` e, por fim, padrão do Codex. `/codex reset` remove somente
+as preferências do Telegram.
+
+Modelo, reasoning, velocidade e verbosity são parâmetros de inferência. Sandbox,
+rede, política de aprovação, diretórios graváveis, backend e modo super permanecem
+somente no configurador local e não podem ser alterados por callback ou comando do
+Telegram. O backend `exec` recebe opções tipadas por `--config`; o App Server recebe
+`model`, `effort` e `serviceTier` por turno. Nenhuma interface aceita chaves de
+configuração arbitrárias.
 
 `/secret` reconhece deterministicamente aliases das integrações simples mantidas pelo
 projeto. Por exemplo, `/secret atualize o token do Todoist` resolve para

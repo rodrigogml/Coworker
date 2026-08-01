@@ -21,7 +21,12 @@ from interfaces.telegram.gateway import (
     help_text,
 )
 from interfaces.telegram.scripts import restart_gateway
-from interfaces.telegram.codex import RULES_TEMPLATE, CodexAdapter, ProcessRegistry
+from interfaces.telegram.codex import (
+    RULES_TEMPLATE,
+    CodexAdapter,
+    CodexOptions,
+    ProcessRegistry,
+)
 from interfaces.telegram.config import CodexConfig
 from interfaces.telegram.runtime import (
     GatewayRuntimeError,
@@ -94,6 +99,21 @@ class TelegramStateTests(unittest.TestCase):
         self.assertTrue(self.state.clear_session(123))
         self.assertFalse(self.state.clear_session(123))
         self.assertIsNone(self.state.session(123))
+
+    def test_codex_preferences_are_persistent_and_resettable(self) -> None:
+        self.state.set_codex_preference(123, "model", "gpt-test")
+        self.state.set_codex_preference(123, "reasoning_effort", "ultra")
+        self.state.set_codex_preference(123, "speed", "fast")
+        self.state.set_codex_preference(123, "verbosity", "low")
+
+        preferences = self.state.codex_preferences(123)
+
+        self.assertEqual("gpt-test", preferences.model)
+        self.assertEqual("ultra", preferences.reasoning_effort)
+        self.assertEqual("fast", preferences.speed)
+        self.assertEqual("low", preferences.verbosity)
+        self.assertTrue(self.state.reset_codex_preferences(123))
+        self.assertIsNone(self.state.codex_preferences(123).model)
 
     def test_queued_jobs_can_be_cancelled_before_execution(self) -> None:
         self.state.update_seen(55)
@@ -236,6 +256,43 @@ class TelegramContentTests(unittest.TestCase):
                 ],
                 "scope": {"type": "all_private_chats"},
             },
+        )
+
+    def test_settings_message_uses_inline_keyboard(self) -> None:
+        api = TelegramApi("test-token", 10)
+        markup = {
+            "inline_keyboard": [[{"text": "Modelo", "callback_data": "cx:model:0"}]]
+        }
+        with patch.object(
+            api,
+            "call",
+            return_value={"message_id": 20, "chat": {"id": 10}},
+        ) as call:
+            api.send_text(10, "Configuração", reply_markup=markup)
+
+        self.assertEqual(markup, call.call_args.args[1]["reply_markup"])
+
+    def test_callback_query_can_be_answered_and_panel_edited(self) -> None:
+        api = TelegramApi("test-token", 10)
+        with patch.object(
+            api,
+            "call",
+            side_effect=[True, {"message_id": 20, "chat": {"id": 10}}],
+        ) as call:
+            self.assertTrue(api.answer_callback_query("callback-1"))
+            api.edit_text(10, 20, "Atualizado", reply_markup={"inline_keyboard": []})
+
+        self.assertEqual("answerCallbackQuery", call.call_args_list[0].args[0])
+        self.assertEqual("editMessageText", call.call_args_list[1].args[0])
+
+    def test_long_polling_requests_messages_and_callback_queries(self) -> None:
+        api = TelegramApi("test-token", 10)
+        with patch.object(api, "call", return_value=[]) as call:
+            self.assertEqual([], api.get_updates(None, 10))
+
+        self.assertEqual(
+            ["message", "callback_query"],
+            call.call_args.args[1]["allowed_updates"],
         )
 
     def test_profile_sync_uses_name_and_bios_without_changing_username(self) -> None:
@@ -502,6 +559,23 @@ class CodexIsolationTests(unittest.TestCase):
             )
             self.assertIn('":workspace_roots" = { "." = "read" }', filesystem)
             self.assertIn(f'"{(root / "data").as_posix()}" = "write"', filesystem)
+
+    def test_exec_applies_only_typed_codex_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = CodexAdapter(self._config(root), root, ProcessRegistry())
+
+            command = adapter.build_command(
+                None,
+                [],
+                options=CodexOptions("gpt-test", "high", "fast", "low"),
+            )
+
+        self.assertIn('model="gpt-test"', command)
+        self.assertIn('model_reasoning_effort="high"', command)
+        self.assertIn('model_verbosity="low"', command)
+        self.assertIn("features.fast_mode=true", command)
+        self.assertIn('service_tier="fast"', command)
 
     def test_rules_are_synchronized_into_the_isolated_codex_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

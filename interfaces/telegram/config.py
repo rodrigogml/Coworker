@@ -41,6 +41,10 @@ class CodexConfig:
     generated_images_dir: Path | None = None
     writable_directories: tuple[Path, ...] = ()
     access_mode: str = "restricted"
+    model: str | None = None
+    reasoning_effort: str | None = None
+    speed: str = "standard"
+    verbosity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -249,6 +253,22 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     backend = str(codex_values.get("backend", "exec")).strip().casefold()
     if backend not in {"exec", "app-server"}:
         raise TelegramConfigError("'codex.backend' deve ser exec ou app-server.")
+    model = str(codex_values.get("model", "")).strip() or None
+    reasoning_effort = (
+        str(codex_values.get("reasoning_effort", "")).strip().casefold() or None
+    )
+    if reasoning_effort not in {
+        None, "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+    }:
+        raise TelegramConfigError(
+            "'codex.reasoning_effort' deve ser minimal, low, medium, high, xhigh, max ou ultra."
+        )
+    speed = str(codex_values.get("speed", "standard")).strip().casefold()
+    if speed not in {"standard", "fast"}:
+        raise TelegramConfigError("'codex.speed' deve ser standard ou fast.")
+    verbosity = str(codex_values.get("verbosity", "")).strip().casefold() or None
+    if verbosity not in {None, "low", "medium", "high"}:
+        raise TelegramConfigError("'codex.verbosity' deve ser low, medium ou high.")
     ttl = int(pairing_values.get("ttl_seconds", 600))
     attempts = int(pairing_values.get("max_attempts", 5))
     poll_timeout = int(values.get("poll_timeout_seconds", 45))
@@ -311,6 +331,10 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             generated_images_dir=generated_images,
             writable_directories=writable,
             access_mode=access_mode,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            speed=speed,
+            verbosity=verbosity,
         ),
         media=MediaConfig(inbox_dir, jobs_dir, max_download, max_upload),
         processors=ProcessorConfig(*processor_limits),

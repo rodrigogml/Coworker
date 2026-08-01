@@ -226,6 +226,10 @@ def _default_telegram_values(instance_id: str) -> dict[str, Any]:
         "sandbox": "workspace-write",
         "network_access": False,
         "approval_policy": "never",
+        "model": "",
+        "reasoning_effort": "",
+        "speed": "standard",
+        "verbosity": "",
         "timeout_seconds": 1800,
         "additional_directories": [],
         "writable_directories": ["data"],
@@ -282,6 +286,10 @@ access_mode = {_toml_string(str(settings['access_mode']))}
 sandbox = {_toml_string(str(settings['sandbox']))}
 network_access = {str(bool(settings['network_access'])).lower()}
 approval_policy = {_toml_string(str(settings['approval_policy']))}
+model = {_toml_string(str(settings['model']))}
+reasoning_effort = {_toml_string(str(settings['reasoning_effort']))}
+speed = {_toml_string(str(settings['speed']))}
+verbosity = {_toml_string(str(settings['verbosity']))}
 timeout_seconds = {int(settings['timeout_seconds'])}
 additional_directories = {_toml_array([str(value) for value in settings['additional_directories']])}
 writable_directories = {_toml_array([str(value) for value in settings['writable_directories']])}
@@ -810,6 +818,13 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
         )
         print(f"  8. Diretórios com escrita: {values['writable_directories'] or '(nenhum)'}")
         print(f"  9. Tempo máximo por solicitação: {values['timeout_seconds']} segundos")
+        print(f"  11. Modelo padrão: {values['model'] or '(padrão do Codex)'}")
+        print(
+            "  12. Reasoning padrão: "
+            f"{values['reasoning_effort'] or '(padrão do modelo)'}"
+        )
+        print(f"  13. Velocidade padrão: {values['speed']}")
+        print(f"  14. Verbosity padrão: {values['verbosity'] or '(padrão do modelo)'}")
         print("  0. Voltar ao menu principal")
         answer = input("Escolha uma opção: ").strip()
         if answer in {"", "0"}:
@@ -930,6 +945,37 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
                 values["sandbox"] = "danger-full-access"
                 values["network_access"] = True
                 values["approval_policy"] = "never"
+                changed = True
+        elif answer == "11":
+            values["model"] = input(
+                "Modelo padrão (vazio para herdar do Codex): "
+            ).strip()
+            changed = True
+        elif answer == "12":
+            reasoning = input(
+                "Reasoning padrão (minimal, low, medium, high, xhigh, max, ultra; "
+                "vazio para herdar): "
+            ).strip().casefold()
+            if reasoning not in {"", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}:
+                print("Nível de reasoning inválido.")
+            else:
+                values["reasoning_effort"] = reasoning
+                changed = True
+        elif answer == "13":
+            speed = _ask("Velocidade padrão (standard ou fast)", str(values["speed"])).casefold()
+            if speed not in {"standard", "fast"}:
+                print("Use standard ou fast.")
+            else:
+                values["speed"] = speed
+                changed = True
+        elif answer == "14":
+            verbosity = input(
+                "Verbosity padrão (low, medium, high; vazio para herdar): "
+            ).strip().casefold()
+            if verbosity not in {"", "low", "medium", "high"}:
+                print("Verbosity inválida.")
+            else:
+                values["verbosity"] = verbosity
                 changed = True
         else:
             print("Escolha uma opção válida.")

@@ -135,7 +135,7 @@ class TelegramApi:
     def get_updates(self, offset: int | None, poll_timeout: int) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
             "timeout": poll_timeout,
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "callback_query"],
             "limit": 50,
         }
         if offset is not None:
@@ -187,7 +187,12 @@ class TelegramApi:
         return result.get("result")
 
     def send_text(
-        self, chat_id: int, text: str, *, reply_to_message_id: int | None = None
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        reply_to_message_id: int | None = None,
+        reply_markup: dict[str, Any] | None = None,
     ) -> list[TelegramReceipt]:
         if not text.strip():
             text = f"{self.assistant_name} concluiu sem produzir uma mensagem de texto."
@@ -202,12 +207,51 @@ class TelegramApi:
             }
             if index == 0 and reply_to_message_id is not None:
                 payload["reply_parameters"] = {"message_id": reply_to_message_id}
+            if index == len(chunks) - 1 and reply_markup is not None:
+                payload["reply_markup"] = reply_markup
             result = self.call(
                 "sendMessage",
                 payload,
             )
             receipts.append(_receipt(result))
         return receipts
+
+    def edit_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> TelegramReceipt:
+        chunks = telegram_html_chunks(text)
+        if len(chunks) != 1:
+            raise TelegramApiError("O painel excedeu o tamanho permitido pelo Telegram.")
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": chunks[0],
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return _receipt(self.call("editMessageText", payload))
+
+    def answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: str | None = None,
+        *,
+        show_alert: bool = False,
+    ) -> bool:
+        payload: dict[str, Any] = {
+            "callback_query_id": callback_query_id,
+            "show_alert": show_alert,
+        }
+        if text:
+            payload["text"] = text[:200]
+        return bool(self.call("answerCallbackQuery", payload))
 
     def send_photo(self, chat_id: int, path: Path, caption: str = "", *, reply_to_message_id: int | None = None) -> TelegramReceipt:
         return self._send_file("sendPhoto", "photo", chat_id, path, caption, reply_to_message_id)
