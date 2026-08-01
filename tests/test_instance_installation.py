@@ -58,6 +58,74 @@ class InstallerTests(unittest.TestCase):
             content,
         )
 
+    def test_existing_identity_can_be_reviewed_and_changed_one_field_at_a_time(
+        self,
+    ) -> None:
+        values = {
+            key: f"valor-{key}" for key, _label in install_instance.IDENTITY_FIELDS
+        }
+        values["instance_id"] = "assistente-teste"
+        values["grammatical_gender"] = "neutral"
+
+        with (
+            patch("builtins.input", side_effect=["2", "Novo Nome", ""]),
+            patch("builtins.print"),
+        ):
+            updated = install_instance.edit_identity(values)
+
+        self.assertEqual("Novo Nome", updated["display_name"])
+        self.assertEqual("assistente-teste", updated["instance_id"])
+
+    def test_missing_keepassxc_can_remain_pending_without_aborting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "secrets.toml"
+            with (
+                patch.object(install_instance, "SECRETS_CONFIG", config),
+                patch.object(
+                    install_instance, "_known_executable_paths", return_value=()
+                ),
+                patch("builtins.input", side_effect=["", ""]),
+                patch("builtins.print"),
+            ):
+                created, ready = install_instance.configure_vault_executables(
+                    "assistente-teste", non_interactive=False
+                )
+
+            self.assertTrue(created)
+            self.assertFalse(ready)
+            self.assertIn('gui = ""', config.read_text(encoding="utf-8"))
+            self.assertIn('cli = ""', config.read_text(encoding="utf-8"))
+
+    def test_detects_keepassxc_siblings_from_existing_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            gui = root / "KeePassXC.exe"
+            cli = root / "keepassxc-cli.exe"
+            gui.touch()
+            cli.touch()
+            config = root / "secrets.toml"
+            config.write_text(
+                install_instance._secrets_content(
+                    "assistente-teste", gui=str(gui), cli=""
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(install_instance, "SECRETS_CONFIG", config),
+                patch.object(
+                    install_instance, "_known_executable_paths", return_value=()
+                ),
+            ):
+                created, ready = install_instance.configure_vault_executables(
+                    "assistente-teste", non_interactive=True
+                )
+
+            self.assertFalse(created)
+            self.assertTrue(ready)
+            content = config.read_text(encoding="utf-8")
+            self.assertIn(str(gui).replace("\\", "\\\\"), content)
+            self.assertIn(str(cli).replace("\\", "\\\\"), content)
+
     def test_write_new_never_overwrites_existing_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "config.toml"
@@ -93,6 +161,35 @@ class InstallerTests(unittest.TestCase):
 
         self.assertEqual(("pairing", "approve", "ABC123"), gateway.call_args_list[-1].args)
         process.terminate.assert_called_once()
+
+    def test_telegram_token_is_masked_and_written_directly_to_vault(self) -> None:
+        with (
+            patch.object(install_instance, "_yes_no", return_value=True),
+            patch.object(
+                install_instance.getpass,
+                "getpass",
+                return_value="token-secreto",
+            ),
+            patch("scripts.credential_vault.write_entry_secret") as write,
+            patch.object(install_instance, "_gateway", return_value={"ok": True}),
+            patch.object(
+                install_instance,
+                "pair_owner_interactively",
+                return_value=True,
+            ),
+            patch("builtins.print") as output,
+        ):
+            result = install_instance.configure_telegram(
+                "assistente-teste",
+                non_interactive=False,
+                start_gateway=False,
+            )
+
+        write.assert_called_once_with(
+            "APIs/Telegram/assistente-teste", "token-secreto"
+        )
+        self.assertTrue(result["configured"])
+        self.assertNotIn("token-secreto", str(output.call_args_list))
 
 
 if __name__ == "__main__":

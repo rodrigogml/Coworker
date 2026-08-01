@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,20 @@ SECRETS_CONFIG = DATA_DIR / "config" / "secrets.toml"
 GATEWAY = PROJECT_ROOT / "interfaces" / "telegram" / "gateway.py"
 VAULT_TOOL = PROJECT_ROOT / "scripts" / "credential_vault.py"
 MEMORY_TOOL = PROJECT_ROOT / "scripts" / "memory.py"
+
+IDENTITY_FIELDS = (
+    ("instance_id", "Identificador técnico"),
+    ("display_name", "Nome público da instância"),
+    ("language", "Idioma principal"),
+    ("grammatical_gender", "Gênero gramatical"),
+    ("pronouns", "Pronomes"),
+    ("summary", "Descrição curta"),
+    ("tone", "Tom"),
+    ("humor", "Humor"),
+    ("enthusiasm", "Empolgação"),
+    ("writing_style", "Estilo de escrita"),
+    ("bio", "Bio da personalidade"),
+)
 
 
 class InstallError(RuntimeError):
@@ -63,6 +79,17 @@ def _write_new(path: Path, content: str) -> bool:
     except FileExistsError:
         return False
     return True
+
+
+def _replace_config(path: Path, content: str) -> None:
+    """Substitui uma configuração privada por gravação atômica em UTF-8."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8", newline="\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _identity_content(values: dict[str, Any]) -> str:
@@ -125,16 +152,54 @@ def collect_identity() -> dict[str, Any]:
     return values
 
 
+def edit_identity(
+    values: dict[str, Any], *, allow_instance_id_change: bool = True
+) -> dict[str, Any]:
+    """Exibe a identidade existente e permite alterar um campo por vez."""
+    updated = dict(values)
+    while True:
+        print("\nIdentidade configurada:")
+        for index, (key, label) in enumerate(IDENTITY_FIELDS, start=1):
+            value = str(updated.get(key, "")) or "(não informado)"
+            print(f"  {index:>2}. {label}: {value}")
+        answer = input(
+            "Escolha o número do campo para alterar ou pressione Enter para continuar: "
+        ).strip()
+        if not answer or answer == "0":
+            return updated
+        try:
+            key, label = IDENTITY_FIELDS[int(answer) - 1]
+        except (ValueError, IndexError):
+            print("Escolha um número válido da lista.")
+            continue
+        current = str(updated.get(key, ""))
+        value = _ask(label, current)
+        if key == "instance_id":
+            if not allow_instance_id_change:
+                print(
+                    "O identificador técnico não pode ser alterado depois que o "
+                    "cofre ou o Telegram foram configurados."
+                )
+                continue
+            value = _slug(value)
+        elif key == "grammatical_gender":
+            value = value.casefold()
+            if value not in {"feminine", "masculine", "neutral"}:
+                print("Use feminine, masculine ou neutral.")
+                continue
+        elif key != "pronouns" and not value:
+            print("Esse campo não pode ficar vazio.")
+            continue
+        updated[key] = value
+
+
 def _load_identity_values() -> dict[str, Any]:
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from interfaces.telegram.identity import load_identity
 
     identity = load_identity(IDENTITY_CONFIG)
-    return {
-        "instance_id": identity.instance_id,
-        "display_name": identity.display_name,
-    }
+    return {key: getattr(identity, key) for key, _label in IDENTITY_FIELDS}
 
 
 def _telegram_content(instance_id: str) -> str:
@@ -187,18 +252,185 @@ listen_port = 8787
 '''
 
 
-def _secrets_content(instance_id: str) -> str:
+def _secrets_content(
+    instance_id: str,
+    *,
+    gui: str = "",
+    cli: str = "",
+    vault_path: str = "data/secrets/vault.kdbx",
+    credential_target: str | None = None,
+) -> str:
+    target = credential_target or (
+        f"Coworker/Instances/{instance_id}/KeePassXC/MasterPassword"
+    )
     return f'''# Configuração privada do cofre desta instância.
 [executables]
-gui = ""
-cli = ""
+gui = {_toml_string(gui)}
+cli = {_toml_string(cli)}
 
 [vault]
-path = "data/secrets/vault.kdbx"
+path = {_toml_string(vault_path)}
 
 [windows_credential]
-target = "Coworker/Instances/{instance_id}/KeePassXC/MasterPassword"
+target = {_toml_string(target)}
 '''
+
+
+def _load_secrets_values(instance_id: str) -> dict[str, str]:
+    defaults = {
+        "gui": "",
+        "cli": "",
+        "vault_path": "data/secrets/vault.kdbx",
+        "credential_target": (
+            f"Coworker/Instances/{instance_id}/KeePassXC/MasterPassword"
+        ),
+    }
+    if not SECRETS_CONFIG.is_file():
+        return defaults
+    try:
+        with SECRETS_CONFIG.open("rb") as stream:
+            root = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise InstallError(
+            f"Não foi possível ler a configuração '{SECRETS_CONFIG}'."
+        ) from exc
+    executables = root.get("executables", {})
+    vault = root.get("vault", {})
+    credential = root.get("windows_credential", {})
+    if isinstance(executables, dict):
+        defaults["gui"] = str(executables.get("gui", "")).strip()
+        defaults["cli"] = str(executables.get("cli", "")).strip()
+    if isinstance(vault, dict):
+        defaults["vault_path"] = str(
+            vault.get("path", defaults["vault_path"])
+        ).strip()
+    if isinstance(credential, dict):
+        defaults["credential_target"] = str(
+            credential.get("target", defaults["credential_target"])
+        ).strip()
+    return defaults
+
+
+def _known_executable_paths(filename: str) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    from_path = shutil.which(filename)
+    if from_path:
+        candidates.append(Path(from_path))
+    for environment_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = os.environ.get(environment_name)
+        if not base:
+            continue
+        root = Path(base)
+        candidates.extend(
+            (
+                root / "KeePassXC" / filename,
+                root / "Programs" / "KeePassXC" / filename,
+            )
+        )
+    return tuple(candidates)
+
+
+def _discover_executable(configured: str, filename: str) -> Path | None:
+    candidates = [Path(configured).expanduser()] if configured else []
+    candidates.extend(_known_executable_paths(filename))
+    for candidate in candidates:
+        resolved = candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+        if resolved.is_file():
+            return resolved.resolve()
+    return None
+
+
+def _prompt_executable(label: str, filename: str) -> Path | None:
+    while True:
+        answer = input(
+            f"{label} não foi localizado. Informe o caminho de {filename} "
+            "ou pressione Enter para configurar depois: "
+        ).strip().strip('"')
+        if not answer:
+            return None
+        candidate = Path(answer).expanduser()
+        if not candidate.is_absolute():
+            candidate = PROJECT_ROOT / candidate
+        if candidate.is_file():
+            return candidate.resolve()
+        print(f"Arquivo não encontrado: {candidate}")
+
+
+def edit_vault_executables(values: dict[str, str]) -> dict[str, str]:
+    """Permite revisar os caminhos locais do KeePassXC sem tocar em segredos."""
+    updated = dict(values)
+    fields = (
+        ("gui", "KeePassXC.exe"),
+        ("cli", "keepassxc-cli.exe"),
+    )
+    while True:
+        print("\nExecutáveis do cofre:")
+        for index, (key, label) in enumerate(fields, start=1):
+            print(f"  {index}. {label}: {updated.get(key) or '(não localizado)'}")
+        answer = input(
+            "Escolha o número do caminho para alterar ou pressione Enter para continuar: "
+        ).strip()
+        if not answer or answer == "0":
+            return updated
+        try:
+            key, label = fields[int(answer) - 1]
+        except (ValueError, IndexError):
+            print("Escolha um número válido da lista.")
+            continue
+        updated[key] = _ask(f"Caminho de {label}", updated.get(key, ""))
+
+
+def configure_vault_executables(
+    instance_id: str,
+    *,
+    non_interactive: bool,
+    previous_instance_id: str | None = None,
+) -> tuple[bool, bool]:
+    """Detecta ou solicita os executáveis e persiste somente caminhos verificados."""
+    existed = SECRETS_CONFIG.is_file()
+    values = _load_secrets_values(instance_id)
+    if previous_instance_id and previous_instance_id != instance_id:
+        previous_target = (
+            f"Coworker/Instances/{previous_instance_id}/KeePassXC/MasterPassword"
+        )
+        if values["credential_target"] == previous_target:
+            values["credential_target"] = (
+                f"Coworker/Instances/{instance_id}/KeePassXC/MasterPassword"
+            )
+    if existed and not non_interactive:
+        values = edit_vault_executables(values)
+    gui = _discover_executable(values["gui"], "KeePassXC.exe")
+    cli = _discover_executable(values["cli"], "keepassxc-cli.exe")
+    if gui is not None and cli is None:
+        sibling = str(gui.with_name("keepassxc-cli.exe"))
+        cli = _discover_executable(sibling, "keepassxc-cli.exe")
+    if cli is not None and gui is None:
+        sibling = str(cli.with_name("KeePassXC.exe"))
+        gui = _discover_executable(sibling, "KeePassXC.exe")
+    if not non_interactive:
+        gui = gui or _prompt_executable("KeePassXC", "KeePassXC.exe")
+        if gui is not None and cli is None:
+            sibling = str(gui.with_name("keepassxc-cli.exe"))
+            cli = _discover_executable(sibling, "keepassxc-cli.exe")
+        cli = cli or _prompt_executable("KeePassXC CLI", "keepassxc-cli.exe")
+    content = _secrets_content(
+        instance_id,
+        gui=str(gui or ""),
+        cli=str(cli or ""),
+        vault_path=values["vault_path"] or "data/secrets/vault.kdbx",
+        credential_target=values["credential_target"] or None,
+    )
+    if existed:
+        _replace_config(SECRETS_CONFIG, content)
+    else:
+        _write_new(SECRETS_CONFIG, content)
+    ready = gui is not None and cli is not None
+    if not ready:
+        print(
+            "KeePassXC ficou pendente. Execute novamente o configurador após "
+            "instalá-lo ou informe os executáveis na próxima execução."
+        )
+    return not existed, ready
 
 
 def _run_json(command: list[str], *, timeout: int = 120) -> dict[str, Any]:
@@ -351,15 +583,20 @@ def configure_telegram(
     print("\nA criação do bot e do username continua sendo feita no BotFather.")
     print("O instalador sincronizará nome e descrições usando a identidade local.")
     if _yes_no(f"Salvar agora o token em {credential_ref}", default=True):
-        completed = subprocess.run(
-            [sys.executable, str(VAULT_TOOL), "add", credential_ref],
-            cwd=PROJECT_ROOT,
-            check=False,
-            shell=False,
-        )
-        if completed.returncode != 0:
-            raise InstallError("O token do Telegram não foi salvo no cofre.")
-        input("Conclua o cadastro do token na janela segura e pressione Enter aqui.")
+        token = getpass.getpass("Token do bot Telegram (entrada mascarada): ").strip()
+        if not token:
+            raise InstallError("O token do Telegram não pode ficar vazio.")
+        try:
+            if str(PROJECT_ROOT) not in sys.path:
+                sys.path.insert(0, str(PROJECT_ROOT))
+            from scripts.credential_vault import VaultToolError, write_entry_secret
+
+            write_entry_secret(credential_ref, token)
+        except VaultToolError as exc:
+            raise InstallError("O token do Telegram não foi salvo no cofre.") from exc
+        finally:
+            token = ""
+        print("Token salvo diretamente no cofre.")
         _gateway("profile", "sync")
         _gateway("commands", "sync")
         _gateway("permissions", "sync")
@@ -386,8 +623,21 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     ):
         (DATA_DIR / relative).mkdir(parents=True, exist_ok=True)
     identity_created = False
+    previous_instance_id: str | None = None
     if IDENTITY_CONFIG.exists():
         identity_values = _load_identity_values()
+        previous_instance_id = str(identity_values["instance_id"])
+        if not args.non_interactive:
+            vault_exists = (DATA_DIR / "secrets" / "vault.kdbx").is_file()
+            edited_values = edit_identity(
+                identity_values,
+                allow_instance_id_change=(
+                    not vault_exists and not TELEGRAM_CONFIG.is_file()
+                ),
+            )
+            if edited_values != identity_values:
+                _replace_config(IDENTITY_CONFIG, _identity_content(edited_values))
+                identity_values = edited_values
     elif args.non_interactive:
         raise InstallError(
             "data/config/identity.toml é obrigatório no modo não interativo."
@@ -400,8 +650,14 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
             "display_name": collected["display_name"],
         }
     instance_id = str(identity_values["instance_id"])
-    secrets_created = _write_new(SECRETS_CONFIG, _secrets_content(instance_id))
-    vault_ready = configure_vault(non_interactive=args.non_interactive)
+    secrets_created, vault_tools_ready = configure_vault_executables(
+        instance_id,
+        non_interactive=args.non_interactive,
+        previous_instance_id=previous_instance_id,
+    )
+    vault_ready = vault_tools_ready and configure_vault(
+        non_interactive=args.non_interactive
+    )
     memory_path = DATA_DIR / "memory.sqlite3"
     memory = (
         {"ok": True, "existing": True}
@@ -412,11 +668,23 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     telegram_result: dict[str, Any] | None = None
     if not args.skip_telegram:
         telegram_created = _write_new(TELEGRAM_CONFIG, _telegram_content(instance_id))
-        telegram_result = configure_telegram(
-            instance_id,
-            non_interactive=args.non_interactive,
-            start_gateway=not args.no_start,
-        )
+        if vault_ready:
+            telegram_result = configure_telegram(
+                instance_id,
+                non_interactive=args.non_interactive,
+                start_gateway=not args.no_start,
+            )
+        else:
+            print(
+                "Telegram preparado, mas token e pareamento ficaram pendentes até "
+                "a configuração do cofre."
+            )
+            telegram_result = {
+                "configured": False,
+                "paired": False,
+                "process_id": None,
+                "pending": "vault",
+            }
     return {
         "ok": True,
         "instance_id": instance_id,

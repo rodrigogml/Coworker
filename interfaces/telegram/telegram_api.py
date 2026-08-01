@@ -107,6 +107,15 @@ class TelegramApi:
     def delete_webhook(self) -> None:
         self.call("deleteWebhook", {"drop_pending_updates": False})
 
+    def delete_message(self, chat_id: int, message_id: int) -> bool:
+        """Remove uma mensagem da conversa privada quando a Bot API permitir."""
+        return bool(
+            self.call(
+                "deleteMessage",
+                {"chat_id": chat_id, "message_id": message_id},
+            )
+        )
+
     def get_updates(self, offset: int | None, poll_timeout: int) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
             "timeout": poll_timeout,

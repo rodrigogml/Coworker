@@ -204,14 +204,19 @@ ou persistir valores derivados. A leitura ou gravação de dados pessoais exige 
 autorização explícitos no pedido atual.
 
 Para escrita manual, usar `vault_entities.py set` com `--prompt`; para automações que
-já receberam o valor por canal autorizado, usar `--stdin`. Nunca aceitar valores em
+já receberam o valor por canal autorizado, usar `--stdin`. Credenciais simples podem
+ser gravadas por `credential_vault.py store CAMINHO --stdin`. Nunca aceitar valores em
 argumentos. `inspect` informa somente presença e proteção dos campos. Não abrir nem
 manter o KeePassXC aberto durante uma gravação feita por essa ferramenta.
 
-Nunca pedir senha mestra, senha de conta ou token na conversa. Nunca executar comando
-que revele um segredo no terminal ou o devolva ao modelo. Scripts de integração devem
-obter credenciais internamente, usá-las somente na operação autorizada e sanitizar a
-saída.
+Nunca pedir nem aceitar a senha mestra em conversa; ela pertence exclusivamente à
+janela local de criação ou cadastro do cofre. Senhas de conta, tokens e chaves podem
+ser recebidos quando necessários à tarefa atual, inclusive por um canal menos seguro,
+mas devem ser migrados imediatamente para o cofre sem rejeição meramente pelo canal.
+Não repetir o valor, não incluí-lo em argumentos, saída, memória ou documentação e
+substituí-lo em registros controlados por `[Censurado por segurança]`. Preferir sempre
+o mecanismo de captura protegida da interface. Scripts de integração devem obter
+credenciais internamente, usá-las somente na operação autorizada e sanitizar a saída.
 
 Quando a configuração local estiver ausente, copiar o modelo sem sobrescrever arquivos
 existentes. Localizar `KeePassXC.exe` e `keepassxc-cli.exe` pelos caminhos configurados,
@@ -308,6 +313,14 @@ IDs numéricos.
 Depois da vinculação, autorizar exclusivamente pela combinação de `user_id` e
 `private_chat_id`; nunca usar nome ou username como controle de acesso. Ignorar grupos
 e usuários desconhecidos sem baixar mídias ou encaminhar conteúdo ao Codex.
+
+Para receber senhas, tokens ou chaves pela conversa vinculada, usar `/secret` seguido
+de um nome amigável para o serviço. A mensagem seguinte deve ser interceptada pelo
+gateway antes do SQLite, dos jobs e do Codex, gravada diretamente no KeePassXC e
+representada somente por `[Censurado por segurança]`. Tentar apagar a mensagem do
+Telegram e informar quando a exclusão não for possível. Nunca afirmar que um conteúdo
+foi apagado sem confirmação da Bot API. Agentes devem orientar esse fluxo sempre que
+precisarem solicitar um segredo; mensagens de captura nunca devem chegar ao modelo.
 
 Usar o backend configurado em `codex.backend`: `exec` permanece o fallback compatível
 e `app-server` usa somente a API estável por stdio. Enviar prompts sem shell, capturar

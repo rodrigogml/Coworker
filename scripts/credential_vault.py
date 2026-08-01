@@ -470,9 +470,9 @@ def _ensure_vault_groups(
             )
 
 
-def write_entry_credentials(
+def _write_entry_password(
     entry: str,
-    username: str,
+    username: str | None,
     password: str,
     *,
     cli_path: Path | None = None,
@@ -480,11 +480,12 @@ def write_entry_credentials(
     credential_target: str | None = None,
     config_path: Path = DEFAULT_CONFIG,
 ) -> None:
-    """Grava usuário e segredo internamente, sem argumentos ou saída sensível."""
+    """Grava um segredo, com usuário opcional, sem expô-lo em argumentos."""
     normalized_entry = validate_entry_path(entry)
-    normalized_username = str(username).strip()
-    if not normalized_username or any(
-        character in normalized_username for character in "\r\n\0"
+    normalized_username = str(username).strip() if username is not None else None
+    if normalized_username is not None and (
+        not normalized_username
+        or any(character in normalized_username for character in "\r\n\0")
     ):
         raise VaultToolError("O usuário da credencial é inválido.")
     if not password or any(character in password for character in "\r\n\0"):
@@ -514,17 +515,14 @@ def write_entry_credentials(
             )
             else "add"
         )
+        arguments = [str(cli_path), operation, "--quiet"]
+        if normalized_username is not None:
+            arguments.extend(["--username", normalized_username])
+        arguments.extend(
+            ["--password-prompt", str(vault_path), normalized_entry]
+        )
         completed = subprocess.run(
-            [
-                str(cli_path),
-                operation,
-                "--quiet",
-                "--username",
-                normalized_username,
-                "--password-prompt",
-                str(vault_path),
-                normalized_entry,
-            ],
+            arguments,
             input=f"{master_password}\n{password}\n",
             check=False,
             capture_output=True,
@@ -539,6 +537,49 @@ def write_entry_credentials(
         raise VaultToolError(
             f"Não foi possível gravar a credencial '{normalized_entry}'."
         )
+
+
+def write_entry_secret(
+    entry: str,
+    secret: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Grava uma credencial simples somente no campo Password."""
+    _write_entry_password(
+        entry,
+        None,
+        secret,
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )
+
+
+def write_entry_credentials(
+    entry: str,
+    username: str,
+    password: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Grava usuário e segredo internamente, sem argumentos ou saída sensível."""
+    _write_entry_password(
+        entry,
+        username,
+        password,
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )
 
 
 def launch_interactive(
@@ -747,14 +788,36 @@ def command_open(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_add(args: argparse.Namespace) -> dict[str, Any]:
-    """Abre uma sessão interativa para incluir uma credencial."""
+    """Prepara o caminho e abre uma sessão para criar ou atualizar credencial."""
     cli_path = resolved_path(args.cli)
     vault_path = resolved_path(args.vault)
     require_file(cli_path, "KeePassXC CLI")
     require_file(vault_path, "Cofre")
     entry_path = validate_entry_path(args.entry)
 
-    command_arguments = ["add", "--password-prompt"]
+    if not windows_credential_exists(args.credential_target):
+        raise VaultToolError(
+            "Cadastre primeiro o desbloqueio local com 'credential_vault.py enroll'."
+        )
+    master_password = read_windows_credential(args.credential_target)
+    try:
+        _ensure_vault_groups(
+            cli_path,
+            vault_path,
+            entry_path,
+            master_password,
+        )
+        entry_exists = _vault_item_exists(
+            cli_path,
+            vault_path,
+            entry_path,
+            master_password,
+        )
+    finally:
+        master_password = ""
+
+    operation = "edit" if entry_exists else "add"
+    command_arguments = [operation, "--password-prompt"]
     if args.username:
         command_arguments.extend(["--username", args.username])
     if args.url:
@@ -772,9 +835,33 @@ def command_add(args: argparse.Namespace) -> dict[str, Any]:
         "process_id": process_id,
         "vault": str(vault_path),
         "entry": entry_path,
+        "operation": "update" if entry_exists else "create",
         "instruction": (
-            "Digite a senha mestra e o segredo somente na janela interativa aberta."
+            "Digite a senha mestra e o novo segredo somente na janela interativa aberta."
         ),
+    }
+
+
+def command_store(args: argparse.Namespace) -> dict[str, Any]:
+    """Grava uma credencial simples recebida exclusivamente pela entrada padrão."""
+    if not args.stdin:
+        raise VaultToolError("A gravação automática exige a opção '--stdin'.")
+    secret = sys.stdin.read().rstrip("\r\n")
+    try:
+        write_entry_secret(
+            args.entry,
+            secret,
+            cli_path=resolved_path(args.cli),
+            vault_path=resolved_path(args.vault),
+            credential_target=args.credential_target,
+        )
+    finally:
+        secret = ""
+    return {
+        "ok": True,
+        "entry": validate_entry_path(args.entry),
+        "stored": True,
+        "secret_exposed": False,
     }
 
 
@@ -927,6 +1014,13 @@ def build_parser(config: VaultConfig | None = None) -> argparse.ArgumentParser:
     add_parser.add_argument("--username")
     add_parser.add_argument("--url")
     add_parser.set_defaults(handler=command_add)
+
+    store_parser = commands.add_parser(
+        "store", help="Grava um segredo recebido pela entrada padrão."
+    )
+    store_parser.add_argument("entry")
+    store_parser.add_argument("--stdin", action="store_true")
+    store_parser.set_defaults(handler=command_store)
 
     enroll_parser = commands.add_parser(
         "enroll", help="Cadastra a senha mestra nesta máquina."

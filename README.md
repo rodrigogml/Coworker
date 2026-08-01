@@ -115,11 +115,12 @@ Git não é necessário para executar a Coworker. Se a tarefa exigir versionamen
 estiver ausente, aplicar a mesma regra: instalar quando autorizado ou orientar a
 instalação pelo [site oficial do Git](https://git-scm.com/download/win).
 
-## Instalação de uma instância
+## Configuração de uma instância
 
-O instalador cria somente a base da instância: identidade, configuração do cofre,
+O configurador cria e mantém a base da instância: identidade, configuração do cofre,
 interface Telegram e sandbox do Codex. Configurações de skills e contas externas são
-feitas posteriormente em conversa com a própria instância.
+feitas posteriormente em conversa com a própria instância. O mesmo comando pode ser
+executado novamente para revisar a configuração sem perder as respostas anteriores.
 
 No Windows:
 
@@ -133,14 +134,25 @@ No Linux ou macOS:
 sh ./install.sh
 ```
 
-O processo solicita nome, idioma, gênero gramatical, pronomes, tom,
-estilo e bio. Arquivos existentes não são sobrescritos. O bot precisa ser criado
-previamente no BotFather; depois de o token ser guardado no cofre, o instalador
-sincroniza o nome e as descrições públicas. O `@username` permanece aquele definido no
-BotFather. Em seguida, o instalador abre o pareamento, aguarda `/pair`, apresenta os
-IDs numéricos para confirmação local, aprova a pessoa proprietária e inicia o gateway
-em segundo plano. Use `-NoStart` no PowerShell ou `--no-start` no shell quando o
-processo for administrado por outro mecanismo.
+Na primeira execução, o processo solicita nome, idioma, gênero gramatical, pronomes,
+tom, estilo e bio. Nas execuções seguintes, exibe os valores existentes em uma lista
+numerada: a pessoa pode escolher somente o campo que deseja alterar, usando o valor
+atual como padrão, ou continuar sem mudanças.
+
+O configurador também reutiliza caminhos válidos do KeePassXC, procura os executáveis
+no `PATH` e em instalações conhecidas e, se não os localizar, solicita os caminhos.
+Deixar os caminhos em branco mantém o cofre e as etapas dependentes como pendentes,
+sem descartar a identidade nem impedir a inicialização da memória. Basta executar o
+comando novamente depois de instalar ou localizar o KeePassXC.
+
+O bot precisa ser criado previamente no BotFather; depois de o token ser guardado no
+cofre, o configurador sincroniza o nome e as descrições públicas. O token é solicitado
+em entrada mascarada e gravado diretamente no KeePassXC; não é necessário abrir ou
+operar o cofre manualmente. O `@username`
+permanece aquele definido no BotFather. Em seguida, o configurador abre o pareamento,
+aguarda `/pair`, apresenta os IDs numéricos para confirmação local, aprova a pessoa
+proprietária e inicia o gateway em segundo plano. Use `-NoStart` no PowerShell ou
+`--no-start` no shell quando o processo for administrado por outro mecanismo.
 
 O sandbox inicial concede leitura ao diretório do projeto, escrita somente em `data/`,
 execução dos pontos de entrada públicos das skills e nenhuma rede. A rede pode ser
@@ -688,6 +700,11 @@ O primeiro usuário somente se torna a pessoa proprietária depois de validar um
 temporário no Telegram e receber aprovação local. IDs numéricos de usuário e conversa
 são a fonte de autorização; nomes e usernames são apenas referências visuais. Consulte
 `interfaces/telegram/README.md` para o fluxo completo.
+
+Depois da vinculação, `/secret NomeDoServico` inicia uma captura de uso único para
+senhas e tokens. A mensagem seguinte não é enviada ao Codex: o gateway a grava
+diretamente no KeePassXC, mantém apenas `[Censurado por segurança]` no estado local e
+tenta excluir o original do Telegram.
 
 ## Privacidade e publicação
 

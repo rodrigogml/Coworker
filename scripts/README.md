@@ -66,11 +66,16 @@ python scripts/credential_vault.py create
 python scripts/credential_vault.py enroll
 python scripts/credential_vault.py open
 python scripts/credential_vault.py add "APIs/Nome"
+python scripts/credential_vault.py store "APIs/Nome" --stdin
 python scripts/credential_vault.py check "APIs/Nome"
 ```
 
-O utilitário não possui comando para revelar credenciais. Criação e inclusão acontecem
-em um console interativo separado, no qual o usuário digita informações confidenciais.
+O utilitário não possui comando para revelar credenciais. Antes de abrir o console,
+`add` cria os grupos intermediários ausentes e verifica se deve criar ou atualizar a
+entrada; ele exige que `enroll` já tenha cadastrado o desbloqueio local. `store --stdin`
+atende configuradores e interfaces que já receberam um segredo autorizado. O valor
+nunca deve ser colocado em argumentos e a resposta JSON informa somente a referência
+gravada.
 
 Integrações autenticadas por usuário e senha devem preferir uma única entrada:
 `Username` guarda o identificador e `Password` guarda o segredo. Scripts podem importar

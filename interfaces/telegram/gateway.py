@@ -52,7 +52,12 @@ from interfaces.telegram.telegram_api import (  # noqa: E402
     unique_path,
 )
 from interfaces.telegram.workspace import JobWorkspace, WorkspaceError, parse_delivery  # noqa: E402
-from scripts.credential_vault import VaultToolError, read_entry_secret  # noqa: E402
+from scripts.credential_vault import (  # noqa: E402
+    VaultToolError,
+    read_entry_secret,
+    validate_entry_path,
+    write_entry_secret,
+)
 
 
 BOT_COMMANDS = (
@@ -62,8 +67,11 @@ BOT_COMMANDS = (
     ("usage", "Consultar a franquia do Codex"),
     ("cancel", "Interromper a execução atual"),
     ("thread", "Mostrar a sessão Codex ativa"),
+    ("secret", "Guardar uma senha ou token no cofre"),
     ("help", "Listar os comandos disponíveis"),
 )
+
+REDACTED_SECRET = "[Censurado por segurança]"
 
 
 class GatewayError(RuntimeError):
@@ -114,6 +122,18 @@ def help_text() -> str:
     lines = ["Comandos disponíveis:"]
     lines.extend(f"/{command} — {description}" for command, description in BOT_COMMANDS)
     return "\n".join(lines)
+
+
+def credential_entry(label: str) -> str:
+    """Converte um nome amigável em caminho do cofre sem exigir sua estrutura."""
+    value = label.strip()
+    if not value:
+        raise GatewayError("Informe o serviço, por exemplo: /secret Todoist")
+    candidate = value if "/" in value else f"APIs/{value}"
+    try:
+        return validate_entry_path(candidate)
+    except VaultToolError as exc:
+        raise GatewayError("O nome informado para a credencial é inválido.") from exc
 
 
 def _duration_label(minutes: int) -> str:
@@ -194,6 +214,7 @@ class Gateway:
         self.worker = threading.Thread(target=self._worker_loop, name="coworker-codex", daemon=True)
         self.albums: dict[tuple[int, str], AlbumBuffer] = {}
         self.album_lock = threading.Lock()
+        self.secret_captures: dict[int, str] = {}
 
     def close(self) -> None:
         self.stop_event.set()
@@ -202,6 +223,7 @@ class Gateway:
                 if album.timer:
                     album.timer.cancel()
             self.albums.clear()
+        self.secret_captures.clear()
         self.registry.cancel_all()
         self.work.put(None)
         if self.worker.is_alive():
@@ -305,8 +327,19 @@ class Gateway:
                 self.state.finish_update(update_id, "unauthorized")
             return
         media_group_id = str(message.get("media_group_id") or "") or None
-        reply_context = self._reply_context(chat_id, message)
         content = message_attachments(message)
+        pending_secret = self.secret_captures.get(chat_id)
+        if pending_secret and command != "/cancel":
+            self._capture_secret(
+                update_id,
+                chat_id,
+                message_id,
+                text,
+                content,
+                pending_secret,
+            )
+            return
+        reply_context = self._reply_context(chat_id, message)
         with self.state_lock:
             message_record_id = self.state.record_message(
                 update_id, chat_id, message_id, "in", text or None, "received",
@@ -339,6 +372,71 @@ class Gateway:
             chat_id,
             f"Recebido. {self.config.identity.display_name} começou a processar sua solicitação.",
             reply_to_message_id=message_id,
+        )
+
+    def _capture_secret(
+        self,
+        update_id: int,
+        chat_id: int,
+        message_id: int,
+        secret: str,
+        attachments: list[Attachment],
+        entry: str,
+    ) -> None:
+        """Consome uma mensagem sensível sem encaminhá-la ou persistir seu valor."""
+        self.secret_captures.pop(chat_id, None)
+        if not secret or attachments:
+            self._send(
+                chat_id,
+                "A captura aceita somente uma mensagem de texto. Inicie novamente com /secret.",
+                update_id=update_id,
+            )
+            with self.state_lock:
+                self.state.finish_update(update_id, "invalid")
+            return
+        stored = False
+        deleted = False
+        error: str | None = None
+        try:
+            write_entry_secret(entry, secret)
+            stored = True
+            try:
+                deleted = self.api.delete_message(chat_id, message_id)
+            except TelegramApiError:
+                deleted = False
+        except VaultToolError:
+            error = "Não foi possível salvar o segredo no cofre."
+        finally:
+            secret = ""
+        with self.state_lock:
+            self.state.record_message(
+                update_id,
+                chat_id,
+                message_id,
+                "in",
+                REDACTED_SECRET,
+                "secured" if stored else "failed",
+                content_type="secret",
+            )
+            self.state.finish_update(
+                update_id,
+                "secured" if stored else "failed",
+                error,
+            )
+        if not stored:
+            self._send(
+                chat_id,
+                "Não foi possível salvar o segredo no cofre. A mensagem não foi encaminhada ao RodriClone nem registrada localmente em texto aberto.",
+            )
+            return
+        deletion = (
+            "A mensagem original foi removida do Telegram."
+            if deleted
+            else "Não foi possível apagar a mensagem original do Telegram; exclua-a manualmente."
+        )
+        self._send(
+            chat_id,
+            f"Segredo salvo no cofre como {entry}. {deletion}",
         )
 
     def _queue_album(
@@ -504,18 +602,35 @@ class Gateway:
                 message += f" {cancelled_queued} solicitação(ões) pendente(s) também foram canceladas."
             self._send(chat_id, message, update_id=update_id)
         elif command == "/cancel":
+            capture_cancelled = self.secret_captures.pop(chat_id, None) is not None
             cancelled = self.registry.cancel(chat_id)
             with self.state_lock:
                 cancelled_queued = self.state.cancel_queued_jobs(chat_id)
             self._send(
                 chat_id,
                 (
-                    "Solicitação de cancelamento enviada."
+                    "Captura de segredo cancelada."
+                    if capture_cancelled
+                    else "Solicitação de cancelamento enviada."
                     if cancelled
                     else "Não há uma execução ativa para cancelar."
                 ) + (f" {cancelled_queued} item(ns) da fila foram cancelados." if cancelled_queued else ""),
                 update_id=update_id,
             )
+        elif command == "/secret":
+            try:
+                entry = credential_entry(argument)
+            except GatewayError as exc:
+                self._send(chat_id, str(exc), update_id=update_id)
+            else:
+                self.secret_captures[chat_id] = entry
+                self._send(
+                    chat_id,
+                    "Envie agora a senha ou o token em uma única mensagem de texto. "
+                    "Ela será salva diretamente no cofre, não será enviada ao RodriClone "
+                    "e o gateway tentará removê-la do Telegram. Use /cancel para desistir.",
+                    update_id=update_id,
+                )
         elif command == "/resume":
             if not reply_context or reply_context.author != self.config.identity.display_name or not reply_context.thread_id:
                 self._send(

@@ -159,6 +159,16 @@ class TelegramContentTests(unittest.TestCase):
             [item.args[0] for item in call.call_args_list],
         )
 
+    def test_delete_message_uses_only_chat_and_message_identifiers(self) -> None:
+        api = TelegramApi("test-token", 10)
+
+        with patch.object(api, "call", return_value=True) as call:
+            self.assertTrue(api.delete_message(10, 20))
+
+        call.assert_called_once_with(
+            "deleteMessage", {"chat_id": 10, "message_id": 20}
+        )
+
     def test_filename_is_sanitized(self) -> None:
         self.assertEqual("conta_.pdf", sanitize_filename("../conta?.pdf"))
         self.assertEqual("arquivo", sanitize_filename("..."))

@@ -141,7 +141,15 @@ raiz de confiança da instalação.
 - `/usage`: consulta as janelas de franquia da conta autenticada no Codex;
 - `/cancel`: solicita o encerramento da execução ativa;
 - `/thread`: mostra o identificador da sessão;
+- `/secret NomeDoServico`: prepara a captura protegida da próxima mensagem de texto;
 - `/help`: lista os comandos.
+
+`/secret` não exige conhecer a estrutura do KeePassXC. Por exemplo, `/secret Todoist`
+usa a entrada `APIs/Todoist`. A mensagem seguinte é interceptada antes de ser gravada
+no SQLite, incluída em um job ou enviada ao Codex. O gateway salva o valor no campo
+`Password`, registra somente `[Censurado por segurança]` e solicita `deleteMessage` à
+Bot API. Se o Telegram não permitir a exclusão, a resposta orienta apagar a mensagem
+manualmente sem repetir o segredo. `/cancel` abandona uma captura pendente.
 
 Responder a uma mensagem inclui um único nível de contexto, quote e anexos conhecidos,
 sem trocar a thread ativa. A confirmação, a resposta final e o primeiro artefato usam

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
@@ -314,6 +315,151 @@ class CredentialVaultTest(unittest.TestCase):
             )
 
         self.assertNotIn("refresh-token-secreto", str(raised.exception))
+
+    def test_writes_simple_secret_without_username_or_secret_in_arguments(self) -> None:
+        self.vault.touch()
+        completed = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "run_keepassxc",
+                return_value=completed,
+            ),
+            patch.object(
+                CREDENTIAL_VAULT.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            CREDENTIAL_VAULT.write_entry_secret(
+                "APIs/Telegram/teste",
+                "token-secreto",
+                cli_path=self.cli,
+                vault_path=self.vault,
+                credential_target="Coworker/Test",
+            )
+
+        arguments = run.call_args.args[0]
+        standard_input = run.call_args.kwargs["input"]
+        self.assertNotIn("--username", arguments)
+        self.assertNotIn("token-secreto", arguments)
+        self.assertIn("token-secreto", standard_input)
+
+    def test_store_reads_secret_from_stdin_and_never_returns_it(self) -> None:
+        arguments = self.arguments()
+        arguments.entry = "APIs/Todoist"
+        arguments.stdin = True
+        with (
+            patch.object(sys, "stdin", io.StringIO("token-secreto\n")),
+            patch.object(CREDENTIAL_VAULT, "write_entry_secret") as write,
+        ):
+            result = CREDENTIAL_VAULT.command_store(arguments)
+
+        write.assert_called_once_with(
+            "APIs/Todoist",
+            "token-secreto",
+            cli_path=self.cli,
+            vault_path=self.vault,
+            credential_target="Coworker/Test",
+        )
+        self.assertNotIn("token-secreto", str(result))
+        self.assertFalse(result["secret_exposed"])
+
+    def test_add_prepares_groups_and_updates_an_existing_entry(self) -> None:
+        self.vault.touch()
+        arguments = self.arguments()
+        arguments.entry = "APIs/Telegram/rodriclone"
+        arguments.username = None
+        arguments.url = None
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "windows_credential_exists",
+                return_value=True,
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "read_windows_credential",
+                return_value="senha-mestra",
+            ),
+            patch.object(CREDENTIAL_VAULT, "_ensure_vault_groups") as ensure,
+            patch.object(
+                CREDENTIAL_VAULT,
+                "_vault_item_exists",
+                return_value=True,
+            ),
+            patch.object(
+                CREDENTIAL_VAULT,
+                "launch_interactive",
+                return_value=123,
+            ) as launch,
+        ):
+            result = CREDENTIAL_VAULT.command_add(arguments)
+
+        ensure.assert_called_once_with(
+            self.cli,
+            self.vault,
+            "APIs/Telegram/rodriclone",
+            "senha-mestra",
+        )
+        self.assertEqual("edit", launch.call_args.args[1][0])
+        self.assertEqual("update", result["operation"])
+
+    def test_group_preparation_creates_every_missing_parent(self) -> None:
+        missing = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr=""
+        )
+        created = CREDENTIAL_VAULT.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        with patch.object(
+            CREDENTIAL_VAULT,
+            "run_keepassxc",
+            side_effect=[missing, created, missing, created],
+        ) as run:
+            CREDENTIAL_VAULT._ensure_vault_groups(
+                self.cli,
+                self.vault,
+                "APIs/Telegram/rodriclone",
+                "senha-mestra",
+            )
+
+        arguments = [call.args[1] for call in run.call_args_list]
+        self.assertEqual(
+            [
+                ["ls", "--quiet", str(self.vault), "APIs"],
+                ["mkdir", "--quiet", str(self.vault), "APIs"],
+                ["ls", "--quiet", str(self.vault), "APIs/Telegram"],
+                ["mkdir", "--quiet", str(self.vault), "APIs/Telegram"],
+            ],
+            arguments,
+        )
+
+    def test_add_requires_local_enrollment_before_opening_window(self) -> None:
+        self.vault.touch()
+        arguments = self.arguments()
+        arguments.entry = "APIs/Telegram/rodriclone"
+        arguments.username = None
+        arguments.url = None
+        with (
+            patch.object(
+                CREDENTIAL_VAULT,
+                "windows_credential_exists",
+                return_value=False,
+            ),
+            patch.object(CREDENTIAL_VAULT, "launch_interactive") as launch,
+            self.assertRaises(CREDENTIAL_VAULT.VaultToolError),
+        ):
+            CREDENTIAL_VAULT.command_add(arguments)
+
+        launch.assert_not_called()
 
     def test_unenroll_requires_confirmation(self) -> None:
         """A senha cadastrada não pode ser removida acidentalmente."""

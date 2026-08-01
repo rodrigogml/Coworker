@@ -394,6 +394,7 @@ class AppServerBackendTests(unittest.TestCase):
 class _FakeTelegramApi:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, int | None]] = []
+        self.deleted: list[tuple[int, int]] = []
 
     def send_text(self, chat_id: int, text: str, *, reply_to_message_id: int | None = None):
         self.sent.append((chat_id, text, reply_to_message_id))
@@ -401,6 +402,10 @@ class _FakeTelegramApi:
 
     def close(self) -> None:
         pass
+
+    def delete_message(self, chat_id: int, message_id: int) -> bool:
+        self.deleted.append((chat_id, message_id))
+        return True
 
     def set_profile(self, **_values):
         return True
@@ -457,6 +462,48 @@ class GatewayContextTests(unittest.TestCase):
             gateway.close()
 
         self.assertEqual("thread-1", active)
+
+    def test_secret_capture_never_persists_or_queues_plaintext(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            command = {
+                "message": {
+                    "message_id": 20,
+                    "chat": {"id": 10, "type": "private"},
+                    "from": {"id": 10},
+                    "text": "/secret Todoist",
+                }
+            }
+            secret = {
+                "message": {
+                    "message_id": 21,
+                    "chat": {"id": 10, "type": "private"},
+                    "from": {"id": 10},
+                    "text": "token-secreto",
+                }
+            }
+            with patch("interfaces.telegram.gateway.write_entry_secret") as write:
+                gateway._handle_update(1, command)
+                gateway._handle_update(2, secret)
+
+            stored = gateway.state.message(10, 21)
+            sent = str(gateway.api.sent)
+            deleted = list(gateway.api.deleted)
+            queued = gateway.work.qsize()
+            gateway.close()
+
+        write.assert_called_once_with("APIs/Todoist", "token-secreto")
+        self.assertEqual("[Censurado por segurança]", stored["text"])
+        self.assertNotIn("token-secreto", str(stored))
+        self.assertNotIn("token-secreto", sent)
+        self.assertEqual([(10, 21)], deleted)
+        self.assertEqual(0, queued)
 
     def test_reference_without_persisted_content_uses_update_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
