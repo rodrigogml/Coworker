@@ -112,6 +112,18 @@ Abra o polling em um terminal:
 python interfaces/telegram/gateway.py run
 ```
 
+O configurador local também administra o processo persistente. Execute
+`python scripts/install_instance.py` e escolha **6. Gerenciar gateway Telegram**
+para consultar o status, iniciar, finalizar ou reiniciar. O processo registra PID e
+horário em `<state_dir>/gateway-runtime.json`; a finalização usa uma
+solicitação cooperativa e espera o polling corrente terminar. O registro
+também impede duas cópias gerenciadas da mesma instância.
+
+As opções de instalar e remover como serviço já aparecem reservadas no menu,
+mas ainda não executam alterações no Windows. Um gateway iniciado antes desta
+versão não possui registro persistente e deve ser finalizado manualmente uma vez
+antes de passar ao novo gerenciador.
+
 Em outro terminal, gere um PIN temporário:
 
 ```powershell
@@ -231,6 +243,48 @@ escrita. O campo
 outros diretórios para leitura em `codex.additional_directories` ou, deliberadamente,
 para escrita em `codex.writable_directories`; não use
 `danger-full-access` para compensar uma configuração incompleta.
+
+Na configura&ccedil;&atilde;o interativa, as listas de leitura e escrita s&atilde;o
+gerenciadas incrementalmente: novos caminhos podem ser informados separados por
+v&iacute;rgula, e cada item pode ser removido individualmente. O separador antigo por
+ponto e v&iacute;rgula continua aceito. Caminhos relativos s&atilde;o resolvidos a partir
+da raiz do RodriClone; `.` representa o pr&oacute;prio reposit&oacute;rio.
+
+Para escrita, o menu oferece dois atalhos seguros: manter somente `data/`, que
+continua sendo o padr&atilde;o de novas inst&acirc;ncias, ou adicionar `.` para permitir
+que uma inst&acirc;ncia altere seu pr&oacute;prio reposit&oacute;rio. Outros caminhos formam o
+perfil personalizado. A permiss&atilde;o de arquivos n&atilde;o libera comandos por si s&oacute;:
+os pontos de entrada necess&aacute;rios ainda devem existir em `config/codex.rules`.
+
+
+Quando a pessoa propriet&aacute;ria realmente precisar de uma inst&acirc;ncia com acesso
+global, use a op&ccedil;&atilde;o **10. Super inst&acirc;ncia** no configurador local. A
+ativa&ccedil;&atilde;o exige duas confirma&ccedil;&otilde;es e grava
+`codex.access_mode = "super"`. Esse perfil for&ccedil;a `danger-full-access`, rede
+habilitada e `approval_policy = "never"`; tamb&eacute;m remove somente
+`<codex.home_dir>/rules/gateway.rules`, que &eacute; o arquivo restritivo gerado pelo
+gateway. Outras regras mantidas pela pessoa propriet&aacute;ria n&atilde;o s&atilde;o
+apagadas.
+
+O modo super executa com todas as permiss&otilde;es da conta do Windows que iniciou o
+gateway. Ele pode ler, alterar ou excluir dados e executar Git, PowerShell, Python e
+outros aplicativos dispon&iacute;veis. A ativa&ccedil;&atilde;o nunca pode ser feita por
+um comando do Telegram. Reinicie o gateway ap&oacute;s ativar ou desativar o perfil.
+
+Uma super inst&acirc;ncia gerenciada pode agendar o pr&oacute;prio rein&iacute;cio com:
+
+`python interfaces/telegram/scripts/restart_gateway.py request`
+
+O pedido n&atilde;o encerra diretamente o processo que o executou. O gateway cria um
+relan&ccedil;ador externo destacado, para de buscar novas atualiza&ccedil;&otilde;es e
+drena o trabalho atual e os itens que j&aacute; estavam na fila. Depois que o PID antigo
+termina, o relan&ccedil;ador inicia outra c&oacute;pia, confirma o novo PID e sai.
+
+O estado transit&oacute;rio usa `gateway-restart-request.json` e
+`gateway-restart-worker.json` dentro de `state_dir`; o diagn&oacute;stico fica em
+`gateway-restart.log`. O relan&ccedil;ador &eacute; criado pelo gateway, e n&atilde;o
+pelo processo tempor&aacute;rio do Codex, para sobreviver ao encerramento da &aacute;rvore
+do trabalho. Solicita&ccedil;&otilde;es duplicadas s&atilde;o recusadas.
 
 Com `approval_policy = "never"`, um comando que não corresponda às regras públicas é
 recusado em vez de solicitar aprovação pela conversa. Ao criar um novo script que a

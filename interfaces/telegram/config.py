@@ -39,6 +39,7 @@ class CodexConfig:
     backend: str = "exec"
     generated_images_dir: Path | None = None
     writable_directories: tuple[Path, ...] = ()
+    access_mode: str = "restricted"
 
 
 @dataclass(frozen=True)
@@ -198,15 +199,31 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         for item in codex_values.get("writable_directories", ["data"])
         if (path := _resolve(item, PROJECT_ROOT)) is not None
     )
+    raw_access_mode = codex_values.get("access_mode")
+    access_mode = str(raw_access_mode or "restricted").strip().casefold()
+    if access_mode not in {"restricted", "super"}:
+        raise TelegramConfigError(
+            "'codex.access_mode' deve ser restricted ou super."
+        )
     sandbox = str(codex_values.get("sandbox", "workspace-write")).strip()
     if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
         raise TelegramConfigError("Sandbox do Codex inválido.")
     network_access = codex_values.get("network_access", False)
     if not isinstance(network_access, bool):
         raise TelegramConfigError("'codex.network_access' deve ser true ou false.")
+    if raw_access_mode is None and sandbox == "danger-full-access":
+        access_mode = "super"
     approval = str(codex_values.get("approval_policy", "never")).strip()
     if approval not in {"untrusted", "on-request", "never"}:
         raise TelegramConfigError("Política de aprovação do Codex inválida.")
+    if access_mode == "super":
+        sandbox = "danger-full-access"
+        network_access = True
+        approval = "never"
+    elif sandbox == "danger-full-access":
+        raise TelegramConfigError(
+            "Use 'codex.access_mode = \"super\"' para liberar acesso irrestrito."
+        )
     backend = str(codex_values.get("backend", "exec")).strip().casefold()
     if backend not in {"exec", "app-server"}:
         raise TelegramConfigError("'codex.backend' deve ser exec ou app-server.")
@@ -263,6 +280,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             backend=backend,
             generated_images_dir=generated_images,
             writable_directories=writable,
+            access_mode=access_mode,
         ),
         media=MediaConfig(inbox_dir, jobs_dir, max_download, max_upload),
         processors=ProcessorConfig(*processor_limits),

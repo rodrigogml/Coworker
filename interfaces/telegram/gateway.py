@@ -7,6 +7,7 @@ import argparse
 import json
 import queue
 import shutil
+import subprocess
 import signal
 import sys
 import threading
@@ -41,8 +42,20 @@ from interfaces.telegram.config import (  # noqa: E402
     load_config,
 )
 from interfaces.telegram.identity import IdentityConfigError, InstanceIdentity  # noqa: E402
+from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
+    RestartError,
+    spawn_relauncher,
+)
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
+from interfaces.telegram.runtime import (  # noqa: E402
+    GatewayRuntimeError,
+    cancel_restart,
+    claim_runtime,
+    release_runtime,
+    restart_requested,
+    stop_requested,
+)
 from interfaces.telegram.telegram_api import (  # noqa: E402
     DownloadedFile,
     TelegramApi,
@@ -211,6 +224,7 @@ class Gateway:
         self.processors = ProcessorRegistry(config.processors)
         self.work: queue.Queue[WorkItem | None] = queue.Queue()
         self.stop_event = threading.Event()
+        self.restart_event = threading.Event()
         self.worker = threading.Thread(target=self._worker_loop, name="coworker-codex", daemon=True)
         self.albums: dict[tuple[int, str], AlbumBuffer] = {}
         self.album_lock = threading.Lock()
@@ -233,6 +247,23 @@ class Gateway:
                 self.state.close()
         self.api.close()
 
+    def drain_and_close(self) -> None:
+        """Para de receber atualizações e conclui a fila antes do handoff."""
+        with self.album_lock:
+            for album in self.albums.values():
+                if album.timer:
+                    album.timer.cancel()
+            self.albums.clear()
+        self.secret_captures.clear()
+        self.work.put(None)
+        if self.worker.is_alive():
+            self.worker.join()
+        self.stop_event.set()
+        if not self.worker.is_alive():
+            with self.state_lock:
+                self.state.close()
+        self.api.close()
+
     def run_polling(self) -> None:
         if self.config.transport == "webhook":
             raise GatewayError(
@@ -247,7 +278,9 @@ class Gateway:
         self.api.delete_webhook()
         self.worker.start()
         offset: int | None = None
-        while not self.stop_event.is_set():
+        while (
+            not self.stop_event.is_set() and not self.restart_event.is_set()
+        ):
             try:
                 updates = self.api.get_updates(offset, self.config.poll_timeout_seconds)
                 for update in updates:
@@ -1129,21 +1162,69 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
 
 def command_run(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(Path(args.config))
-    api = load_api(config)
-    gateway = Gateway(config, api)
-
-    def stop_handler(_signum: int, _frame: Any) -> None:
-        gateway.stop_event.set()
-
-    signal.signal(signal.SIGINT, stop_handler)
-    if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, stop_handler)
+    runtime = claim_runtime(config.state_dir, config.identity.instance_id)
+    pid = int(runtime["pid"])
+    monitor_done = threading.Event()
+    monitor: threading.Thread | None = None
+    restart_handoff = False
     try:
-        gateway.codex.sync_rules()
-        gateway.run_polling()
+        api = load_api(config)
+        gateway = Gateway(config, api)
+
+        def stop_handler(_signum: int, _frame: Any) -> None:
+            gateway.stop_event.set()
+
+        def monitor_stop_request() -> None:
+            while not monitor_done.wait(0.5):
+                if restart_requested(config.state_dir, pid):
+                    try:
+                        helper_pid = spawn_relauncher(Path(args.config), pid)
+                    except (
+                        RestartError,
+                        TelegramConfigError,
+                        OSError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        cancel_restart(config.state_dir, pid)
+                        print_json(
+                            {"ok": False, "warning": f"reinício cancelado: {exc}"},
+                            stream=sys.stderr,
+                        )
+                        continue
+                    print_json(
+                        {"ok": True, "restart_helper_pid": helper_pid},
+                        stream=sys.stderr,
+                    )
+                    gateway.restart_event.set()
+                    return
+                if stop_requested(config.state_dir, pid):
+                    gateway.stop_event.set()
+                    return
+
+        signal.signal(signal.SIGINT, stop_handler)
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, stop_handler)
+        monitor = threading.Thread(
+            target=monitor_stop_request,
+            name="coworker-gateway-runtime",
+            daemon=True,
+        )
+        monitor.start()
+        try:
+            gateway.codex.sync_rules()
+            gateway.run_polling()
+        finally:
+            if gateway.restart_event.is_set():
+                restart_handoff = True
+                gateway.drain_and_close()
+            else:
+                gateway.close()
     finally:
-        gateway.close()
-    return {"ok": True, "stopped": True}
+        monitor_done.set()
+        if monitor is not None:
+            monitor.join(timeout=2)
+        release_runtime(config.state_dir, pid)
+    return {"ok": True, "stopped": True, "restart_handoff": restart_handoff}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1194,7 +1275,16 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         result = args.handler(args)
-    except (GatewayError, TelegramConfigError, IdentityConfigError, StateError, TelegramApiError, CodexExecutionError, OSError) as exc:
+    except (
+        GatewayError,
+        GatewayRuntimeError,
+        TelegramConfigError,
+        IdentityConfigError,
+        StateError,
+        TelegramApiError,
+        CodexExecutionError,
+        OSError,
+    ) as exc:
         print_json({"ok": False, "error": str(exc), "error_type": type(exc).__name__}, stream=sys.stderr)
         return 1
     print_json(result)

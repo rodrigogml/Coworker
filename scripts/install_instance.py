@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import getpass
 import json
 import os
@@ -221,6 +222,7 @@ def _default_telegram_values(instance_id: str) -> dict[str, Any]:
         "home_dir": str(_default_codex_home(instance_id)),
         "backend": "app-server",
         "generated_images_dir": "",
+        "access_mode": "restricted",
         "sandbox": "workspace-write",
         "network_access": False,
         "approval_policy": "never",
@@ -276,6 +278,7 @@ executable = {_toml_string(str(settings['executable']))}
 home_dir = {_toml_string(str(settings['home_dir']))}
 backend = {_toml_string(str(settings['backend']))}
 generated_images_dir = {_toml_string(str(settings['generated_images_dir']))}
+access_mode = {_toml_string(str(settings['access_mode']))}
 sandbox = {_toml_string(str(settings['sandbox']))}
 network_access = {str(bool(settings['network_access'])).lower()}
 approval_policy = {_toml_string(str(settings['approval_policy']))}
@@ -671,6 +674,105 @@ def _ask_directory_list(label: str, current: list[str]) -> list[str]:
     return [item.strip().strip('"') for item in answer.split(";") if item.strip()]
 
 
+def _parse_directory_entries(raw: str) -> list[str]:
+    """Parse comma-separated paths while preserving quoted commas."""
+    delimiter = ";" if ";" in raw and "," not in raw else ","
+    parsed = next(csv.reader([raw], delimiter=delimiter, skipinitialspace=True))
+    return [item.strip().strip('"') for item in parsed if item.strip().strip('"')]
+
+
+def _directory_key(raw: str) -> str:
+    """Compare equivalent paths without changing their stored representation."""
+    return os.path.normcase(str(_resolve_configured_path(raw)))
+
+
+def _print_directory_entries(current: list[str]) -> None:
+    if not current:
+        print("  (nenhum)")
+        return
+    for index, configured in enumerate(current, start=1):
+        resolved = _resolve_configured_path(configured)
+        print(f"  {index}. {configured} -> {resolved}")
+
+
+def _manage_directory_list(
+    label: str, current: list[str], *, writable: bool
+) -> list[str]:
+    """Add and remove paths without replacing the complete list implicitly."""
+    values = list(current)
+    while True:
+        print(f"\n{label}:")
+        _print_directory_entries(values)
+        print("  Caminhos relativos usam a raiz do RodriClone como base.")
+        print("  Use '.' para a pr\u00f3pria raiz. Caminhos absolutos tamb\u00e9m s\u00e3o aceitos.")
+        print("  1. Adicionar um ou mais diret\u00f3rios")
+        print("  2. Excluir um diret\u00f3rio")
+        if writable:
+            print("  3. Permitir escrita no pr\u00f3prio reposit\u00f3rio (.)")
+            print("  4. Restringir escrita somente a data/")
+        print("  0. Voltar")
+        answer = input("Escolha uma op\u00e7\u00e3o: ").strip()
+        if answer in {"", "0"}:
+            return values
+        if answer == "1":
+            raw = input(
+                "Caminhos separados por v\u00edrgula (use aspas se houver v\u00edrgula no caminho): "
+            ).strip()
+            if not raw:
+                continue
+            existing = {_directory_key(value) for value in values}
+            added = 0
+            for item in _parse_directory_entries(raw):
+                key = _directory_key(item)
+                if key in existing:
+                    print(f"J\u00e1 cadastrado: {item}")
+                    continue
+                values.append(item)
+                existing.add(key)
+                added += 1
+            print(f"{added} diret\u00f3rio(s) adicionado(s).")
+            continue
+        if answer == "2":
+            if not values:
+                print("N\u00e3o h\u00e1 diret\u00f3rios para excluir.")
+                continue
+            raw_index = input("N\u00famero do diret\u00f3rio a excluir: ").strip()
+            try:
+                index = int(raw_index)
+            except ValueError:
+                print("Informe um n\u00famero da lista.")
+                continue
+            if not 1 <= index <= len(values):
+                print("N\u00famero fora da lista.")
+                continue
+            removed = values.pop(index - 1)
+            print(f"Diret\u00f3rio removido: {removed}")
+            continue
+        if writable and answer == "3":
+            root_key = _directory_key(".")
+            if root_key in {_directory_key(value) for value in values}:
+                print("O pr\u00f3prio reposit\u00f3rio j\u00e1 possui escrita.")
+            else:
+                values.append(".")
+                print("Escrita no pr\u00f3prio reposit\u00f3rio adicionada.")
+            continue
+        if writable and answer == "4":
+            if _yes_no("Substituir as ra\u00edzes de escrita por data/", default=False):
+                values = ["data"]
+                print("Escrita restrita a data/.")
+            continue
+        print("Escolha uma op\u00e7\u00e3o v\u00e1lida.")
+
+
+def _manage_read_directories(label: str, current: list[str]) -> list[str]:
+    return _manage_directory_list(label, current, writable=False)
+
+
+def _manage_writable_directories(label: str, current: list[str]) -> list[str]:
+    return _manage_directory_list(label, current, writable=True)
+
+
+
 def configure_codex(instance_id: str) -> dict[str, Any]:
     """Configura o Codex CLI isolado usado exclusivamente por esta instância."""
     values = _load_telegram_values(instance_id)
@@ -697,6 +799,10 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
         print(
             "  6. Rede dos comandos: "
             + ("habilitada" if values["network_access"] else "bloqueada")
+        )
+        print(
+            "  10. Super instância: "
+            + ("ATIVA" if values["access_mode"] == "super" else "desativada")
         )
         print(
             "  7. Diretórios adicionais de leitura: "
@@ -749,19 +855,20 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
                 changed = True
         elif answer == "5":
             sandbox = _ask(
-                "Sandbox (read-only, workspace-write ou danger-full-access)",
+                "Sandbox restrito (read-only ou workspace-write)",
                 str(values["sandbox"]),
             ).casefold()
-            if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+            if values["access_mode"] == "super":
+                print("Desative primeiro a super instância na opção 10.")
+            elif sandbox not in {"read-only", "workspace-write"}:
                 print("Perfil de sandbox inválido.")
-            elif sandbox == "danger-full-access" and not _yes_no(
-                "Confirmar acesso irrestrito ao sistema de arquivos", default=False
-            ):
-                print("Alteração cancelada.")
             else:
                 values["sandbox"] = sandbox
                 changed = True
         elif answer == "6":
+            if values["access_mode"] == "super":
+                print("A rede faz parte do perfil super; desative-o na opção 10.")
+                continue
             enable = _yes_no("Permitir acesso de rede aos comandos", default=False)
             if enable and not _yes_no(
                 "Confirmar a concessão de rede para esta instância", default=False
@@ -771,13 +878,13 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
                 values["network_access"] = enable
                 changed = True
         elif answer == "7":
-            values["additional_directories"] = _ask_directory_list(
+            values["additional_directories"] = _manage_read_directories(
                 "Diretórios adicionais de leitura",
                 [str(value) for value in values["additional_directories"]],
             )
             changed = True
         elif answer == "8":
-            values["writable_directories"] = _ask_directory_list(
+            values["writable_directories"] = _manage_writable_directories(
                 "Diretórios com escrita",
                 [str(value) for value in values["writable_directories"]],
             )
@@ -793,6 +900,36 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
                 print("Use um valor entre 30 e 86400 segundos.")
             else:
                 values["timeout_seconds"] = timeout_seconds
+                changed = True
+        elif answer == "10":
+            if values["access_mode"] == "super":
+                if _yes_no(
+                    "Desativar a super instância e restaurar o perfil seguro",
+                    default=True,
+                ):
+                    values["access_mode"] = "restricted"
+                    values["sandbox"] = "workspace-write"
+                    values["network_access"] = False
+                    values["additional_directories"] = []
+                    values["writable_directories"] = ["data"]
+                    changed = True
+            else:
+                print(
+                    "\nATENÇÃO: este modo permite ao bot ler e alterar arquivos do "
+                    "computador, acessar a rede e executar aplicações com as "
+                    "permissões da conta do gateway."
+                )
+                if not _yes_no("Continuar com a ativação", default=False):
+                    print("Ativação cancelada.")
+                    continue
+                phrase = input("Digite SUPER INSTANCIA para confirmar: ").strip()
+                if phrase != "SUPER INSTANCIA":
+                    print("Confirmação incorreta; ativação cancelada.")
+                    continue
+                values["access_mode"] = "super"
+                values["sandbox"] = "danger-full-access"
+                values["network_access"] = True
+                values["approval_policy"] = "never"
                 changed = True
         else:
             print("Escolha uma opção válida.")
@@ -824,6 +961,122 @@ def _stop_gateway(process: subprocess.Popen[bytes]) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+
+
+def _gateway_state_dir(instance_id: str) -> Path:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from interfaces.telegram.config import default_state_dir, load_config
+
+    if TELEGRAM_CONFIG.is_file():
+        return load_config(TELEGRAM_CONFIG, require_codex=False).state_dir
+    return default_state_dir(instance_id).resolve()
+
+
+def gateway_runtime_status(instance_id: str) -> dict[str, Any]:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from interfaces.telegram.runtime import clear_stale_runtime, runtime_status
+
+    state_dir = _gateway_state_dir(instance_id)
+    clear_stale_runtime(state_dir)
+    return runtime_status(state_dir)
+
+
+def start_gateway(instance_id: str) -> dict[str, Any]:
+    current = gateway_runtime_status(instance_id)
+    if current["running"]:
+        return {**current, "started": False, "already_running": True}
+    process = _gateway_process()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise InstallError("O gateway encerrou durante a inicialização.")
+        current = gateway_runtime_status(instance_id)
+        if current["running"] and current["pid"] == process.pid:
+            time.sleep(1)
+            if process.poll() is not None:
+                raise InstallError("O gateway encerrou logo após a inicialização.")
+            return {**current, "started": True, "already_running": False}
+        time.sleep(0.2)
+    _stop_gateway(process)
+    raise InstallError("O gateway não confirmou a inicialização em 10 segundos.")
+
+
+def stop_gateway(instance_id: str, *, timeout_seconds: int = 60) -> dict[str, Any]:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from interfaces.telegram.runtime import request_stop, runtime_status
+
+    state_dir = _gateway_state_dir(instance_id)
+    requested = request_stop(state_dir)
+    if not requested["requested"]:
+        return {**requested, "stopped": False, "already_stopped": True}
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        current = runtime_status(state_dir)
+        if not current["running"]:
+            return {**current, "stopped": True, "already_stopped": False}
+        time.sleep(0.2)
+    raise InstallError(
+        "O gateway não respondeu à parada cooperativa. Ele pode ser uma versão "
+        "anterior sem controle persistente; finalize esse processo manualmente."
+    )
+
+
+def restart_gateway(instance_id: str) -> dict[str, Any]:
+    stop_gateway(instance_id)
+    return start_gateway(instance_id)
+
+
+def manage_gateway(instance_id: str) -> None:
+    while True:
+        status = gateway_runtime_status(instance_id)
+        state = (
+            f"EM EXECUÇÃO (PID {status['pid']})"
+            if status["running"]
+            else "PARADO"
+        )
+        print(f"\nGateway Telegram: {state}")
+        print("  1. Atualizar status")
+        print("  2. Iniciar")
+        print("  3. Finalizar")
+        print("  4. Reiniciar")
+        print("  5. Instalar como serviço [planejado]")
+        print("  6. Remover serviço [planejado]")
+        print("  0. Voltar")
+        answer = input("Escolha uma opção: ").strip()
+        if answer in {"", "0"}:
+            return
+        if answer == "1":
+            continue
+        if answer == "2":
+            result = start_gateway(instance_id)
+            if result["already_running"]:
+                print(f"O gateway já estava em execução (PID {result['pid']}).")
+            else:
+                print(f"Gateway iniciado (PID {result['pid']}).")
+            continue
+        if answer == "3":
+            if not status["running"]:
+                print("O gateway já está parado.")
+                continue
+            if _yes_no(f"Finalizar o gateway PID {status['pid']}", default=False):
+                stop_gateway(instance_id)
+                print("Gateway finalizado.")
+            continue
+        if answer == "4":
+            if _yes_no("Reiniciar o gateway agora", default=False):
+                result = restart_gateway(instance_id)
+                print(f"Gateway reiniciado (PID {result['pid']}).")
+            continue
+        if answer in {"5", "6"}:
+            print(
+                "Gerenciamento como serviço ainda não foi implementado. "
+                "A opção já está reservada para uma etapa futura."
+            )
+            continue
+        print("Escolha uma opção válida.")
 
 
 def pair_owner_interactively() -> bool:
@@ -904,12 +1157,10 @@ def configure_telegram(
     paired = pair_owner_interactively()
     process_id = None
     if start_gateway:
-        process = _gateway_process()
-        time.sleep(2)
-        if process.poll() is not None:
-            raise InstallError("O gateway encerrou durante a inicialização final.")
-        process_id = process.pid
-        print(f"Gateway iniciado em segundo plano (PID {process_id}).")
+        runtime = start_gateway(instance_id)
+        process_id = runtime["pid"]
+        action = "já estava em execução" if runtime["already_running"] else "foi iniciado"
+        print(f"Gateway {action} em segundo plano (PID {process_id}).")
     return {"configured": True, "paired": paired, "process_id": process_id}
 
 
@@ -1194,6 +1445,7 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
         print("  3. Codex CLI, CODEX_HOME e permissões")
         print("  4. Telegram, token e pareamento")
         print("  5. Memória local")
+        print("  6. Gerenciar gateway Telegram")
         print("  9. Sair do configurador")
         answer = input("Escolha uma seção: ").strip()
         try:
@@ -1243,6 +1495,8 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
                     if result.get("ok")
                     else "A memória não foi inicializada."
                 )
+            elif answer == "6":
+                manage_gateway(instance_id)
             elif answer == "9":
                 break
             else:

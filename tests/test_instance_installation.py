@@ -45,11 +45,45 @@ class InstallerTests(unittest.TestCase):
         content = install_instance._telegram_content("assistente-teste")
 
         self.assertIn('credential_ref = "APIs/Telegram/assistente-teste"', content)
+        self.assertIn('access_mode = "restricted"', content)
         self.assertIn('approval_policy = "never"', content)
         self.assertIn("network_access = false", content)
         self.assertIn('writable_directories = ["data"]', content)
         parsed = tomllib.loads(content)
         self.assertTrue(parsed["codex"]["home_dir"])
+
+    def test_directory_entries_accept_commas_quotes_and_legacy_semicolons(self) -> None:
+        self.assertEqual(
+            [".", "C:\\repo", "C:\\path,with,commas"],
+            install_instance._parse_directory_entries(
+                '., C:\\repo, "C:\\path,with,commas"'
+            ),
+        )
+        self.assertEqual(
+            ["data", "C:\\repo"],
+            install_instance._parse_directory_entries("data;C:\\repo"),
+        )
+
+    def test_directory_manager_adds_and_removes_individually(self) -> None:
+        with patch(
+            "builtins.input", side_effect=["1", "alpha,beta", "2", "1", "0"]
+        ):
+            result = install_instance._manage_read_directories("Leitura", [])
+        self.assertEqual(["beta"], result)
+
+    def test_writable_directory_manager_can_enable_repository_access(self) -> None:
+        with patch("builtins.input", side_effect=["3", "0"]):
+            result = install_instance._manage_writable_directories(
+                "Escrita", ["data"]
+            )
+        self.assertEqual(["data", "."], result)
+
+    def test_writable_directory_manager_can_restore_data_only_profile(self) -> None:
+        with patch("builtins.input", side_effect=["4", "s", "0"]):
+            result = install_instance._manage_writable_directories(
+                "Escrita", [".", "C:\\repo"]
+            )
+        self.assertEqual(["data"], result)
 
     def test_codex_update_preserves_unrelated_telegram_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -193,6 +227,49 @@ class InstallerTests(unittest.TestCase):
         self.assertIsNone(status["executable"])
         self.assertFalse(status["authenticated"])
         self.assertIn("não localizado", status["login_detail"])
+
+    def test_managed_gateway_start_waits_for_runtime_registration(self) -> None:
+        process = Mock(pid=321)
+        process.poll.return_value = None
+        with (
+            patch.object(
+                install_instance,
+                "gateway_runtime_status",
+                side_effect=[
+                    {"running": False},
+                    {"running": True, "pid": 321},
+                ],
+            ),
+            patch.object(install_instance, "_gateway_process", return_value=process),
+            patch.object(install_instance.time, "sleep"),
+        ):
+            result = install_instance.start_gateway("assistente-teste")
+
+        self.assertTrue(result["started"])
+        self.assertEqual(321, result["pid"])
+
+    def test_managed_gateway_stop_uses_cooperative_request(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(
+                install_instance,
+                "_gateway_state_dir",
+                return_value=Path(temporary),
+            ),
+            patch(
+                "interfaces.telegram.runtime.request_stop",
+                return_value={"running": True, "pid": 321, "requested": True},
+            ),
+            patch(
+                "interfaces.telegram.runtime.runtime_status",
+                return_value={"running": False, "pid": None},
+            ),
+        ):
+            result = install_instance.stop_gateway(
+                "assistente-teste", timeout_seconds=1
+            )
+
+        self.assertTrue(result["stopped"])
 
     def test_pairing_waits_for_request_and_requires_local_id_confirmation(self) -> None:
         process = Mock()

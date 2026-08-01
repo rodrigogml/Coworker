@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,8 +15,19 @@ from interfaces.telegram.gateway import (
     format_rate_limits,
     help_text,
 )
+from interfaces.telegram.scripts import restart_gateway
 from interfaces.telegram.codex import RULES_TEMPLATE, CodexAdapter, ProcessRegistry
 from interfaces.telegram.config import CodexConfig
+from interfaces.telegram.runtime import (
+    GatewayRuntimeError,
+    claim_runtime,
+    release_runtime,
+    request_restart,
+    request_stop,
+    restart_requested,
+    runtime_status,
+    stop_requested,
+)
 from interfaces.telegram.state import StateError, StateStore
 from interfaces.telegram.telegram_api import (
     DownloadedFile,
@@ -247,6 +259,114 @@ class TelegramContentTests(unittest.TestCase):
         self.assertIn("conteúdo não confiável", prompt)
 
 
+class GatewayRuntimeTests(unittest.TestCase):
+    def test_runtime_claim_stop_request_and_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary)
+            claimed = claim_runtime(state_dir, "assistente-teste")
+            pid = int(claimed["pid"])
+            try:
+                status = runtime_status(state_dir)
+                self.assertTrue(status["running"])
+                self.assertEqual(pid, status["pid"])
+                with self.assertRaises(GatewayRuntimeError):
+                    claim_runtime(state_dir, "assistente-teste")
+
+                requested = request_stop(state_dir)
+                self.assertTrue(requested["requested"])
+                self.assertTrue(stop_requested(state_dir, pid))
+                restart = request_restart(state_dir)
+                self.assertTrue(restart["requested"])
+                self.assertTrue(restart_requested(state_dir, pid))
+            finally:
+                release_runtime(state_dir, pid)
+
+            status = runtime_status(state_dir)
+            self.assertFalse(status["running"])
+            self.assertFalse(status["stale"])
+
+
+class GatewayRestartTests(unittest.TestCase):
+    def test_worker_waits_for_old_pid_and_launches_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary)
+            token = "request-token"
+            lock_path = state_dir / restart_gateway.LOCK_FILENAME
+            lock_path.write_text(
+                json.dumps({"token": token, "owner_pid": 1}),
+                encoding="utf-8",
+            )
+            config = SimpleNamespace(
+                state_dir=state_dir,
+                codex=SimpleNamespace(timeout_seconds=60),
+            )
+            with (
+                patch.object(restart_gateway, "load_config", return_value=config),
+                patch.object(
+                    restart_gateway,
+                    "request_restart",
+                    return_value={"requested": True, "pid": 321},
+                ),
+                patch.object(restart_gateway, "_wait_for_old_gateway") as wait,
+                patch.object(
+                    restart_gateway,
+                    "_launch_gateway",
+                    return_value=654,
+                ) as launch,
+            ):
+                result = restart_gateway.run_worker(
+                    Path("telegram.toml"),
+                    321,
+                    token,
+                )
+
+            wait.assert_called_once()
+            launch.assert_called_once()
+            self.assertEqual(654, result["pid"])
+            self.assertFalse(lock_path.exists())
+
+    def test_schedule_waits_for_gateway_to_spawn_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary)
+            config = SimpleNamespace(
+                state_dir=state_dir,
+                codex=SimpleNamespace(access_mode="super"),
+                identity=SimpleNamespace(instance_id="assistente-teste"),
+            )
+            with (
+                patch.object(restart_gateway, "load_config", return_value=config),
+                patch.object(
+                    restart_gateway,
+                    "runtime_status",
+                    return_value={
+                        "running": True,
+                        "pid": 321,
+                        "instance_id": "assistente-teste",
+                    },
+                ),
+                patch.object(
+                    restart_gateway,
+                    "_claim_handoff",
+                    return_value="request-token",
+                ),
+                patch.object(
+                    restart_gateway,
+                    "request_restart",
+                    return_value={"requested": True, "pid": 321},
+                ),
+                patch.object(
+                    restart_gateway,
+                    "_read_json",
+                    return_value={"owner_pid": 654},
+                ),
+                patch.object(restart_gateway, "process_exists", return_value=True),
+            ):
+                result = restart_gateway.schedule_restart(Path("telegram.toml"))
+
+            self.assertTrue(result["scheduled"])
+            self.assertEqual(654, result["helper_pid"])
+
+
 class CodexIsolationTests(unittest.TestCase):
     def _config(self, root: Path) -> CodexConfig:
         executable = root / "codex.exe"
@@ -312,6 +432,35 @@ class CodexIsolationTests(unittest.TestCase):
                 RULES_TEMPLATE.read_bytes(), adapter.rules_destination.read_bytes()
             )
 
+    def test_super_mode_disables_only_generated_gateway_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = self._config(root)
+            config = CodexConfig(
+                executable=base.executable,
+                home_dir=base.home_dir,
+                sandbox="danger-full-access",
+                network_access=True,
+                approval_policy="never",
+                timeout_seconds=base.timeout_seconds,
+                additional_directories=(),
+                writable_directories=(),
+                access_mode="super",
+            )
+            adapter = CodexAdapter(config, root, ProcessRegistry())
+            adapter.rules_destination.parent.mkdir(parents=True)
+            adapter.rules_destination.write_text("generated", encoding="utf-8")
+            custom_rules = adapter.rules_destination.parent / "custom.rules"
+            custom_rules.write_text("custom", encoding="utf-8")
+
+            result = adapter.sync_rules()
+
+            self.assertFalse(adapter.rules_destination.exists())
+            self.assertTrue(custom_rules.exists())
+            self.assertTrue(result["synchronized"])
+            self.assertIn(":danger-full-access", adapter.permission_overrides()[0])
+            self.assertEqual({"type": "dangerFullAccess"}, adapter._app_server_sandbox())
+
     def test_app_server_writes_only_to_configured_data_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -330,6 +479,7 @@ class CodexIsolationTests(unittest.TestCase):
             "scripts/google_accounts.py",
             "scripts/memory.py",
             "scripts/vault_entities.py",
+            "interfaces/telegram/scripts/restart_gateway.py",
             "skills/calendar/scripts/calendar.py",
             "skills/cloudflare/scripts/cloudflare.py",
             "skills/contacts/scripts/contacts.py",

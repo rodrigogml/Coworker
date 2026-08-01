@@ -15,6 +15,7 @@ executable = ""
 home_dir = ""
 backend = "exec"
 generated_images_dir = ""
+access_mode = "restricted"
 sandbox = "workspace-write"
 network_access = false
 approval_policy = "never"

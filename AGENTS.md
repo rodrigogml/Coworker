@@ -292,6 +292,13 @@ Para operar uma instância por conversa particular do Telegram, usar
 `python interfaces/telegram/gateway.py`. Esta é uma aplicação de interface,
 não uma skill.
 
+O configurador local em `scripts/install_instance.py` deve oferecer status, início,
+finalização e reinício do gateway. O processo mantém seu registro em
+`<state_dir>/gateway-runtime.json`, impede duplicidade e aceita parada cooperativa.
+Instalação e remoção como serviço do sistema permanecem opções reservadas até existir
+uma implementação específica, testada e reversível; não improvisar criação de
+serviço com comandos genéricos.
+
 O token fica na referência definida em `data/config/telegram.toml`. A configuração
 efetiva fica nesse arquivo, as mídias recebidas em `data/telegram/inbox/` e o estado
 operacional, por padrão, em
@@ -346,6 +353,23 @@ pontos de entrada públicos dos scripts e skills. Liberar
 somente comandos de leitura e pontos de entrada públicos mantidos pelo projeto. Não
 liberar `python`, PowerShell ou outro shell inteiro como prefixo genérico; novos scripts
 executáveis pela interface devem receber uma regra específica.
+
+Uma exce&ccedil;&atilde;o expl&iacute;cita &eacute; o perfil local
+`codex.access_mode = "super"`. Ele somente pode ser ativado no configurador local,
+com confirma&ccedil;&atilde;o forte da pessoa propriet&aacute;ria, nunca pela conversa
+do Telegram. Nesse perfil, usar a permiss&atilde;o suportada
+`:danger-full-access`, habilitar rede e remover somente a c&oacute;pia gerada
+`<codex.home_dir>/rules/gateway.rules`; n&atilde;o usar a flag
+`--dangerously-bypass-approvals-and-sandbox`. Reiniciar o gateway depois de qualquer
+mudan&ccedil;a desse perfil.
+
+Quando uma super instância precisar reiniciar o próprio gateway, executar somente
+`python interfaces/telegram/scripts/restart_gateway.py request`. O pedido deve ser
+entregue ao gateway atual, que cria um relançador externo destacado antes de parar de
+receber atualizações. O gateway deve drenar o trabalho atual; o relançador espera o PID
+antigo terminar, inicia e valida a nova cópia e então encerra. Não finalizar o processo
+principal diretamente a partir do trabalho que solicitou o reinício. Manter trava,
+timeouts e log dentro de `state_dir`, sem persistir segredos.
 
 ### Cloudflare
 

@@ -106,6 +106,13 @@ class CodexAdapter:
         return self.config.home_dir / "rules" / "gateway.rules"
 
     def rules_status(self) -> dict[str, Any]:
+        if self.config.access_mode == "super":
+            return {
+                "mode": "super",
+                "template": str(RULES_TEMPLATE),
+                "destination": str(self.rules_destination),
+                "synchronized": not self.rules_destination.exists(),
+            }
         try:
             synchronized = (
                 self.rules_destination.is_file()
@@ -114,6 +121,7 @@ class CodexAdapter:
         except OSError as exc:
             raise CodexExecutionError("Não foi possível verificar as regras do Codex.") from exc
         return {
+            "mode": "restricted",
             "template": str(RULES_TEMPLATE),
             "destination": str(self.rules_destination),
             "synchronized": synchronized,
@@ -121,6 +129,11 @@ class CodexAdapter:
 
     def sync_rules(self) -> dict[str, Any]:
         try:
+            if self.config.access_mode == "super":
+                changed = self.rules_destination.exists()
+                if changed:
+                    self.rules_destination.unlink()
+                return {**self.rules_status(), "changed": changed}
             if not RULES_TEMPLATE.is_file():
                 raise CodexExecutionError(
                     f"Modelo de regras do Codex ausente em '{RULES_TEMPLATE}'."
@@ -176,6 +189,7 @@ class CodexAdapter:
             "version": completed.stdout.strip() or completed.stderr.strip(),
             "project_root": str(self.project_root),
             "home_dir": str(self.config.home_dir),
+            "access_mode": self.config.access_mode,
             "sandbox": self.config.sandbox,
             "network_access": self.config.network_access,
             "approval_policy": self.config.approval_policy,
@@ -333,7 +347,7 @@ class CodexAdapter:
 
     def permission_overrides(self) -> tuple[str, ...]:
         """Traduz a política pública para os perfis atuais de permissão do Codex."""
-        if self.config.sandbox == "danger-full-access":
+        if self.config.access_mode == "super":
             return ('default_permissions=":danger-full-access"',)
         network = str(self.config.network_access).lower()
         direct_paths = ""
@@ -652,7 +666,7 @@ class CodexAdapter:
         return CodexResult(discovered_thread, final_messages[-1], turn_id, status)
 
     def _app_server_sandbox(self) -> dict[str, Any]:
-        if self.config.sandbox == "danger-full-access":
+        if self.config.access_mode == "super":
             return {"type": "dangerFullAccess"}
         if self.config.sandbox == "read-only":
             return {"type": "readOnly", "networkAccess": self.config.network_access}
