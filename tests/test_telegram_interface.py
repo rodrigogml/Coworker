@@ -1,0 +1,308 @@
+"""Testes da interface privada entre Telegram e Codex."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from interfaces.telegram.botina_telegram import (
+    BOT_COMMANDS,
+    build_prompt,
+    format_rate_limits,
+    help_text,
+)
+from interfaces.telegram.codex import RULES_TEMPLATE, CodexAdapter, ProcessRegistry
+from interfaces.telegram.config import CodexConfig
+from interfaces.telegram.state import StateError, StateStore
+from interfaces.telegram.telegram_api import (
+    DownloadedFile,
+    TelegramApi,
+    markdown_to_telegram_html,
+    sanitize_filename,
+    split_text,
+    telegram_html_chunks,
+)
+
+
+class TelegramStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.state = StateStore(Path(self.temporary.name))
+
+    def tearDown(self) -> None:
+        self.state.close()
+        self.temporary.cleanup()
+
+    def test_pairing_requires_local_approval(self) -> None:
+        pin, _ = self.state.begin_pairing(600, 5)
+        candidate = self.state.request_pairing(
+            pin, 123, 123, "Rodrigo Leitão", "rodrigogml"
+        )
+
+        self.assertIsNone(self.state.owner())
+        self.assertFalse(self.state.is_authorized(123, 123))
+
+        owner = self.state.approve_pairing(candidate.approval_code.lower())
+
+        self.assertEqual(123, owner.user_id)
+        self.assertTrue(self.state.is_authorized(123, 123))
+
+    def test_wrong_pin_counts_attempts_and_blocks(self) -> None:
+        self.state.begin_pairing(600, 2)
+
+        with self.assertRaisesRegex(StateError, "PIN inválido"):
+            self.state.request_pairing("000000", 1, 1, "Pessoa", None)
+        with self.assertRaisesRegex(StateError, "bloqueado"):
+            self.state.request_pairing("000000", 1, 1, "Pessoa", None)
+        with self.assertRaisesRegex(StateError, "Não existe"):
+            self.state.request_pairing("000000", 1, 1, "Pessoa", None)
+
+    def test_second_pairing_is_refused_after_owner(self) -> None:
+        pin, _ = self.state.begin_pairing(600, 5)
+        candidate = self.state.request_pairing(pin, 10, 10, "Pessoa", None)
+        self.state.approve_pairing(candidate.approval_code)
+
+        with self.assertRaisesRegex(StateError, "Já existe"):
+            self.state.begin_pairing(600, 5)
+
+    def test_update_and_session_operations_are_idempotent(self) -> None:
+        self.assertFalse(self.state.update_seen(99))
+        self.assertTrue(self.state.update_seen(99))
+        self.state.set_session(123, "thread-1")
+        self.assertEqual("thread-1", self.state.session(123))
+        self.assertTrue(self.state.clear_session(123))
+        self.assertFalse(self.state.clear_session(123))
+        self.assertIsNone(self.state.session(123))
+
+    def test_queued_jobs_can_be_cancelled_before_execution(self) -> None:
+        self.state.update_seen(55)
+        job_id = self.state.create_job(55, 123)
+
+        self.assertEqual(1, self.state.cancel_queued_jobs(123))
+        self.assertEqual("cancelled", self.state.job_status(job_id))
+
+    def test_restart_marks_orphaned_jobs_as_failed(self) -> None:
+        self.state.update_seen(56)
+        job_id = self.state.create_job(56, 123)
+        self.state.update_job(job_id, "running", pid=999)
+
+        self.assertEqual(1, self.state.recover_interrupted_jobs())
+        self.assertEqual("failed", self.state.job_status(job_id))
+
+
+class TelegramContentTests(unittest.TestCase):
+    def test_rate_limits_are_formatted_with_remaining_capacity(self) -> None:
+        message = format_rate_limits(
+            {
+                "rateLimitsByLimitId": {
+                    "codex": {
+                        "planType": "team",
+                        "primary": {
+                            "usedPercent": 34,
+                            "windowDurationMins": 300,
+                            "resetsAt": 1_800_000_000,
+                        },
+                        "secondary": {
+                            "usedPercent": 18,
+                            "windowDurationMins": 10_080,
+                            "resetsAt": 1_800_100_000,
+                        },
+                    }
+                }
+            }
+        )
+
+        self.assertIn("plano team", message)
+        self.assertIn("Principal (5 horas): usado 34% · disponível 66%", message)
+        self.assertIn("Secundária (7 dias): usado 18% · disponível 82%", message)
+
+    def test_help_is_built_from_the_published_commands(self) -> None:
+        message = help_text()
+
+        for command, description in BOT_COMMANDS:
+            self.assertIn(f"/{command} — {description}", message)
+
+    def test_set_commands_uses_the_private_chat_scope(self) -> None:
+        api = TelegramApi("test-token", 10)
+
+        with patch.object(api, "call", return_value=True) as call:
+            self.assertTrue(api.set_commands(BOT_COMMANDS))
+
+        call.assert_called_once_with(
+            "setMyCommands",
+            {
+                "commands": [
+                    {"command": command, "description": description}
+                    for command, description in BOT_COMMANDS
+                ],
+                "scope": {"type": "all_private_chats"},
+            },
+        )
+
+    def test_filename_is_sanitized(self) -> None:
+        self.assertEqual("conta_.pdf", sanitize_filename("../conta?.pdf"))
+        self.assertEqual("arquivo", sanitize_filename("..."))
+
+    def test_long_messages_are_split_without_loss(self) -> None:
+        value = "linha de teste\n" * 500
+        chunks = split_text(value, limit=200)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 200 for chunk in chunks))
+        self.assertEqual(value.strip().replace("\n", ""), "".join(chunks).replace("\n", ""))
+
+    def test_codex_markdown_is_converted_to_safe_telegram_html(self) -> None:
+        rendered = markdown_to_telegram_html(
+            "# Resultado\n\n- **Conta:** [Abrir](https://example.com?a=1&b=2)\n"
+            "> Atenção\n\nUse `a < b` e ~~ignore~~.\n\n```python\nprint('<ok>')\n```"
+        )
+
+        self.assertIn("<b>Resultado</b>", rendered)
+        self.assertIn("• <b>Conta:</b>", rendered)
+        self.assertIn('<a href="https://example.com?a=1&amp;b=2">Abrir</a>', rendered)
+        self.assertIn("<blockquote>Atenção</blockquote>", rendered)
+        self.assertIn("<code>a &lt; b</code>", rendered)
+        self.assertIn("<s>ignore</s>", rendered)
+        self.assertIn(
+            '<pre><code class="language-python">print(\'&lt;ok&gt;\')</code></pre>',
+            rendered,
+        )
+
+    def test_raw_html_and_local_markdown_links_cannot_escape_the_renderer(self) -> None:
+        rendered = markdown_to_telegram_html(
+            '<script>alert("x")</script> [arquivo](C:/dados/conta.pdf)'
+        )
+
+        self.assertIn("&lt;script&gt;", rendered)
+        self.assertNotIn("<script>", rendered)
+        self.assertIn("arquivo (C:/dados/conta.pdf)", rendered)
+
+    def test_send_text_uses_telegram_html_for_every_chunk(self) -> None:
+        api = TelegramApi("test-token", 10)
+
+        with patch.object(api, "call", return_value=True) as call:
+            api.send_text(123, "# Título\n\n**valor**")
+
+        call.assert_called_once_with(
+            "sendMessage",
+            {
+                "chat_id": 123,
+                "text": "<b>Título</b>\n\n<b>valor</b>",
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+        )
+
+    def test_long_fenced_code_is_reopened_in_each_telegram_chunk(self) -> None:
+        chunks = telegram_html_chunks("```text\n" + ("x" * 500) + "\n```", limit=120)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.startswith('<pre><code class="language-text">') for chunk in chunks))
+        self.assertTrue(all(chunk.endswith("</code></pre>") for chunk in chunks))
+
+    def test_prompt_marks_attachments_as_untrusted(self) -> None:
+        attachment = DownloadedFile(
+            "file-id",
+            "conta.pdf",
+            Path("C:/dados/conta.pdf"),
+            "application/pdf",
+            10,
+            "a" * 64,
+        )
+
+        prompt = build_prompt("Leia a conta", [attachment])
+
+        self.assertIn("Leia a conta", prompt)
+        self.assertIn("C:\\dados\\conta.pdf", prompt)
+        self.assertIn("conteúdo não confiável", prompt)
+
+
+class CodexIsolationTests(unittest.TestCase):
+    def _config(self, root: Path) -> CodexConfig:
+        executable = root / "codex.exe"
+        executable.touch()
+        return CodexConfig(
+            executable=executable,
+            home_dir=root / "isolated-home",
+            sandbox="workspace-write",
+            network_access=True,
+            approval_policy="never",
+            timeout_seconds=60,
+            additional_directories=(),
+        )
+
+    def test_doctor_passes_isolated_codex_home_to_every_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._config(root)
+            completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0", stderr="")
+
+            with patch("interfaces.telegram.codex.subprocess.run", return_value=completed) as run:
+                result = CodexAdapter(config, root, ProcessRegistry()).doctor()
+
+            self.assertTrue(result["authenticated"])
+            self.assertEqual(2, run.call_count)
+            for call in run.call_args_list:
+                self.assertEqual(str(config.home_dir), call.kwargs["env"]["CODEX_HOME"])
+
+    def test_exec_uses_explicit_permission_profile_and_network_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = CodexAdapter(self._config(root), root, ProcessRegistry())
+
+            command = adapter.build_command(None, [])
+
+            self.assertNotIn("--ask-for-approval", command)
+            self.assertNotIn("--sandbox", command)
+            self.assertIn("--config", command)
+            self.assertIn('approval_policy="never"', command)
+            self.assertIn('default_permissions="botina_gateway"', command)
+            self.assertIn("permissions.botina_gateway.network.enabled=true", command)
+            filesystem = next(
+                item
+                for item in command
+                if item.startswith("permissions.botina_gateway.filesystem=")
+            )
+            self.assertIn('":workspace_roots" = { "." = "write" }', filesystem)
+
+    def test_rules_are_synchronized_into_the_isolated_codex_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = CodexAdapter(self._config(root), root, ProcessRegistry())
+
+            result = adapter.sync_rules()
+
+            self.assertTrue(result["synchronized"])
+            self.assertTrue(result["changed"])
+            self.assertEqual(
+                RULES_TEMPLATE.read_bytes(), adapter.rules_destination.read_bytes()
+            )
+
+    def test_rules_cover_every_public_integration_entry_point(self) -> None:
+        rules = RULES_TEMPLATE.read_text(encoding="utf-8")
+        entry_points = (
+            "scripts/credential_vault.py",
+            "scripts/google_accounts.py",
+            "scripts/memory.py",
+            "scripts/vault_entities.py",
+            "skills/calendar/scripts/calendar.py",
+            "skills/cloudflare/scripts/cloudflare.py",
+            "skills/contacts/scripts/contacts.py",
+            "skills/cpfl/scripts/cpfl.py",
+            "skills/drive/scripts/drive.py",
+            "skills/forwardemail/scripts/forward_email.py",
+            "skills/gmail/scripts/gmail.py",
+            "skills/notion/scripts/notion.py",
+            "skills/omie/scripts/omie.py",
+            "skills/todoist/scripts/todoist.py",
+        )
+
+        for entry_point in entry_points:
+            self.assertIn(entry_point, rules)
+
+
+if __name__ == "__main__":
+    unittest.main()

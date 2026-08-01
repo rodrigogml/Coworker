@@ -29,6 +29,7 @@ permanecem em `data/`, fora do Git.
 - pesquisa, transferência, organização e compartilhamento no Google Drive;
 - pesquisa e manutenção de contatos pessoais pelo Google Contacts;
 - consulta de contas digitais, PIX e linha digitável da CPFL;
+- interface privada do Telegram com sessões persistentes do Codex CLI;
 - base para novas skills pessoais.
 
 ## Estrutura
@@ -50,6 +51,7 @@ BOTina/
 │   ├── google.example.toml
 │   ├── omie.example.toml
 │   ├── notion.example.toml
+│   ├── telegram.example.toml
 │   ├── todoist.example.toml
 │   ├── memory-policy.yaml
 │   ├── secrets.example.toml
@@ -60,6 +62,8 @@ BOTina/
 │   ├── secrets/
 │   └── memory.sqlite3
 ├── migrations/
+├── interfaces/
+│   └── telegram/
 ├── scripts/
 ├── skills/
 ├── templates/
@@ -72,6 +76,7 @@ BOTina/
 - Windows 10 ou 11 para a integração atual com o Gerenciador de Credenciais;
 - Python 3.11 ou superior disponível como `python`;
 - KeePassXC e `keepassxc-cli` para o cofre;
+- Codex CLI autônomo para a interface Telegram;
 - dependências Python declaradas em `requirements.txt`;
 - Git apenas para versionar o núcleo público;
 - acesso à internet somente para integrações que precisem de APIs.
@@ -126,6 +131,7 @@ $modelos = @{
   "config/google.example.toml" = "data/config/google.toml"
   "config/omie.example.toml" = "data/config/omie.toml"
   "config/notion.example.toml" = "data/config/notion.toml"
+  "config/telegram.example.toml" = "data/config/telegram.toml"
   "config/todoist.example.toml" = "data/config/todoist.toml"
   "templates/memory/README.md" = "data/memory/README.md"
   "templates/memory/profile.md" = "data/memory/profile.md"
@@ -623,6 +629,37 @@ Atualizações preservam os metadados de concorrência devolvidos pela People AP
 skill também administra grupos e membros sem excluir os contatos ao apagar um grupo.
 Criação, alteração e exclusão exigem autorização explícita; a exclusão de um contato
 é permanente.
+
+## Interface Telegram
+
+A interface em `interfaces/telegram/` conecta uma conversa particular autorizada a
+sessões do Codex CLI. Ela opera por long polling, mantém caixas isoladas em
+`data/telegram/jobs/` e persiste fila, autorizações, referências, threads, turnos e
+artefatos em um SQLite local da máquina. Respostas podem referenciar mensagens e enviar
+mídias nativas validadas.
+
+O gateway executa o CLI com um `CODEX_HOME` próprio, por padrão em
+`%LOCALAPPDATA%\BOTina\codex`. Autenticação, configuração, sessões e logs da interface
+ficam separados do Codex Desktop. O perfil de permissões limita escrita às raízes do
+workspace; acesso de rede e regras para os scripts oficiais são configurados
+explicitamente pela interface.
+
+O backend padrão é `exec`; `app-server` pode ser ativado explicitamente no TOML privado
+para eventos estruturados e cancelamento por turno. A configuração nunca é migrada
+automaticamente. Consulte o README da interface para formatos, processadores e
+recuperação de uploads ambíguos.
+
+```powershell
+python interfaces/telegram/botina_telegram.py init
+python interfaces/telegram/botina_telegram.py doctor
+python interfaces/telegram/botina_telegram.py pairing begin
+python interfaces/telegram/botina_telegram.py run
+```
+
+O primeiro usuário somente se torna a pessoa proprietária depois de validar um PIN
+temporário no Telegram e receber aprovação local. IDs numéricos de usuário e conversa
+são a fonte de autorização; nomes e usernames são apenas referências visuais. Consulte
+`interfaces/telegram/README.md` para o fluxo completo.
 
 ## Privacidade e publicação
 

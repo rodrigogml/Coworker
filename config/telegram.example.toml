@@ -1,0 +1,42 @@
+# Copie para data/config/telegram.toml e ajuste somente valores locais.
+transport = "polling"
+credential_ref = "APIs/Telegram/BOTina"
+project_root = "."
+state_dir = ""
+poll_timeout_seconds = 45
+request_timeout_seconds = 60
+
+[pairing]
+ttl_seconds = 600
+max_attempts = 5
+
+[codex]
+executable = ""
+home_dir = ""
+backend = "exec"
+generated_images_dir = ""
+sandbox = "workspace-write"
+network_access = false
+approval_policy = "never"
+timeout_seconds = 1800
+additional_directories = []
+
+[media]
+inbox_dir = "data/telegram/inbox"
+jobs_dir = "data/telegram/jobs"
+max_download_bytes = 20971520
+max_upload_bytes = 20971520
+
+[processors]
+max_extracted_characters = 200000
+max_archive_members = 500
+max_uncompressed_bytes = 104857600
+max_pages = 200
+max_duration_seconds = 3600
+max_frames = 100
+
+[webhook]
+public_url = ""
+secret_credential_ref = "APIs/Telegram/BOTinaWebhook"
+listen_host = "127.0.0.1"
+listen_port = 8787

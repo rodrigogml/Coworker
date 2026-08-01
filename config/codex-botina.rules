@@ -1,0 +1,27 @@
+# Este arquivo é sincronizado pela interface Telegram no CODEX_HOME isolado.
+# O sandbox e as confirmações descritas no AGENTS.md continuam obrigatórios.
+
+prefix_rule(pattern=["Get-ChildItem"], decision="allow")
+prefix_rule(pattern=["Get-Content"], decision="allow")
+prefix_rule(pattern=["Get-Item"], decision="allow")
+prefix_rule(pattern=["Resolve-Path"], decision="allow")
+prefix_rule(pattern=["Select-String"], decision="allow")
+prefix_rule(pattern=["Test-Path"], decision="allow")
+prefix_rule(pattern=["rg"], decision="allow")
+
+prefix_rule(pattern=["python", "scripts/credential_vault.py"], decision="allow")
+prefix_rule(pattern=["python", "scripts/google_accounts.py"], decision="allow")
+prefix_rule(pattern=["python", "scripts/memory.py"], decision="allow")
+prefix_rule(pattern=["python", "scripts/vault_entities.py"], decision="allow")
+prefix_rule(pattern=["python", "interfaces/telegram/scripts/publish_artifact.py"], decision="allow")
+
+prefix_rule(pattern=["python", "skills/calendar/scripts/calendar.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/cloudflare/scripts/cloudflare.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/contacts/scripts/contacts.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/cpfl/scripts/cpfl.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/drive/scripts/drive.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/forwardemail/scripts/forward_email.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/gmail/scripts/gmail.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/notion/scripts/notion.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/omie/scripts/omie.py"], decision="allow")
+prefix_rule(pattern=["python", "skills/todoist/scripts/todoist.py"], decision="allow")

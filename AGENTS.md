@@ -37,6 +37,7 @@ Uma memória antiga nunca deve prevalecer sobre uma instrução atual.
 - `.agents/`: instruções especializadas de agentes, quando necessárias.
 - `config/`: políticas e modelos públicos de configuração.
 - `data/`: configurações, memória e dados privados da instância local.
+- `interfaces/`: aplicações que expõem a BOTina por outros canais.
 - `migrations/`: alterações versionadas do schema SQLite.
 - `scripts/`: utilitários gerais de linha de comando.
 - `skills/`: procedimentos especializados e seus scripts.
@@ -271,6 +272,56 @@ Integrações podem possuir vários perfis no TOML privado. Usar `default_profil
 com `--profile NOME`; nunca inferir uma conta quando a escolha puder alterar o
 resultado. Configurações antigas com uma única `credential_ref` continuam válidas,
 mas não aceitam `--profile` até serem migradas.
+
+### Interface Telegram
+
+Para operar a BOTina por uma conversa particular do Telegram, usar
+`interfaces/telegram/README.md` e executar
+`python interfaces/telegram/botina_telegram.py`. Esta é uma aplicação de interface,
+não uma skill.
+
+O token fica em `APIs/Telegram/BOTina` no KeePassXC. A configuração efetiva fica em
+`data/config/telegram.toml`, as mídias recebidas em `data/telegram/inbox/` e o estado
+operacional, por padrão, em `%LOCALAPPDATA%\BOTina\telegram`. Nenhum desses dados deve
+ser versionado.
+
+Executar o CLI com o `codex.home_dir` privado como `CODEX_HOME` somente no processo
+filho. Por padrão, usar `%LOCALAPPDATA%\BOTina\codex`, mantendo autenticação,
+configuração, sessões e logs separados do Codex Desktop. Não definir essa variável
+globalmente no Windows.
+
+Antes da primeira vinculação, aceitar somente comandos de ajuda e `/pair` em conversa
+particular. O PIN deve ser temporário, armazenado apenas como hash, possuir validade e
+limite de tentativas. Validar o PIN pelo Telegram não concede acesso: a criação da
+pessoa proprietária exige `pairing approve` executado localmente após conferência dos
+IDs numéricos.
+
+Depois da vinculação, autorizar exclusivamente pela combinação de `user_id` e
+`private_chat_id`; nunca usar nome ou username como controle de acesso. Ignorar grupos
+e usuários desconhecidos sem baixar mídias ou encaminhar conteúdo ao Codex.
+
+Usar o backend configurado em `codex.backend`: `exec` permanece o fallback compatível
+e `app-server` usa somente a API estável por stdio. Enviar prompts sem shell, capturar
+`thread_id` e `turn_id` quando disponíveis, não retransmitir raciocínio, logs ou saída
+bruta de ferramentas e nunca usar `--dangerously-bypass-approvals-and-sandbox`.
+O comando `/new` somente desvincula a sessão ativa; `/resume` exige resposta a uma
+mensagem da BOTina com thread conhecida.
+
+Cada execução usa `data/telegram/jobs/<job-id>/`; somente arquivos validados dentro de
+`output/` podem ser transmitidos. Respostas e artefatos devem referenciar nativamente a
+solicitação, e os IDs devolvidos devem ser persistidos. Upload interrompido em estado
+ambíguo deve ser marcado como `unknown`, nunca repetido automaticamente.
+
+Converter `codex.sandbox` em um perfil explícito de permissões do Codex; não depender
+apenas do argumento legado `--sandbox`. Escrita deve permanecer limitada às raízes do
+workspace. A rede dos comandos é uma concessão separada em `codex.network_access` e
+somente deve ser habilitada após autorização explícita da pessoa proprietária.
+
+As regras de execução permitidas ficam em `config/codex-botina.rules` e são
+sincronizadas para `<codex.home_dir>/rules/botina.rules` ao iniciar o gateway. Liberar
+somente comandos de leitura e pontos de entrada públicos mantidos pelo projeto. Não
+liberar `python`, PowerShell ou outro shell inteiro como prefixo genérico; novos scripts
+executáveis pela interface devem receber uma regra específica.
 
 ### Cloudflare
 
