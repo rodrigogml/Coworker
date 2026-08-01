@@ -938,18 +938,38 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
     return _codex_status(values)
 
 
-def _gateway_process() -> subprocess.Popen[bytes]:
+def _gateway_log_path(instance_id: str) -> Path:
+    return _gateway_state_dir(instance_id) / "gateway.log"
+
+
+def _gateway_failure_detail(instance_id: str) -> str:
+    log_path = _gateway_log_path(instance_id)
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        content = ""
+    if not content:
+        return f"Consulte o log em '{log_path}'."
+    last_line = content.splitlines()[-1].strip()
+    return f"Último erro: {last_line[:1000]} (log: '{log_path}')."
+
+
+def _gateway_process(instance_id: str | None = None) -> subprocess.Popen[bytes]:
+    resolved_instance_id = instance_id or str(_load_identity_values()["instance_id"])
+    log_path = _gateway_log_path(resolved_instance_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    return subprocess.Popen(
-        [sys.executable, str(GATEWAY), "run"],
-        cwd=PROJECT_ROOT,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        shell=False,
-        creationflags=flags,
-        start_new_session=os.name != "nt",
-    )
+    with log_path.open("wb") as log_stream:
+        return subprocess.Popen(
+            [sys.executable, str(GATEWAY), "run"],
+            cwd=PROJECT_ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=log_stream,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            creationflags=flags,
+            start_new_session=os.name != "nt",
+        )
 
 
 def _stop_gateway(process: subprocess.Popen[bytes]) -> None:
@@ -987,16 +1007,22 @@ def start_gateway(instance_id: str) -> dict[str, Any]:
     current = gateway_runtime_status(instance_id)
     if current["running"]:
         return {**current, "started": False, "already_running": True}
-    process = _gateway_process()
+    process = _gateway_process(instance_id)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise InstallError("O gateway encerrou durante a inicialização.")
+            raise InstallError(
+                "O gateway encerrou durante a inicialização. "
+                + _gateway_failure_detail(instance_id)
+            )
         current = gateway_runtime_status(instance_id)
         if current["running"] and current["pid"] == process.pid:
             time.sleep(1)
             if process.poll() is not None:
-                raise InstallError("O gateway encerrou logo após a inicialização.")
+                raise InstallError(
+                    "O gateway encerrou logo após a inicialização. "
+                    + _gateway_failure_detail(instance_id)
+                )
             return {**current, "started": True, "already_running": False}
         time.sleep(0.2)
     _stop_gateway(process)

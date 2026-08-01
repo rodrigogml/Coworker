@@ -269,12 +269,7 @@ class Gateway:
             raise GatewayError(
                 "O transporte webhook ainda não foi ativado nesta instalação. Use polling."
             )
-        self.api.set_commands(BOT_COMMANDS)
-        self.api.set_profile(
-            name=self.config.identity.telegram_name,
-            short_description=self.config.identity.telegram_short_description,
-            description=self.config.identity.telegram_description,
-        )
+        self._sync_public_metadata()
         self.api.delete_webhook()
         self.worker.start()
         offset: int | None = None
@@ -292,6 +287,31 @@ class Gateway:
             except TelegramApiError as exc:
                 print_json({"ok": False, "warning": str(exc)}, stream=sys.stderr)
                 self.stop_event.wait(3)
+
+    def _sync_public_metadata(self) -> None:
+        """Atualiza metadados sem impedir o polling quando a API limitar edições."""
+        operations = (
+            ("comandos", lambda: self.api.set_commands(BOT_COMMANDS)),
+            (
+                "perfil",
+                lambda: self.api.set_profile(
+                    name=self.config.identity.telegram_name,
+                    short_description=self.config.identity.telegram_short_description,
+                    description=self.config.identity.telegram_description,
+                ),
+            ),
+        )
+        for label, operation in operations:
+            try:
+                operation()
+            except TelegramApiError as exc:
+                print_json(
+                    {
+                        "ok": False,
+                        "warning": f"sincronização de {label} adiada: {exc}",
+                    },
+                    stream=sys.stderr,
+                )
 
     def _send(
         self,

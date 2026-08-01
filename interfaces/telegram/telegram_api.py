@@ -60,6 +60,22 @@ class TelegramApi:
         try:
             with urllib.request.urlopen(request, timeout=timeout or self.timeout_seconds) as response:
                 result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            description = f"HTTP {exc.code}"
+            retry_after: int | None = None
+            try:
+                failure = json.loads(exc.read().decode("utf-8", errors="replace"))
+                if isinstance(failure, dict):
+                    description = str(failure.get("description") or description)[:500]
+                    parameters = failure.get("parameters")
+                    if isinstance(parameters, dict) and parameters.get("retry_after") is not None:
+                        retry_after = int(parameters["retry_after"])
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+            retry = f"; tente novamente em {retry_after} segundos" if retry_after else ""
+            raise TelegramApiError(
+                f"Telegram recusou '{method}' ({exc.code}): {description}{retry}"
+            ) from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise TelegramApiError(f"A chamada '{method}' ao Telegram falhou.") from exc
         if not isinstance(result, dict) or result.get("ok") is not True:

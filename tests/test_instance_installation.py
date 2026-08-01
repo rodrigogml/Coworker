@@ -248,6 +248,27 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(result["started"])
         self.assertEqual(321, result["pid"])
 
+    def test_managed_gateway_start_surfaces_last_logged_error(self) -> None:
+        process = Mock(pid=321)
+        process.poll.return_value = 1
+        with (
+            patch.object(
+                install_instance,
+                "gateway_runtime_status",
+                return_value={"running": False},
+            ),
+            patch.object(install_instance, "_gateway_process", return_value=process),
+            patch.object(
+                install_instance,
+                "_gateway_failure_detail",
+                return_value="Último erro: Telegram recusou setMyName (429).",
+            ),
+        ):
+            with self.assertRaisesRegex(
+                install_instance.InstallError, "setMyName.*429"
+            ):
+                install_instance.start_gateway("assistente-teste")
+
     def test_managed_gateway_stop_uses_cooperative_request(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,

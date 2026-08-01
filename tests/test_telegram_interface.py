@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from interfaces.telegram.gateway import (
     BOT_COMMANDS,
+    Gateway,
     build_prompt,
     format_rate_limits,
     help_text,
@@ -32,6 +35,7 @@ from interfaces.telegram.state import StateError, StateStore
 from interfaces.telegram.telegram_api import (
     DownloadedFile,
     TelegramApi,
+    TelegramApiError,
     markdown_to_telegram_html,
     sanitize_filename,
     split_text,
@@ -106,6 +110,60 @@ class TelegramStateTests(unittest.TestCase):
 
 
 class TelegramContentTests(unittest.TestCase):
+    def test_http_rate_limit_preserves_retry_without_exposing_request_url(self) -> None:
+        api = TelegramApi("secret-token", 10)
+        response = io.BytesIO(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error_code": 429,
+                    "description": "Too Many Requests",
+                    "parameters": {"retry_after": 600},
+                }
+            ).encode("utf-8")
+        )
+        failure = urllib.error.HTTPError(
+            "https://api.telegram.org/botsecret-token/setMyName",
+            429,
+            "Too Many Requests",
+            {},
+            response,
+        )
+
+        with (
+            patch(
+                "interfaces.telegram.telegram_api.urllib.request.urlopen",
+                side_effect=failure,
+            ),
+            self.assertRaisesRegex(
+                TelegramApiError, "tente novamente em 600 segundos"
+            ) as raised,
+        ):
+            api.call("setMyName", {"name": "Teste"})
+
+        self.assertNotIn("secret-token", str(raised.exception))
+
+    def test_metadata_rate_limit_does_not_block_gateway_startup(self) -> None:
+        gateway = object.__new__(Gateway)
+        gateway.api = SimpleNamespace(
+            set_commands=Mock(side_effect=TelegramApiError("limite de comandos")),
+            set_profile=Mock(side_effect=TelegramApiError("limite de perfil")),
+        )
+        gateway.config = SimpleNamespace(
+            identity=SimpleNamespace(
+                telegram_name="Teste",
+                telegram_short_description="Resumo",
+                telegram_description="Descrição",
+            )
+        )
+
+        with patch("interfaces.telegram.gateway.print_json") as output:
+            gateway._sync_public_metadata()
+
+        gateway.api.set_commands.assert_called_once_with(BOT_COMMANDS)
+        gateway.api.set_profile.assert_called_once()
+        self.assertEqual(2, output.call_count)
+
     def test_rate_limits_are_formatted_with_remaining_capacity(self) -> None:
         message = format_rate_limits(
             {

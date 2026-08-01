@@ -119,6 +119,12 @@ horário em `<state_dir>/gateway-runtime.json`; a finalização usa uma
 solicitação cooperativa e espera o polling corrente terminar. O registro
 também impede duas cópias gerenciadas da mesma instância.
 
+A inicialização tenta sincronizar comandos, nome e descrições públicas, mas uma
+limitação temporária dessas edições pela Bot API não impede mais o polling. Avisos e
+falhas de inicialização ficam em `<state_dir>/gateway.log`; quando o processo encerrar
+prematuramente, o configurador apresenta a última linha desse log. Respostas HTTP 429
+incluem o tempo de espera informado pelo Telegram, sem revelar o token.
+
 As opções de instalar e remover como serviço já aparecem reservadas no menu,
 mas ainda não executam alterações no Windows. Um gateway iniciado antes desta
 versão não possui registro persistente e deve ser finalizado manualmente uma vez
