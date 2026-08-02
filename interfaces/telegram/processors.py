@@ -14,6 +14,7 @@ from pathlib import Path
 
 from interfaces.telegram.config import ProcessorConfig
 from interfaces.telegram.contracts import Attachment
+from interfaces.telegram.transcription import EccoVoxClient, TranscriptionError
 
 
 class ProcessorError(RuntimeError):
@@ -26,21 +27,29 @@ class PreparedContent:
     text: str | None
     available: bool
     note: str
+    role: str = "content"
 
 
 class ProcessorRegistry:
     def __init__(self, config: ProcessorConfig):
         self.config = config
+        self.transcription = EccoVoxClient(config.transcription)
+
+    def start(self) -> bool:
+        return self.transcription.start()
+
+    def close(self) -> None:
+        self.transcription.close()
 
     def doctor(self) -> dict[str, dict[str, str | bool]]:
-        ffprobe_present = shutil.which("ffprobe") is not None
         return {
             "text_json_csv_xml_zip_docx_xlsx": {"available": True, "provider": "stdlib"},
             "pdf": {"available": importlib.util.find_spec("pypdf") is not None, "provider": "pypdf"},
             "ocr": {"available": shutil.which("tesseract") is not None, "provider": "tesseract"},
-            "audio_video": {
+            "audio_transcription": self.transcription.doctor(),
+            "video": {
                 "available": False,
-                "dependency_present": ffprobe_present,
+                "dependency_present": shutil.which("ffprobe") is not None,
                 "provider": "ffprobe (diagnóstico apenas)",
             },
         }
@@ -72,9 +81,38 @@ class ProcessorRegistry:
             return PreparedContent("zip", self._zip_inventory(path), True, "Somente inventário seguro; membros não foram executados.")
         if suffix == ".pdf":
             return PreparedContent("pdf", None, False, "Processador PDF opcional não foi aplicado; o original foi preservado.")
-        if mime.startswith(("audio/", "video/")):
-            return PreparedContent("media", None, False, "Transcrição opcional indisponível; o original foi preservado.")
+        if mime.startswith("audio/"):
+            return self._audio(attachment)
+        if mime.startswith("video/"):
+            return PreparedContent("media", None, False, "Transcrição de vídeo indisponível; o original foi preservado.")
         return PreparedContent("none", None, False, "Formato sem preparação automática; o original foi preservado.")
+
+    def _audio(self, attachment: Attachment) -> PreparedContent:
+        if not self.config.transcription.enabled:
+            return PreparedContent("media", None, False, "Transcrição local desabilitada; o original foi preservado.")
+        assert attachment.local_path is not None
+        try:
+            result = self.transcription.transcribe(attachment.local_path)
+        except TranscriptionError:
+            return PreparedContent("eccovox", None, False, "A transcrição local falhou; o original foi preservado.")
+        confidence_note = (
+            f"confiança {result.confidence:.2f}"
+            if result.confidence is not None
+            else "confiança indisponível"
+        )
+        model_note = f"modelo {result.model}" if result.model else "modelo não informado"
+        role = "content"
+        if attachment.logical_type == "voice":
+            role = (
+                "request"
+                if result.confidence is not None
+                and result.confidence >= self.config.transcription.minimum_confidence
+                else "uncertain_request"
+            )
+        note = f"Transcrição local pelo EccoVox ({model_note}; {confidence_note})."
+        if result.normalization_change_count:
+            note += f" {result.normalization_change_count} correção(ões) contextual(is) aplicada(s)."
+        return PreparedContent("eccovox", result.text, True, note, role)
 
     def _read_text(self, path: Path) -> str:
         try:

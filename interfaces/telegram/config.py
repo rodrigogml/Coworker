@@ -8,6 +8,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from interfaces.telegram.identity import InstanceIdentity, load_identity
 from interfaces.telegram.feedback import IMMEDIATE_MESSAGES, QUEUED_MESSAGES
@@ -56,6 +57,26 @@ class MediaConfig:
 
 
 @dataclass(frozen=True)
+class TranscriptionConfig:
+    enabled: bool = False
+    backend: str = "cli"
+    auto_start: bool = False
+    python_executable: Path | None = None
+    project_dir: Path | None = None
+    endpoint: str = "http://127.0.0.1:8870"
+    timeout_seconds: int = 120
+    language: str = "pt-BR"
+    profile: str | None = None
+    model: str = "medium"
+    device: str = "cpu"
+    compute_type: str = "int8"
+    prompt: str = ""
+    terms: tuple[str, ...] = ()
+    aliases: tuple[tuple[str, str], ...] = ()
+    minimum_confidence: float = 0.55
+
+
+@dataclass(frozen=True)
 class ProcessorConfig:
     max_extracted_characters: int
     max_archive_members: int
@@ -63,6 +84,7 @@ class ProcessorConfig:
     max_pages: int
     max_duration_seconds: int
     max_frames: int
+    transcription: TranscriptionConfig = TranscriptionConfig()
 
 
 @dataclass(frozen=True)
@@ -125,6 +147,93 @@ def _feedback_messages(raw: Any, default: tuple[str, ...], name: str) -> tuple[s
             f"'feedback.{name}' deve conter mensagens de 1 a 200 caracteres."
         )
     return messages
+
+
+def _string_list(raw: Any, name: str, *, max_items: int = 100) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise TelegramConfigError(f"'{name}' deve ser uma lista TOML.")
+    values = tuple(str(item).strip() for item in raw)
+    if len(values) > max_items or any(not item or len(item) > 80 for item in values):
+        raise TelegramConfigError(f"'{name}' deve conter até {max_items} valores de 1 a 80 caracteres.")
+    return values
+
+
+def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
+    raw = values.get("transcription", {})
+    if not isinstance(raw, dict):
+        raise TelegramConfigError("A seção [processors.transcription] deve ser uma tabela TOML.")
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise TelegramConfigError("'processors.transcription.enabled' deve ser true ou false.")
+    backend = str(raw.get("backend", "cli")).strip().casefold()
+    if backend not in {"cli", "http"}:
+        raise TelegramConfigError("'processors.transcription.backend' deve ser cli ou http.")
+    auto_start = raw.get("auto_start", False)
+    if not isinstance(auto_start, bool):
+        raise TelegramConfigError("'processors.transcription.auto_start' deve ser true ou false.")
+    raw_executable = str(raw.get("python_executable", "")).strip()
+    executable = _resolve(raw_executable, PROJECT_ROOT, allow_empty=True)
+    raw_project_dir = str(raw.get("project_dir", "")).strip()
+    project_dir = _resolve(raw_project_dir, PROJECT_ROOT, allow_empty=True)
+    endpoint = str(raw.get("endpoint", "http://127.0.0.1:8870")).strip()
+    parsed_endpoint = urlparse(endpoint)
+    if (
+        parsed_endpoint.scheme != "http"
+        or parsed_endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed_endpoint.username
+        or parsed_endpoint.password
+        or parsed_endpoint.path not in {"", "/"}
+        or parsed_endpoint.query
+        or parsed_endpoint.fragment
+    ):
+        raise TelegramConfigError("A transcrição HTTP deve usar um endpoint local sem credenciais ou parâmetros.")
+    timeout_seconds = int(raw.get("timeout_seconds", 120))
+    minimum_confidence = float(raw.get("minimum_confidence", 0.55))
+    if not 5 <= timeout_seconds <= 1800:
+        raise TelegramConfigError("'processors.transcription.timeout_seconds' deve ficar entre 5 e 1800.")
+    if not 0 <= minimum_confidence <= 1:
+        raise TelegramConfigError("'processors.transcription.minimum_confidence' deve ficar entre 0 e 1.")
+    language = str(raw.get("language", "pt-BR")).strip()
+    profile = str(raw.get("profile", "")).strip() or None
+    model = str(raw.get("model", "medium")).strip()
+    device = str(raw.get("device", "cpu")).strip().casefold()
+    compute_type = str(raw.get("compute_type", "int8")).strip().casefold()
+    prompt = str(raw.get("prompt", "")).strip()
+    if not language or not model or not device or not compute_type or len(prompt) > 4_000:
+        raise TelegramConfigError("A configuração básica da transcrição está inválida.")
+    terms = _string_list(raw.get("terms"), "processors.transcription.terms")
+    alias_values = _string_list(raw.get("aliases"), "processors.transcription.aliases")
+    aliases: list[tuple[str, str]] = []
+    for value in alias_values:
+        source, separator, target = value.partition("=")
+        if not separator or not source.strip() or not target.strip():
+            raise TelegramConfigError("Aliases de transcrição devem usar origem=destino.")
+        aliases.append((source.strip(), target.strip()))
+    if enabled and (backend == "cli" or auto_start):
+        if executable is None or not executable.is_file():
+            raise TelegramConfigError("O Python configurado para o EccoVox não foi encontrado.")
+        if project_dir is None or not project_dir.is_dir():
+            raise TelegramConfigError("O diretório configurado do EccoVox não foi encontrado.")
+    return TranscriptionConfig(
+        enabled=enabled,
+        backend=backend,
+        auto_start=auto_start,
+        python_executable=executable,
+        project_dir=project_dir,
+        endpoint=endpoint.rstrip("/"),
+        timeout_seconds=timeout_seconds,
+        language=language,
+        profile=profile,
+        model=model,
+        device=device,
+        compute_type=compute_type,
+        prompt=prompt,
+        terms=terms,
+        aliases=tuple(aliases),
+        minimum_confidence=minimum_confidence,
+    )
 
 
 def default_state_dir(instance_id: str) -> Path:
@@ -337,7 +446,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             verbosity=verbosity,
         ),
         media=MediaConfig(inbox_dir, jobs_dir, max_download, max_upload),
-        processors=ProcessorConfig(*processor_limits),
+        processors=ProcessorConfig(*processor_limits, _transcription_config(processor_values)),
         webhook=WebhookConfig(
             str(webhook_values.get("public_url", "")).strip(),
             str(webhook_values.get("secret_credential_ref", "")).strip(),

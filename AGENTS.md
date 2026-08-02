@@ -419,15 +419,18 @@ somente uma prévia técnica e não constitui autorização.
 
 ### Omie
 
-Para consultar o ERP Omie, usar `skills/omie/SKILL.md` e executar
+Para consultar ou manipular dados permitidos do ERP Omie, usar
+`skills/omie/SKILL.md` e executar
 `python skills/omie/scripts/omie.py`. App Key e App Secret devem permanecer em
 uma única entrada do KeePassXC: App Key no campo `Username` e App Secret no campo
 `Password`. O script deve obter ambos internamente.
 
-A versão atual da skill é somente de leitura. Não improvisar chamadas, métodos ou
-parâmetros diretamente contra a API. Inclusões, alterações, exclusões, baixas,
-conciliações, faturamentos e emissões exigem implementação específica e autorização
-explícita e atual.
+Consultas são permitidas dentro do escopo solicitado. A skill oferece operações
+controladas para clientes/fornecedores, projetos, contas a pagar e receber, baixas,
+conciliações de recebimentos e transferências entre contas. Toda escrita exige
+autorização explícita e atual, `--profile` e envelope JSON validado. Não improvisar
+chamadas, métodos ou parâmetros diretamente contra a API. Upserts, boletos, PIX,
+faturamentos e emissões permanecem fora da allowlist.
 
 ### Todoist
 

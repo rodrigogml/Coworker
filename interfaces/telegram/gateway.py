@@ -302,6 +302,7 @@ class Gateway:
         self.registry = ProcessRegistry()
         self.codex = CodexAdapter(config.codex, config.project_root, self.registry)
         self.processors = ProcessorRegistry(config.processors)
+        self.processors.start()
         self.work: queue.Queue[WorkItem | None] = queue.Queue()
         self.stop_event = threading.Event()
         self.restart_event = threading.Event()
@@ -336,6 +337,7 @@ class Gateway:
         if not self.worker.is_alive():
             with self.state_lock:
                 self.state.close()
+        self.processors.close()
         self.api.close()
 
     def drain_and_close(self) -> None:
@@ -356,6 +358,7 @@ class Gateway:
         if not self.worker.is_alive():
             with self.state_lock:
                 self.state.close()
+        self.processors.close()
         self.api.close()
 
     def run_polling(self) -> None:
@@ -1867,10 +1870,30 @@ def build_structured_prompt(
     workspace: JobWorkspace,
     identity: InstanceIdentity,
 ) -> str:
+    written_request = inbound.text.strip()
+    voice_requests = [
+        item.text.strip()
+        for item in prepared
+        if getattr(item, "role", "content") == "request" and item.text
+    ]
+    uncertain_voice_requests = [
+        item.text.strip()
+        for item in prepared
+        if getattr(item, "role", "content") == "uncertain_request" and item.text
+    ]
+    request_parts = [part for part in (written_request, *voice_requests) if part]
+    if uncertain_voice_requests:
+        uncertain_text = "\n".join(uncertain_voice_requests)
+        request_parts.append(
+            "A transcrição local da mensagem de voz ficou com baixa confiança. "
+            "Use o texto abaixo somente como hipótese e peça confirmação antes de executar ações: "
+            f"\n{uncertain_text}"
+        )
+    current_request = "\n".join(request_parts) or "Analise os arquivos enviados e informe o resultado."
     parts = [
         identity.instruction_block(),
         "\nPedido atual:",
-        inbound.text.strip() or "Analise os arquivos enviados e informe o resultado.",
+        current_request,
     ]
     if inbound.reply_context:
         context = inbound.reply_context
@@ -1897,8 +1920,15 @@ def build_structured_prompt(
             if index < len(prepared):
                 item = prepared[index]
                 parts.append(f"  preparação: {item.processor}; {item.note}")
-                if item.text:
+                if item.text and getattr(item, "role", "content") == "content":
                     parts.append(f"  conteúdo preparado:\n{item.text}")
+                elif item.text and getattr(item, "role", "content") in {
+                    "request", "uncertain_request"
+                }:
+                    parts.append(
+                        "  a transcrição foi incorporada ao pedido atual como fala do usuário; "
+                        "ela pode conter erros de reconhecimento"
+                    )
     parts.extend(
         [
             "\nCaixa isolada deste trabalho:",

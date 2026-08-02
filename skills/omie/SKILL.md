@@ -1,70 +1,77 @@
 ---
 name: omie
-description: Consultar dados do ERP Omie por API, incluindo empresas, clientes e fornecedores, produtos, contas a pagar, contas a receber, pedidos de venda e ordens de serviço. Use quando a tarefa mencionar Omie, ERP, cadastro de clientes, produtos, títulos financeiros, pedidos ou ordens de serviço armazenados no Omie.
+description: Consultar e manipular dados permitidos do ERP Omie por API, incluindo clientes e fornecedores, projetos, categorias, departamentos, contas correntes, contas a pagar e receber, baixas, conciliações e transferências entre contas. Use quando a tarefa mencionar Omie, ERP, contrapartes, projetos ou operações financeiras mantidas no Omie.
 ---
 
-# Consultar o ERP Omie
+# Operar o ERP Omie
 
-Usar exclusivamente `python skills/omie/scripts/omie.py`. O script lê uma única
-entrada do KeePassXC, usando `Username` como App Key e `Password` como App Secret, e
-devolve somente campos operacionais selecionados.
-Quando houver várias empresas, selecionar a referência com `--profile NOME`.
+Usar exclusivamente `python skills/omie/scripts/omie.py`. O script obtém App Key e
+App Secret internamente de uma única entrada do KeePassXC e nunca os aceita em
+argumentos ou arquivos de entrada.
 
-## Inicializar a configuração
+## Preparar a integração
+
+Inicializar somente quando a configuração privada estiver ausente:
 
 ```powershell
 python scripts/integration_config.py init omie
 ```
 
-O comando cria somente `data/config/omie.toml` quando ele ainda não existe. Se o
-arquivo já existir, informa `already_exists` e preserva seu conteúdo.
+Quando houver mais de uma empresa, informar sempre `--profile NOME`. Toda escrita
+exige o perfil explícito, mesmo que exista `default_profile`.
 
 ## Respeitar o escopo
 
-- Tratar todos os comandos atuais como somente de leitura.
-- Não enviar chamadas arbitrárias à API, mesmo que um método exista na documentação.
-- Não executar inclusão, alteração, exclusão, baixa, conciliação, faturamento,
-  cancelamento, emissão fiscal, geração de boleto ou PIX.
-- Ampliar a skill somente após documentar o contrato e a autorização da operação.
-- Nunca inserir App Key ou App Secret em argumentos, arquivos de parâmetros, logs ou
-  respostas.
+- Consultar sem confirmação dentro do pedido atual.
+- Exigir autorização explícita e atual antes de criar, alterar, inativar, excluir,
+  baixar, cancelar, conciliar, desconciliar ou transferir.
+- Não tratar `--dry-run` como autorização; ele é somente uma prévia técnica.
+- Nunca improvisar `call`, endpoint ou campo fora da allowlist do script.
+- Não usar `Upsert`; criações usam `request_id` estável e código de integração
+  determinístico.
+- Manter boleto, PIX, faturamento e emissão fiscal fora desta skill.
 
-## Executar consultas
+## Consultar
 
-1. Usar `doctor` para diagnosticar autenticação quando necessário.
-2. Escolher o recurso mais específico.
-3. Preferir `show` quando houver um identificador inequívoco.
-4. Usar filtros de data e uma página por vez antes de solicitar `--all-pages`.
-5. Examinar `pagination.truncated`; continuar por `--page` quando necessário.
-6. Interromper após um erro de contrato. Chamadas inválidas repetidas podem bloquear a
-   integração.
+Usar `doctor` quando for necessário diagnosticar autenticação. Preferir `show`
+com identificador inequívoco e limitar listagens antes de usar `--all-pages`.
 
 ```powershell
-python skills/omie/scripts/omie.py doctor
-
-python skills/omie/scripts/omie.py companies list
-python skills/omie/scripts/omie.py customers list
-python skills/omie/scripts/omie.py customers show --id 123456
-python skills/omie/scripts/omie.py products list --description "Produto"
-python skills/omie/scripts/omie.py products show --code SKU-001
-
-python skills/omie/scripts/omie.py payables list `
-  --issued-from 01/07/2026 --issued-to 31/07/2026
-python skills/omie/scripts/omie.py receivables list --status ATRASADO
-
-python skills/omie/scripts/omie.py sales-orders list `
-  --customer-id 123456 --status FATURADO
-python skills/omie/scripts/omie.py service-orders show --number 1001
+python skills/omie/scripts/omie.py --profile EMPRESA doctor
+python skills/omie/scripts/omie.py --profile EMPRESA customers show --id 123
+python skills/omie/scripts/omie.py --profile EMPRESA projects list
+python skills/omie/scripts/omie.py --profile EMPRESA categories list
+python skills/omie/scripts/omie.py --profile EMPRESA departments show --code DEP-1
+python skills/omie/scripts/omie.py --profile EMPRESA current-accounts list
+python skills/omie/scripts/omie.py --profile EMPRESA transfers show --integration-id ID
 ```
 
-## Interpretar limites
+Examinar `pagination.truncated` e continuar por `--page` quando necessário.
 
-- A Omie usa `POST` com `call`, `param`, `app_key` e `app_secret`; não é uma API REST.
-- Cada página aceita no máximo 100 registros.
-- `--all-pages` respeita `max_pages` da configuração privada.
-- O HTTP 425 indica bloqueio temporário após chamadas inválidas; não repetir.
-- O HTTP 429 indica limite de consumo; aguardar antes de tentar novamente.
-- Ler [references/api-contracts.md](references/api-contracts.md) para autenticação,
-  limites e endpoints.
-- Ler [references/resources.md](references/resources.md) para seletores, filtros e
-  campos resumidos de cada recurso.
+## Alterar
+
+Fornecer um envelope JSON versão 1 por arquivo UTF-8 ou stdin, nunca por flags de
+campos. Colocar `--profile` antes do recurso:
+
+```powershell
+python skills/omie/scripts/omie.py --profile EMPRESA projects create `
+  --input-file entrada.json --dry-run
+
+Get-Content entrada.json -Raw | python skills/omie/scripts/omie.py `
+  --profile EMPRESA payables create --input-stdin
+```
+
+Usar o mesmo `request_id` ao retomar uma operação. Em lote, corrigir a falha e
+reenviar o mesmo envelope: a skill valida todos os itens antes da primeira escrita,
+executa em sequência e reconhece criações já existentes.
+
+Inativar clientes, fornecedores e projetos antes da exclusão física. Toda exclusão
+exige `confirm_delete: true`. Não excluir título com baixa ativa.
+
+Se o resultado for `unknown`, consultar pelo identificador de integração antes de
+repetir. A skill tenta essa recuperação automaticamente nas criações.
+
+Ler [references/operations.md](references/operations.md) para envelopes, campos e
+exemplos de escrita. Ler [references/resources.md](references/resources.md) para
+seletores e consultas, e [references/api-contracts.md](references/api-contracts.md)
+para endpoints, allowlist, limites e erros.

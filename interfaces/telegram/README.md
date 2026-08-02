@@ -279,9 +279,22 @@ sobrescreve arquivos e devolve apenas metadados seguros. Arquivos em
 Sem dependências externas, a interface prepara texto UTF-8, JSON, CSV, XML, inventário
 de ZIP e extração básica de DOCX/XLSX por XML interno. ZIP possui limites de membros e
 tamanho descompactado e rejeita path traversal. Imagens seguem como entrada visual
-nativa. PDF, OCR, áudio e vídeo possuem diagnóstico opcional; quando a dependência não
-está disponível, o original é preservado e essa limitação é informada ao Codex. A
-interface nunca instala processadores automaticamente nem executa arquivos recebidos.
+nativa. PDF, OCR e vídeo possuem diagnóstico opcional; quando a dependência não está
+disponível, o original é preservado e essa limitação é informada ao Codex. Áudio pode
+ser transcrito localmente pelo EccoVox configurado em `[processors.transcription]`,
+por CLI isolado ou HTTP local. Uma mensagem Telegram do tipo `voice` com confiança
+suficiente é incorporada ao pedido atual como fala da pessoa usuária; arquivos do tipo
+`audio` continuam sendo conteúdo anexado. Em baixa confiança, o Codex recebe somente
+uma hipótese e deve pedir confirmação antes de executar ações. A interface nunca
+instala processadores automaticamente nem executa arquivos recebidos.
+
+O EccoVox aceita um prompt curto, termos contextuais e aliases confirmados no formato
+`origem=destino`. Aliases são substituições explícitas, não correções fonéticas
+inferidas. O gateway não inclui texto bruto descartado, stderr do motor ou caminhos de
+bibliotecas no prompt. O backend HTTP é restrito a loopback; o backend CLI executa sem
+shell e com argumentos separados. Com `backend = "http"` e `auto_start = true`, o
+gateway inicia um servidor EccoVox oculto quando o endpoint ainda não estiver pronto,
+mantém o modelo aquecido e encerra somente o processo que ele próprio iniciou.
 
 Os limites ficam em `[processors]` e `[media]` no TOML privado. A seção opcional
 `[feedback]` controla `typing_interval_seconds` e permite substituir as listas

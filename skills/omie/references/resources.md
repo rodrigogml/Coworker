@@ -27,6 +27,31 @@ python skills/omie/scripts/omie.py customers show --id 123
 python skills/omie/scripts/omie.py customers show --integration-id ERP-123
 ```
 
+As mutações disponíveis são `create`, `update`, `deactivate` e `delete`. Consultar
+[operations.md](operations.md) antes de preparar o envelope.
+
+## Projetos
+
+```powershell
+python skills/omie/scripts/omie.py projects list
+python skills/omie/scripts/omie.py projects show --id 123
+python skills/omie/scripts/omie.py projects show --integration-id PROJ-123
+```
+
+As mutações disponíveis são `create`, `update`, `deactivate` e `delete`.
+
+## Categorias, departamentos e contas correntes
+
+```powershell
+python skills/omie/scripts/omie.py categories show --code 2.01.01
+python skills/omie/scripts/omie.py departments show --code DEP-1
+python skills/omie/scripts/omie.py current-accounts show --id 123
+python skills/omie/scripts/omie.py current-accounts show --integration-id BANCO-1
+```
+
+Esses recursos são somente de leitura e servem também para validar referências de
+títulos, baixas e transferências.
+
 ## Produtos
 
 ```powershell
@@ -46,7 +71,21 @@ python skills/omie/scripts/omie.py payables list --status ATRASADO
 python skills/omie/scripts/omie.py receivables show --id 123
 ```
 
-As consultas não realizam baixa, pagamento, recebimento ou conciliação.
+Contas a pagar aceitam `create`, `update`, `delete`, `pay` e `cancel-payment`.
+Contas a receber aceitam `create`, `update`, `delete`, `receive`, `cancel-receipt`,
+`reconcile` e `unreconcile`.
+
+## Transferências entre contas
+
+```powershell
+python skills/omie/scripts/omie.py transfers list
+python skills/omie/scripts/omie.py transfers show --id 123
+python skills/omie/scripts/omie.py transfers show --integration-id TRANSF-123
+```
+
+As mutações disponíveis são `create`, `update` e `delete`. A listagem usa a
+paginação própria de `ListarLancCC`, traduzida para o mesmo formato de saída dos
+demais recursos.
 
 ## Pedidos de venda
 

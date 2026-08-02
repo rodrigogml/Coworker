@@ -34,24 +34,29 @@ somente a referência dessa entrada.
 
 ## Serviços permitidos
 
-| Recurso | Endpoint | Listagem | Consulta |
+| Recurso | Endpoint | Leitura | Escrita permitida |
 | --- | --- | --- | --- |
-| Empresas | `/geral/empresas/` | `ListarEmpresas` | `ConsultarEmpresa` |
-| Clientes | `/geral/clientes/` | `ListarClientes` | `ConsultarCliente` |
-| Produtos | `/geral/produtos/` | `ListarProdutos` | `ConsultarProduto` |
-| Contas a pagar | `/financas/contapagar/` | `ListarContasPagar` | `ConsultarContaPagar` |
-| Contas a receber | `/financas/contareceber/` | `ListarContasReceber` | `ConsultarContaReceber` |
-| Pedidos de venda | `/produtos/pedido/` | `ListarPedidos` | `ConsultarPedido` |
-| Ordens de serviço | `/servicos/os/` | `ListarOS` | `ConsultarOS` |
+| Empresas | `/geral/empresas/` | `ListarEmpresas`, `ConsultarEmpresa` | — |
+| Clientes/fornecedores | `/geral/clientes/` | `ListarClientes`, `ConsultarCliente` | `IncluirCliente`, `AlterarCliente`, `ExcluirCliente` |
+| Projetos | `/geral/projetos/` | `ListarProjetos`, `ConsultarProjeto` | `IncluirProjeto`, `AlterarProjeto`, `ExcluirProjeto` |
+| Categorias | `/geral/categorias/` | `ListarCategorias`, `ConsultarCategoria` | — |
+| Departamentos | `/geral/departamentos/` | `ListarDepartamentos`, `ConsultarDepartamento` | — |
+| Contas correntes | `/geral/contacorrente/` | `ListarContasCorrentes`, `ConsultarContaCorrente` | — |
+| Produtos | `/geral/produtos/` | `ListarProdutos`, `ConsultarProduto` | — |
+| Contas a pagar | `/financas/contapagar/` | `ListarContasPagar`, `ConsultarContaPagar` | incluir, alterar, excluir, lançar e cancelar pagamento |
+| Contas a receber | `/financas/contareceber/` | `ListarContasReceber`, `ConsultarContaReceber` | incluir, alterar, excluir, lançar/cancelar recebimento, conciliar e desconciliar |
+| Transferências | `/financas/contacorrentelancamentos/` | `ListarLancCC`, `ConsultaLancCC` | `IncluirLancCC`, `AlterarLancCC`, `ExcluirLancCC` |
+| Pedidos de venda | `/produtos/pedido/` | `ListarPedidos`, `ConsultarPedido` | — |
+| Ordens de serviço | `/servicos/os/` | `ListarOS`, `ConsultarOS` | — |
 
-O script rejeita qualquer método que não seja a listagem ou consulta associada ao
-serviço.
+O script rejeita qualquer método fora desta allowlist. Métodos `Upsert`, operações
+de boleto/PIX, faturamento e emissões fiscais não são expostos.
 
-## Módulos analisados e expansão
+## Módulos não expostos
 
-O catálogo oficial também oferece CRM, contas correntes, boletos e PIX, compras,
+O catálogo oficial também oferece CRM, boletos e PIX, compras,
 estoque e produção, pedidos e faturamento, documentos fiscais, NF-e, serviços, NFS-e
-e painel do contador. Eles não foram expostos nesta primeira versão porque misturam
+e painel do contador. Eles não foram expostos porque misturam
 contratos extensos com efeitos financeiros, fiscais ou de comunicação externa.
 
 Para acrescentar uma capacidade:

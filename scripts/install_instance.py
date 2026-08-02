@@ -308,6 +308,24 @@ max_pages = 200
 max_duration_seconds = 3600
 max_frames = 100
 
+[processors.transcription]
+enabled = false
+backend = "cli"
+auto_start = false
+python_executable = ""
+project_dir = ""
+endpoint = "http://127.0.0.1:8870"
+timeout_seconds = 120
+language = "pt-BR"
+profile = ""
+model = "medium"
+device = "cpu"
+compute_type = "int8"
+prompt = ""
+terms = []
+aliases = []
+minimum_confidence = 0.55
+
 [webhook]
 public_url = ""
 secret_credential_ref = {_toml_string(webhook_ref)}
