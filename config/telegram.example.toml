@@ -50,6 +50,7 @@ auto_start = false
 python_executable = ""
 project_dir = ""
 endpoint = "http://127.0.0.1:8870"
+allow_remote = false
 timeout_seconds = 120
 language = "pt-BR"
 profile = ""

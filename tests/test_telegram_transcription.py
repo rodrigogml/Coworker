@@ -9,7 +9,10 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from interfaces.telegram.config import ProcessorConfig, TranscriptionConfig
+from interfaces.telegram.config import TelegramConfigError, _transcription_config
 from interfaces.telegram.contracts import Attachment, InboundMessage
 from interfaces.telegram.gateway import build_structured_prompt
 from interfaces.telegram.identity import InstanceIdentity
@@ -27,6 +30,18 @@ IDENTITY = InstanceIdentity(
 
 def _processor_config(transcription: TranscriptionConfig) -> ProcessorConfig:
     return ProcessorConfig(1000, 10, 1000, 10, 60, 5, transcription)
+
+
+def test_remote_endpoint_requiresExplicitHttpsOptIn() -> None:
+    with pytest.raises(TelegramConfigError):
+        _transcription_config({"transcription": {"endpoint": "https://speech.example.com:8870"}})
+
+    configured = _transcription_config(
+        {"transcription": {"endpoint": "https://speech.example.com:8870", "allow_remote": True}}
+    )
+
+    assert configured.allow_remote is True
+    assert configured.endpoint == "https://speech.example.com:8870"
 
 
 def test_eccovoxClient_shouldInvokeCliWithoutShellAndParseResult(tmp_path: Path) -> None:

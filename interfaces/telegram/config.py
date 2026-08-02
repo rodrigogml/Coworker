@@ -64,6 +64,7 @@ class TranscriptionConfig:
     python_executable: Path | None = None
     project_dir: Path | None = None
     endpoint: str = "http://127.0.0.1:8870"
+    allow_remote: bool = False
     timeout_seconds: int = 120
     language: str = "pt-BR"
     profile: str | None = None
@@ -178,17 +179,28 @@ def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
     raw_project_dir = str(raw.get("project_dir", "")).strip()
     project_dir = _resolve(raw_project_dir, PROJECT_ROOT, allow_empty=True)
     endpoint = str(raw.get("endpoint", "http://127.0.0.1:8870")).strip()
+    allow_remote = raw.get("allow_remote", False)
+    if not isinstance(allow_remote, bool):
+        raise TelegramConfigError("'processors.transcription.allow_remote' deve ser true ou false.")
     parsed_endpoint = urlparse(endpoint)
+    local_hosts = {"127.0.0.1", "localhost", "::1"}
     if (
-        parsed_endpoint.scheme != "http"
-        or parsed_endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+        parsed_endpoint.scheme not in {"http", "https"}
+        or not parsed_endpoint.hostname
         or parsed_endpoint.username
         or parsed_endpoint.password
         or parsed_endpoint.path not in {"", "/"}
         or parsed_endpoint.query
         or parsed_endpoint.fragment
     ):
-        raise TelegramConfigError("A transcrição HTTP deve usar um endpoint local sem credenciais ou parâmetros.")
+        raise TelegramConfigError("O endpoint EccoVox deve ser HTTP(S), sem credenciais, caminho ou parâmetros.")
+    is_remote = parsed_endpoint.hostname not in local_hosts
+    if is_remote and not allow_remote:
+        raise TelegramConfigError("Defina allow_remote=true para enviar áudio a um EccoVox remoto.")
+    if is_remote and parsed_endpoint.scheme != "https":
+        raise TelegramConfigError("Um EccoVox remoto deve usar HTTPS para proteger o áudio em trânsito.")
+    if is_remote and auto_start:
+        raise TelegramConfigError("auto_start não pode iniciar um EccoVox em outra máquina.")
     timeout_seconds = int(raw.get("timeout_seconds", 120))
     minimum_confidence = float(raw.get("minimum_confidence", 0.55))
     if not 5 <= timeout_seconds <= 1800:
@@ -223,6 +235,7 @@ def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
         python_executable=executable,
         project_dir=project_dir,
         endpoint=endpoint.rstrip("/"),
+        allow_remote=allow_remote,
         timeout_seconds=timeout_seconds,
         language=language,
         profile=profile,
