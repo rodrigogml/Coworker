@@ -315,6 +315,7 @@ auto_start = false
 python_executable = ""
 project_dir = ""
 endpoint = "http://127.0.0.1:8870"
+allow_remote = false
 timeout_seconds = 120
 language = "pt-BR"
 profile = ""
@@ -349,6 +350,137 @@ def _save_codex_values(instance_id: str, values: dict[str, Any]) -> None:
     else:
         updated = current.rstrip() + "\n\n" + replacement
     _replace_config(TELEGRAM_CONFIG, updated)
+
+
+def _load_transcription_values() -> dict[str, Any]:
+    defaults: dict[str, Any] = {
+        "enabled": False,
+        "backend": "http",
+        "auto_start": False,
+        "python_executable": "C:/opt/EccoVox/.venv/Scripts/python.exe",
+        "project_dir": "C:/opt/EccoVox",
+        "endpoint": "http://127.0.0.1:8870",
+        "allow_remote": False,
+        "timeout_seconds": 120,
+        "language": "pt-BR",
+        "profile": "",
+        "model": "medium",
+        "device": "cuda",
+        "compute_type": "int8_float16",
+        "prompt": "Transcrição fiel em português do Brasil.",
+        "terms": [],
+        "aliases": [],
+        "minimum_confidence": 0.55,
+    }
+    if not TELEGRAM_CONFIG.is_file():
+        return defaults
+    with TELEGRAM_CONFIG.open("rb") as stream:
+        root = tomllib.load(stream)
+    processors = root.get("processors", {})
+    transcription = processors.get("transcription", {}) if isinstance(processors, dict) else {}
+    if isinstance(transcription, dict):
+        for key in defaults:
+            if key in transcription:
+                defaults[key] = transcription[key]
+    return defaults
+
+
+def _save_transcription_values(instance_id: str, values: dict[str, Any]) -> None:
+    block = f'''[processors.transcription]
+enabled = {str(bool(values['enabled'])).lower()}
+backend = {_toml_string(str(values['backend']))}
+auto_start = {str(bool(values['auto_start'])).lower()}
+python_executable = {_toml_string(str(values['python_executable']))}
+project_dir = {_toml_string(str(values['project_dir']))}
+endpoint = {_toml_string(str(values['endpoint']))}
+allow_remote = {str(bool(values['allow_remote'])).lower()}
+timeout_seconds = {int(values['timeout_seconds'])}
+language = {_toml_string(str(values['language']))}
+profile = {_toml_string(str(values['profile']))}
+model = {_toml_string(str(values['model']))}
+device = {_toml_string(str(values['device']))}
+compute_type = {_toml_string(str(values['compute_type']))}
+prompt = {_toml_string(str(values['prompt']))}
+terms = {_toml_array([str(value) for value in values['terms']])}
+aliases = {_toml_array([str(value) for value in values['aliases']])}
+minimum_confidence = {float(values['minimum_confidence']):.2f}
+'''
+    if not TELEGRAM_CONFIG.is_file():
+        _write_new(TELEGRAM_CONFIG, _telegram_content(instance_id))
+    current = TELEGRAM_CONFIG.read_text(encoding="utf-8")
+    pattern = re.compile(r"(?ms)^\[processors\.transcription\]\n.*?(?=^\[[^]]+\]\n|\Z)")
+    updated = pattern.sub(lambda _match: block + "\n", current, count=1)
+    if updated == current:
+        updated = current.rstrip() + "\n\n" + block
+    _replace_config(TELEGRAM_CONFIG, updated)
+
+
+def configure_transcription(instance_id: str) -> None:
+    values = _load_transcription_values()
+    changed = False
+    while True:
+        print("\nTranscrição EccoVox")
+        print(f"  Estado: {'ATIVA' if values['enabled'] else 'DESATIVADA'}")
+        print(f"  Endpoint: {values['endpoint']}")
+        print(f"  Remoto permitido: {'sim' if values['allow_remote'] else 'não'}")
+        print(f"  Início pelo gateway: {'sim' if values['auto_start'] else 'não'}")
+        print(f"  Projeto local: {values['project_dir']}")
+        print(f"  Modelo: {values['model']} / {values['device']} / {values['compute_type']}")
+        print("  1. Ativar/desativar")
+        print("  2. Definir host, porta e transporte")
+        print("  3. Permitir/bloquear servidor remoto")
+        print("  4. Iniciar localmente pelo gateway")
+        print("  5. Definir instalação local")
+        print("  6. Definir modelo e execução")
+        print("  0. Salvar e voltar")
+        answer = input("Escolha uma opção: ").strip()
+        if answer in {"", "0"}:
+            break
+        if answer == "1":
+            values["enabled"] = not bool(values["enabled"])
+            changed = True
+        elif answer == "2":
+            from urllib.parse import urlparse
+            current = urlparse(str(values["endpoint"]))
+            host = _ask("Host do EccoVox", current.hostname or "127.0.0.1")
+            port = _ask("Porta", str(current.port or 8870))
+            scheme = _ask("Transporte (http ou https)", current.scheme or "http").casefold()
+            if scheme not in {"http", "https"} or not port.isdigit() or not 1 <= int(port) <= 65535:
+                print("Transporte ou porta inválidos.")
+                continue
+            values["endpoint"] = f"{scheme}://{host}:{int(port)}"
+            changed = True
+        elif answer == "3":
+            allow = _yes_no("Permitir envio de áudio a um host remoto", default=False)
+            if allow and not _yes_no("Confirmar que o endpoint remoto usa HTTPS e é confiável", default=False):
+                print("Alteração cancelada.")
+                continue
+            values["allow_remote"] = allow
+            if allow:
+                values["auto_start"] = False
+            changed = True
+        elif answer == "4":
+            values["auto_start"] = _yes_no("Gateway deve iniciar o EccoVox local", default=False)
+            changed = True
+        elif answer == "5":
+            project = _ask("Pasta do EccoVox", str(values["project_dir"]))
+            values["project_dir"] = project
+            values["python_executable"] = str(Path(project) / ".venv" / "Scripts" / "python.exe")
+            changed = True
+        elif answer == "6":
+            values["model"] = _ask("Modelo faster-whisper", str(values["model"]))
+            values["device"] = _ask("Dispositivo (cpu ou cuda)", str(values["device"])).casefold()
+            values["compute_type"] = _ask("Compute type", str(values["compute_type"])).casefold()
+            changed = True
+        else:
+            print("Escolha uma opção válida.")
+    if changed:
+        _save_transcription_values(instance_id, values)
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from interfaces.telegram.config import load_config
+        load_config(TELEGRAM_CONFIG, require_codex=False)
+        print("Configuração de transcrição salva e validada.")
 
 
 def _secrets_content(
@@ -1536,6 +1668,7 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
         print("  4. Telegram, token e pareamento")
         print("  5. Memória local")
         print("  6. Gerenciar gateway Telegram")
+        print("  7. Transcrição local/remota com EccoVox")
         print("  9. Sair do configurador")
         answer = input("Escolha uma seção: ").strip()
         try:
@@ -1587,6 +1720,10 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
                 )
             elif answer == "6":
                 manage_gateway(instance_id)
+            elif answer == "7":
+                if not TELEGRAM_CONFIG.is_file():
+                    _write_new(TELEGRAM_CONFIG, _telegram_content(instance_id))
+                configure_transcription(instance_id)
             elif answer == "9":
                 break
             else:
