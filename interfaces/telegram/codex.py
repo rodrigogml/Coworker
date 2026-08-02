@@ -36,6 +36,15 @@ class CodexResult:
 
 
 @dataclass(frozen=True)
+class CodexProgress:
+    """Atualização segura e destinada à pessoa usuária durante um turno."""
+
+    kind: str
+    text: str
+    completed: bool = False
+
+
+@dataclass(frozen=True)
 class CodexOptions:
     model: str | None = None
     reasoning_effort: str | None = None
@@ -478,16 +487,17 @@ class CodexAdapter:
         output_schema: Path | None = None,
         job_output: Path | None = None,
         options: CodexOptions | None = None,
+        on_progress: Callable[[CodexProgress], None] | None = None,
     ) -> CodexResult:
         effective_options = options or CodexOptions()
         if self.config.backend == "app-server":
             return self._run_app_server(
                 chat_id, prompt, thread_id, images, on_started, output_schema, job_output,
-                effective_options,
+                effective_options, on_progress,
             )
         return self._run_exec(
             chat_id, prompt, thread_id, images, on_started, output_schema, job_output,
-            effective_options,
+            effective_options, on_progress,
         )
 
     def _run_exec(
@@ -500,6 +510,7 @@ class CodexAdapter:
         output_schema: Path | None,
         job_output: Path | None,
         options: CodexOptions,
+        on_progress: Callable[[CodexProgress], None] | None,
     ) -> CodexResult:
         command = self.build_command(thread_id, images, output_schema, options)
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -579,13 +590,27 @@ class CodexAdapter:
                 if event.get("type") == "thread.started" and event.get("thread_id"):
                     discovered_thread = str(event["thread_id"])
                 item = event.get("item")
+                if event.get("type") == "item.started" and isinstance(item, dict):
+                    self._emit_item_progress(item, on_progress)
                 if (
                     event.get("type") == "item.completed"
                     and isinstance(item, dict)
                     and item.get("type") == "agent_message"
                     and item.get("text")
                 ):
-                    final_messages.append(str(item["text"]))
+                    phase = str(item.get("phase") or "")
+                    if phase == "commentary":
+                        self._emit_progress(
+                            on_progress,
+                            CodexProgress("commentary", str(item["text"]), True),
+                        )
+                    elif phase != "reasoning":
+                        final_messages.append(str(item["text"]))
+                if event.get("type") == "turn.plan.updated":
+                    self._emit_progress(
+                        on_progress,
+                        CodexProgress("milestone", "Atualizando o plano de trabalho."),
+                    )
             return_code = process.wait(timeout=5)
         finally:
             self.registry.unregister(chat_id, process)
@@ -705,6 +730,7 @@ class CodexAdapter:
         output_schema: Path | None,
         job_output: Path | None,
         options: CodexOptions,
+        on_progress: Callable[[CodexProgress], None] | None,
     ) -> CodexResult:
         process, responses = self._start_app_server(
             "coworker-codex-turn", job_output, chat_id, options
@@ -715,6 +741,8 @@ class CodexAdapter:
         discovered_thread = thread_id
         turn_id: str | None = None
         final_messages: list[str] = []
+        agent_phases: dict[str, str] = {}
+        agent_buffers: dict[str, str] = {}
         status = "failed"
         try:
             if on_started:
@@ -806,10 +834,42 @@ class CodexAdapter:
                     continue
                 method_name = message.get("method")
                 params_value = message.get("params")
+                if method_name == "item/started" and isinstance(params_value, dict):
+                    item = params_value.get("item")
+                    if isinstance(item, dict):
+                        if item.get("type") == "agentMessage" and item.get("id"):
+                            item_id = str(item["id"])
+                            agent_phases[item_id] = str(item.get("phase") or "")
+                            agent_buffers[item_id] = str(item.get("text") or "")
+                        else:
+                            self._emit_item_progress(item, on_progress)
+                if method_name == "item/agentMessage/delta" and isinstance(params_value, dict):
+                    item_id = str(params_value.get("itemId") or "")
+                    delta = params_value.get("delta")
+                    if item_id and isinstance(delta, str):
+                        agent_buffers[item_id] = agent_buffers.get(item_id, "") + delta
+                        if agent_phases.get(item_id) == "commentary":
+                            self._emit_progress(
+                                on_progress,
+                                CodexProgress("commentary", agent_buffers[item_id]),
+                            )
                 if method_name == "item/completed" and isinstance(params_value, dict):
                     item = params_value.get("item")
                     if isinstance(item, dict) and item.get("type") == "agentMessage" and item.get("text"):
-                        final_messages.append(str(item["text"]))
+                        item_id = str(item.get("id") or "")
+                        phase = str(item.get("phase") or agent_phases.get(item_id) or "")
+                        text = str(item["text"])
+                        if phase == "commentary":
+                            self._emit_progress(
+                                on_progress, CodexProgress("commentary", text, True)
+                            )
+                        elif phase != "reasoning":
+                            final_messages.append(text)
+                if method_name == "turn/plan/updated":
+                    self._emit_progress(
+                        on_progress,
+                        CodexProgress("milestone", "Atualizando o plano de trabalho."),
+                    )
                 if method_name == "turn/completed" and isinstance(params_value, dict):
                     completed = params_value.get("turn")
                     status = str(completed.get("status", "failed")) if isinstance(completed, dict) else "failed"
@@ -822,6 +882,47 @@ class CodexAdapter:
         if status != "completed" or not final_messages:
             raise CodexExecutionError("O App Server não concluiu com uma resposta final.")
         return CodexResult(discovered_thread, final_messages[-1], turn_id, status)
+
+    @staticmethod
+    def _emit_progress(
+        callback: Callable[[CodexProgress], None] | None,
+        progress: CodexProgress,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(progress)
+        except Exception:
+            # A telemetria visual nunca deve interromper o trabalho principal.
+            return
+
+    def _emit_item_progress(
+        self,
+        item: dict[str, Any],
+        callback: Callable[[CodexProgress], None] | None,
+    ) -> None:
+        item_type = str(item.get("type") or "")
+        descriptions = {
+            "commandExecution": "Executando uma ferramenta local.",
+            "command_execution": "Executando uma ferramenta local.",
+            "fileChange": "Preparando alterações em arquivos.",
+            "file_change": "Preparando alterações em arquivos.",
+            "mcpToolCall": "Consultando uma integração.",
+            "mcp_tool_call": "Consultando uma integração.",
+            "dynamicToolCall": "Executando uma capacidade especializada.",
+            "dynamic_tool_call": "Executando uma capacidade especializada.",
+            "webSearch": "Pesquisando informações.",
+            "web_search": "Pesquisando informações.",
+            "imageView": "Analisando uma imagem.",
+            "image_view": "Analisando uma imagem.",
+            "contextCompaction": "Organizando o contexto da conversa.",
+            "context_compaction": "Organizando o contexto da conversa.",
+            "collabToolCall": "Coordenando uma etapa auxiliar.",
+            "collab_tool_call": "Coordenando uma etapa auxiliar.",
+        }
+        description = descriptions.get(item_type)
+        if description:
+            self._emit_progress(callback, CodexProgress("milestone", description))
 
     def _app_server_sandbox(self) -> dict[str, Any]:
         if self.config.access_mode == "super":

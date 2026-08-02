@@ -22,6 +22,7 @@ from interfaces.telegram.codex import (
     CodexCancelledError,
     CodexModel,
     CodexOptions,
+    CodexProgress,
     ProcessRegistry,
 )
 from interfaces.telegram.credential_broker import (
@@ -68,7 +69,7 @@ TEST_IDENTITY = InstanceIdentity(
 
 
 class StructuredStateTests(unittest.TestCase):
-    def test_database_created_with_001_is_upgraded_by_002(self) -> None:
+    def test_database_created_with_001_receives_all_later_migrations(self) -> None:
         import interfaces.telegram.state as state_module
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -88,15 +89,15 @@ class StructuredStateTests(unittest.TestCase):
                 }
                 columns = {
                     row[1]
-                    for row in state.connection.execute("PRAGMA table_info(messages)")
+                    for row in state.connection.execute("PRAGMA table_info(codex_preferences)")
                 }
             finally:
                 state.close()
 
         self.assertIn("001_initial.sql", versions)
         self.assertIn("002_structured_delivery.sql", versions)
-        self.assertIn("reply_to_message_id", columns)
-        self.assertIn("turn_id", columns)
+        self.assertIn("004_progress_preferences.sql", versions)
+        self.assertIn("progress_mode", columns)
 
     def test_sent_message_id_and_reference_context_are_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -459,6 +460,97 @@ class AppServerBackendTests(unittest.TestCase):
         self.assertEqual(("max", "ultra"), models[0].supported_reasoning_efforts)
         self.assertTrue(models[0].supports_fast)
 
+    def test_app_server_streams_only_commentary_and_sanitized_milestones(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = self._adapter(root)
+            process = SimpleNamespace(pid=123)
+            events: queue.Queue[str | None] = queue.Queue()
+            for event in (
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {
+                            "id": "comment-1",
+                            "type": "agentMessage",
+                            "phase": "commentary",
+                            "text": "",
+                        }
+                    },
+                },
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {"itemId": "comment-1", "delta": "Verificando agora."},
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "comment-1",
+                            "type": "agentMessage",
+                            "phase": "commentary",
+                            "text": "Verificando agora.",
+                        }
+                    },
+                },
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "programa --token SEGREDO",
+                        }
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "reason-1",
+                            "type": "reasoning",
+                            "content": "raciocínio privado",
+                        }
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": "final-1",
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": '{"text":"ok","artifacts":[]}',
+                        }
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                },
+            ):
+                events.put(json.dumps(event))
+            progress: list[CodexProgress] = []
+            with (
+                patch.object(adapter, "_start_app_server", return_value=(process, events)),
+                patch.object(adapter, "_initialize_app_server"),
+                patch.object(
+                    adapter,
+                    "_wait_app_server_response",
+                    side_effect=[{"thread": {"id": "thread-1"}}, {"turn": {"id": "turn-1"}}],
+                ),
+                patch.object(adapter, "_send_app_server_message"),
+                patch.object(adapter, "_stop_process"),
+            ):
+                result = adapter.run(10, "pedido", None, [], on_progress=progress.append)
+
+        combined = " ".join(item.text for item in progress)
+        self.assertEqual('{"text":"ok","artifacts":[]}', result.final_message)
+        self.assertIn("Verificando agora.", combined)
+        self.assertIn("Executando uma ferramenta local.", combined)
+        self.assertNotIn("SEGREDO", combined)
+        self.assertNotIn("raciocínio privado", combined)
+
     def test_job_environment_exposes_only_broker_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -495,6 +587,7 @@ class _FakeTelegramApi:
         self.typing: list[int] = []
         self.edited: list[tuple[int, int, str, dict | None]] = []
         self.callbacks: list[tuple[str, str | None, bool]] = []
+        self.drafts: list[tuple[int, int, str]] = []
 
     def send_text(
         self, chat_id: int, text: str, *, reply_to_message_id: int | None = None,
@@ -520,6 +613,10 @@ class _FakeTelegramApi:
 
     def send_typing(self, chat_id: int) -> None:
         self.typing.append(chat_id)
+
+    def send_draft(self, chat_id: int, draft_id: int, text: str) -> bool:
+        self.drafts.append((chat_id, draft_id, text))
+        return True
 
     def set_profile(self, **_values):
         return True
@@ -576,6 +673,34 @@ class GatewayContextTests(unittest.TestCase):
 
         self.assertEqual((10, "Agora", 20), sent[0])
         self.assertEqual((10, "Fila", 21), sent[1])
+
+    def test_progress_mode_is_snapshotted_when_request_enters_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            gateway.state.set_codex_preference(10, "progress_mode", "compact")
+            gateway._handle_update(
+                1,
+                {
+                    "message": {
+                        "message_id": 20,
+                        "chat": {"id": 10, "type": "private"},
+                        "from": {"id": 10},
+                        "text": "pedido",
+                    }
+                },
+            )
+            queued = gateway.work.get_nowait()
+            gateway.state.set_codex_preference(10, "progress_mode", "off")
+            gateway.close()
+
+        self.assertIsNotNone(queued)
+        self.assertEqual("compact", queued.progress_mode)
 
     def test_typing_is_renewed_until_work_stops(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -667,6 +792,39 @@ class GatewayContextTests(unittest.TestCase):
         self.assertEqual("standard", preferences.speed)
         self.assertEqual(("callback-1", None, False), callbacks[0])
         self.assertEqual((10, 20), edited[0][:2])
+
+    def test_progress_command_and_callback_persist_validated_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gateway = self._gateway(Path(temporary))
+            gateway.state.update_seen(1)
+            gateway._handle_codex_command(1, 10, "/progress", "compact")
+            self.assertEqual("compact", gateway.state.codex_preferences(10).progress_mode)
+
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            gateway._handle_update(
+                2,
+                {
+                    "callback_query": {
+                        "id": "callback-progress",
+                        "from": {"id": 10},
+                        "data": "cx:ps:detailed",
+                        "message": {
+                            "message_id": 20,
+                            "date": int(time.time()),
+                            "chat": {"id": 10, "type": "private"},
+                        },
+                    }
+                },
+            )
+            mode = gateway.state.codex_preferences(10).progress_mode
+            gateway.close()
+
+        self.assertEqual("detailed", mode)
 
     def test_expired_callback_does_not_change_preferences(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

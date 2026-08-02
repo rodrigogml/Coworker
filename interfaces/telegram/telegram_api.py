@@ -216,6 +216,23 @@ class TelegramApi:
             receipts.append(_receipt(result))
         return receipts
 
+    def send_draft(self, chat_id: int, draft_id: int, text: str) -> bool:
+        """Publica uma prévia efêmera; o mesmo identificador anima as atualizações."""
+        if not draft_id:
+            raise TelegramApiError("O identificador do draft deve ser diferente de zero.")
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+        }
+        if text:
+            chunks = telegram_html_chunks(text)
+            if len(chunks) != 1:
+                raise TelegramApiError("O progresso excedeu o tamanho permitido pelo Telegram.")
+            payload.update({"text": chunks[0], "parse_mode": "HTML"})
+        else:
+            payload["text"] = ""
+        return bool(self.call("sendMessageDraft", payload))
+
     def edit_text(
         self,
         chat_id: int,

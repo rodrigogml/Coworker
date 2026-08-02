@@ -169,6 +169,8 @@ raiz de confiança da instalação.
 - `/reasoning [NÍVEL|default]`: lista ou seleciona somente esforços compatíveis;
 - `/speed [standard|fast]`: consulta ou altera a velocidade; Fast exige confirmação;
 - `/verbosity [low|medium|high|default]`: controla o detalhamento da resposta;
+- `/progress [off|compact|detailed]`: controla as atualizações provisórias durante
+  o processamento;
 - `/codex diagnose`: verifica CLI, autenticação, App Server e catálogo de modelos;
 - `/codex reset`: restaura os padrões da instância após confirmação;
 - `/status`: abre o painel de sessão e fila, com atualização, cancelamento, nova
@@ -191,7 +193,15 @@ ativas após `/new`. A precedência é preferência do Telegram, padrão em
 `data/config/telegram.toml` e, por fim, padrão do Codex. `/codex reset` remove somente
 as preferências do Telegram.
 
-Modelo, reasoning, velocidade e verbosity são parâmetros de inferência. Sandbox,
+O painel de progresso oferece três modos. `off` mantém somente o indicador de
+digitação e a resposta final; `compact` transmite marcos operacionais sanitizados;
+`detailed` também transmite mensagens `commentary` destinadas à pessoa usuária e
+mantém um resumo das etapas ao concluir. Instalações existentes permanecem em `off`
+até uma escolha explícita. A preferência é fotografada quando a solicitação entra na
+fila e não altera trabalhos já enfileirados.
+
+Modelo, reasoning, velocidade e verbosity são parâmetros de inferência; progresso é
+uma preferência de apresentação da interface. Sandbox,
 rede, política de aprovação, diretórios graváveis, backend e modo super permanecem
 somente no configurador local e não podem ser alterados por callback ou comando do
 Telegram. O backend `exec` recebe opções tipadas por `--config`; o App Server recebe
@@ -245,10 +255,20 @@ thread e turn são persistidos no SQLite.
 
 No backend `exec`, o gateway usa `codex exec --json` e `codex exec resume`. No backend
 `app-server`, inicia um transporte stdio, faz `initialize`/`initialized`, cria ou retoma
-a thread, usa `localImage` para imagens e encerra somente em `turn/completed`. Apenas o
-`agentMessage` final é publicado; raciocínio, logs, comandos e saída de ferramentas não
-são retransmitidos. `/cancel` termina o processo `exec` ou envia `turn/interrupt` ao
-App Server.
+a thread, usa `localImage` para imagens e encerra somente em `turn/completed`. O App
+Server fornece deltas de `agentMessage` classificados como `commentary` ou
+`final_answer`. Somente `commentary` pode alimentar o progresso detalhado; itens de
+ferramentas são convertidos em descrições neutras. Eventos `reasoning`, argumentos,
+comandos, caminhos, logs e saída bruta nunca são retransmitidos. O backend `exec`
+oferece os mesmos marcos quando o evento JSONL correspondente estiver disponível, mas
+pode não fornecer deltas de texto com a mesma granularidade.
+
+O transporte principal usa `sendMessageDraft`, com um identificador estável por job,
+para exibir uma prévia efêmera marcada explicitamente como não final. As atualizações
+de texto são limitadas para evitar uma chamada por token. Se o método não estiver
+disponível, o gateway cria uma única mensagem de progresso e passa a editá-la. Ao
+concluir, o draft é removido e a resposta final continua sendo enviada separadamente.
+`/cancel` termina o processo `exec` ou envia `turn/interrupt` ao App Server.
 
 ## Trabalhos e artefatos
 

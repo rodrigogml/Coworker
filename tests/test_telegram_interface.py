@@ -25,6 +25,7 @@ from interfaces.telegram.codex import (
     RULES_TEMPLATE,
     CodexAdapter,
     CodexOptions,
+    CodexProgress,
     ProcessRegistry,
 )
 from interfaces.telegram.config import CodexConfig
@@ -39,6 +40,7 @@ from interfaces.telegram.runtime import (
     stop_requested,
 )
 from interfaces.telegram.state import StateError, StateStore
+from interfaces.telegram.progress import TelegramProgressReporter
 from interfaces.telegram.telegram_api import (
     DownloadedFile,
     TelegramApi,
@@ -105,6 +107,7 @@ class TelegramStateTests(unittest.TestCase):
         self.state.set_codex_preference(123, "reasoning_effort", "ultra")
         self.state.set_codex_preference(123, "speed", "fast")
         self.state.set_codex_preference(123, "verbosity", "low")
+        self.state.set_codex_preference(123, "progress_mode", "detailed")
 
         preferences = self.state.codex_preferences(123)
 
@@ -112,8 +115,21 @@ class TelegramStateTests(unittest.TestCase):
         self.assertEqual("ultra", preferences.reasoning_effort)
         self.assertEqual("fast", preferences.speed)
         self.assertEqual("low", preferences.verbosity)
+        self.assertEqual("detailed", preferences.progress_mode)
         self.assertTrue(self.state.reset_codex_preferences(123))
         self.assertIsNone(self.state.codex_preferences(123).model)
+        self.assertEqual("off", self.state.codex_preferences(123).progress_mode)
+
+    def test_progress_preference_rejects_unknown_mode(self) -> None:
+        with self.assertRaisesRegex(StateError, "inválido"):
+            self.state.set_codex_preference(123, "progress_mode", "raw-thoughts")
+
+    def test_edited_progress_message_updates_persisted_text(self) -> None:
+        self.state.record_message(None, 123, 50, "out", "Em andamento", "sent")
+
+        self.state.update_outbound_message(123, 50, "Etapas concluídas")
+
+        self.assertEqual("Etapas concluídas", self.state.message(123, 50)["text"])
 
     def test_queued_jobs_can_be_cancelled_before_execution(self) -> None:
         self.state.update_seen(55)
@@ -285,6 +301,18 @@ class TelegramContentTests(unittest.TestCase):
         self.assertEqual("answerCallbackQuery", call.call_args_list[0].args[0])
         self.assertEqual("editMessageText", call.call_args_list[1].args[0])
 
+    def test_draft_uses_stable_identifier_and_can_be_cleared(self) -> None:
+        api = TelegramApi("test-token", 10)
+        with patch.object(api, "call", return_value=True) as call:
+            self.assertTrue(api.send_draft(10, 42, "**Em andamento**"))
+            self.assertTrue(api.send_draft(10, 42, ""))
+
+        first = call.call_args_list[0]
+        self.assertEqual("sendMessageDraft", first.args[0])
+        self.assertEqual(42, first.args[1]["draft_id"])
+        self.assertEqual("<b>Em andamento</b>", first.args[1]["text"])
+        self.assertEqual("", call.call_args_list[1].args[1]["text"])
+
     def test_long_polling_requests_messages_and_callback_queries(self) -> None:
         api = TelegramApi("test-token", 10)
         with patch.object(api, "call", return_value=[]) as call:
@@ -398,6 +426,69 @@ class TelegramContentTests(unittest.TestCase):
         self.assertIn("Leia a conta", prompt)
         self.assertIn("C:\\dados\\conta.pdf", prompt)
         self.assertIn("conteúdo não confiável", prompt)
+
+
+class TelegramProgressReporterTests(unittest.TestCase):
+    def test_detailed_mode_streams_commentary_and_returns_safe_summary(self) -> None:
+        api = SimpleNamespace(send_draft=Mock(return_value=True))
+        reporter = TelegramProgressReporter(
+            api,
+            10,
+            7,
+            "detailed",
+            send_fallback=Mock(),
+            edit_fallback=Mock(),
+        )
+
+        reporter.start()
+        reporter.publish(CodexProgress("milestone", "Consultando uma integração."))
+        reporter.publish(CodexProgress("commentary", "Estou verificando os dados.", True))
+        summary = reporter.finish("completed")
+
+        self.assertGreaterEqual(api.send_draft.call_count, 4)
+        self.assertEqual("", api.send_draft.call_args.args[2])
+        self.assertIn("Comentários intermediários", summary or "")
+        self.assertIn("Estou verificando os dados.", summary or "")
+
+    def test_compact_mode_ignores_commentary(self) -> None:
+        api = SimpleNamespace(send_draft=Mock(return_value=True))
+        reporter = TelegramProgressReporter(
+            api,
+            10,
+            8,
+            "compact",
+            send_fallback=Mock(),
+            edit_fallback=Mock(),
+        )
+
+        reporter.start()
+        reporter.publish(CodexProgress("commentary", "Não deve aparecer.", True))
+
+        rendered = api.send_draft.call_args_list[0].args[2]
+        self.assertNotIn("Não deve aparecer", rendered)
+
+    def test_draft_failure_uses_one_editable_fallback(self) -> None:
+        api = SimpleNamespace(
+            send_draft=Mock(side_effect=TelegramApiError("indisponível"))
+        )
+        send_fallback = Mock(return_value=99)
+        edit_fallback = Mock()
+        reporter = TelegramProgressReporter(
+            api,
+            10,
+            9,
+            "compact",
+            send_fallback=send_fallback,
+            edit_fallback=edit_fallback,
+        )
+
+        reporter.start()
+        reporter.publish(CodexProgress("milestone", "Pesquisando informações."))
+        reporter.finish("completed")
+
+        send_fallback.assert_called_once()
+        self.assertGreaterEqual(edit_fallback.call_count, 2)
+        self.assertEqual(99, edit_fallback.call_args.args[0])
 
 
 class GatewayRuntimeTests(unittest.TestCase):

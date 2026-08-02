@@ -61,6 +61,7 @@ class CodexPreferences:
     reasoning_effort: str | None = None
     speed: str | None = None
     verbosity: str | None = None
+    progress_mode: str = "off"
 
 
 class StateStore:
@@ -287,7 +288,8 @@ class StateStore:
 
     def codex_preferences(self, chat_id: int) -> CodexPreferences:
         row = self.connection.execute(
-            "SELECT model,reasoning_effort,speed,verbosity FROM codex_preferences WHERE chat_id=?",
+            """SELECT model,reasoning_effort,speed,verbosity,progress_mode
+               FROM codex_preferences WHERE chat_id=?""",
             (chat_id,),
         ).fetchone()
         if not row:
@@ -299,6 +301,7 @@ class StateStore:
             ),
             speed=str(row["speed"]) if row["speed"] else None,
             verbosity=str(row["verbosity"]) if row["verbosity"] else None,
+            progress_mode=str(row["progress_mode"] or "off"),
         )
 
     def set_codex_preference(self, chat_id: int, field: str, value: str | None) -> None:
@@ -307,6 +310,7 @@ class StateStore:
             "reasoning_effort",
             "speed",
             "verbosity",
+            "progress_mode",
         }
         if field not in allowed:
             raise StateError("Campo de configuração do Codex inválido.")
@@ -500,6 +504,17 @@ class StateStore:
         self.connection.execute(
             "UPDATE messages SET thread_id=?,turn_id=? WHERE id=?",
             (thread_id, turn_id, message_record_id),
+        )
+        self.connection.commit()
+
+    def update_outbound_message(self, chat_id: int, message_id: int, text: str) -> None:
+        """Mantém no SQLite o conteúdo atual de uma mensagem editada pelo gateway."""
+        self.connection.execute(
+            """UPDATE messages SET text=?
+               WHERE id=(SELECT id FROM messages
+                         WHERE chat_id=? AND message_id=? AND direction='out'
+                         ORDER BY id DESC LIMIT 1)""",
+            (text, chat_id, message_id),
         )
         self.connection.commit()
 

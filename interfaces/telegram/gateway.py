@@ -61,6 +61,10 @@ from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
 )
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
+from interfaces.telegram.progress import (  # noqa: E402
+    PROGRESS_MODES,
+    TelegramProgressReporter,
+)
 from interfaces.telegram.runtime import (  # noqa: E402
     GatewayRuntimeError,
     cancel_restart,
@@ -95,6 +99,7 @@ BOT_COMMANDS = (
     ("reasoning", "Definir o nível de raciocínio"),
     ("speed", "Definir a velocidade"),
     ("verbosity", "Definir o tamanho das respostas"),
+    ("progress", "Configurar atualizações de progresso"),
     ("status", "Consultar a sessão e a fila"),
     ("usage", "Consultar a franquia do Codex"),
     ("cancel", "Interromper a execução atual"),
@@ -126,6 +131,7 @@ class WorkItem:
     messages: tuple[dict[str, Any], ...]
     message_record_ids: tuple[int, ...]
     codex_options: CodexOptions = CodexOptions()
+    progress_mode: str = "off"
 
 
 @dataclass
@@ -470,6 +476,10 @@ class Gateway:
             verbosity=preferences.verbosity or self.config.codex.verbosity,
         )
 
+    def _progress_mode(self, chat_id: int) -> str:
+        with self.state_lock:
+            return self.state.codex_preferences(chat_id).progress_mode
+
     def _model_for_options(
         self, models: tuple[CodexModel, ...], options: CodexOptions
     ) -> CodexModel | None:
@@ -496,12 +506,14 @@ class Gateway:
             f"Reasoning: {options.reasoning_effort or 'padrão do modelo'}\n"
             f"Velocidade: {options.speed}\n"
             f"Verbosity: {options.verbosity or 'padrão do modelo'}\n\n"
+            f"Progresso: {self._progress_mode(chat_id)}\n\n"
             "As alterações valem para as próximas solicitações."
         )
         keyboard = self._inline_keyboard(
             [
                 [("Modelo", "cx:model:0"), ("Reasoning", "cx:reasoning")],
                 [("Velocidade", "cx:speed"), ("Verbosity", "cx:verbosity")],
+                [("Progresso", "cx:progress")],
                 [("Diagnóstico", "cx:diagnose"), ("Restaurar", "cx:reset")],
             ]
         )
@@ -521,6 +533,7 @@ class Gateway:
             f"Modelo: {options.model or 'padrão do Codex'}\n"
             f"Reasoning: {options.reasoning_effort or 'padrão do modelo'}\n"
             f"Velocidade: {options.speed}\n"
+            f"Progresso: {self._progress_mode(chat_id)}\n"
             f"Trabalho: {(current or {}).get('id', 'nenhum')}\n"
             f"Em execução: {jobs['running']}\n"
             f"Na fila: {jobs['queued']}"
@@ -634,6 +647,32 @@ class Gateway:
         ]
         return (
             f"Verbosity atual: {current or 'padrão do modelo'}",
+            self._inline_keyboard(rows),
+        )
+
+    def _progress_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        current = self._progress_mode(chat_id)
+        labels = {
+            "off": "Desligado",
+            "compact": "Compacto",
+            "detailed": "Detalhado",
+        }
+        rows = [
+            [
+                (
+                    f"✓ {labels[value]}" if current == value else labels[value],
+                    f"cx:ps:{value}",
+                )
+                for value in PROGRESS_MODES
+            ],
+            [("Voltar", "cx:root")],
+        ]
+        return (
+            "Atualizações de progresso\n\n"
+            f"Modo atual: {labels[current]}\n\n"
+            "Compacto mostra somente marcos seguros. Detalhado também exibe "
+            "comentários intermediários do Codex. Raciocínio interno, comandos e "
+            "saídas brutas nunca são transmitidos.",
             self._inline_keyboard(rows),
         )
 
@@ -801,6 +840,15 @@ class Gateway:
                     chat_id, "verbosity", None if value == "default" else value
                 )
             text, keyboard = self._verbosity_panel(chat_id)
+        elif data == "cx:progress":
+            text, keyboard = self._progress_panel(chat_id)
+        elif data.startswith("cx:ps:"):
+            value = data.rsplit(":", 1)[1]
+            if value not in PROGRESS_MODES:
+                raise StateError("Modo de progresso inválido.")
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "progress_mode", value)
+            text, keyboard = self._progress_panel(chat_id)
         elif data == "cx:reset":
             text = "Restaurar todas as configurações do Codex para os padrões da instância?"
             keyboard = self._inline_keyboard(
@@ -970,6 +1018,7 @@ class Gateway:
                 (message,),
                 (message_record_id,),
                 self._codex_options(chat_id),
+                self._progress_mode(chat_id),
             )
         )
         self._send(
@@ -1273,6 +1322,7 @@ class Gateway:
                 buffer.job_id, inbound, tuple(buffer.messages),
                 tuple(buffer.message_record_ids),
                 self._codex_options(inbound.chat_id),
+                self._progress_mode(inbound.chat_id),
             )
         )
 
@@ -1366,7 +1416,7 @@ class Gateway:
         self, update_id: int, chat_id: int, command: str, argument: str,
         reply_context: ReplyContext | None,
     ) -> None:
-        if command in {"/settings", "/codex", "/model", "/reasoning", "/speed", "/verbosity"}:
+        if command in {"/settings", "/codex", "/model", "/reasoning", "/speed", "/verbosity", "/progress"}:
             try:
                 self._handle_codex_command(update_id, chat_id, command, argument)
             except (CodexExecutionError, StateError) as exc:
@@ -1613,6 +1663,22 @@ class Gateway:
             with self.state_lock:
                 self.state.set_codex_preference(chat_id, "verbosity", verbosity)
             self._send_settings(chat_id, update_id=update_id)
+            return
+        if command == "/progress":
+            if not value:
+                text, keyboard = self._progress_panel(chat_id)
+                self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+                return
+            if normalized not in PROGRESS_MODES:
+                self._send(
+                    chat_id,
+                    "Use /progress off, /progress compact ou /progress detailed.",
+                    update_id=update_id,
+                )
+                return
+            with self.state_lock:
+                self.state.set_codex_preference(chat_id, "progress_mode", normalized)
+            self._send_settings(chat_id, update_id=update_id)
 
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -1627,6 +1693,8 @@ class Gateway:
     def _execute(self, item: WorkItem) -> None:
         files: list[DownloadedFile] = []
         inbound = item.inbound
+        progress: TelegramProgressReporter | None = None
+        progress_finished = False
         typing_stop = threading.Event()
         typing_thread = threading.Thread(
             target=self._typing_loop,
@@ -1641,6 +1709,19 @@ class Gateway:
                 self.state.update_job(item.job_id, "running")
                 self.state.set_job_workspace(item.job_id, workspace.root)
                 thread_id = self.state.session(inbound.chat_id)
+            if item.progress_mode != "off":
+                progress = TelegramProgressReporter(
+                    self.api,
+                    inbound.chat_id,
+                    item.job_id,
+                    item.progress_mode,
+                    send_fallback=lambda text: self._send_progress_fallback(item, text),
+                    edit_fallback=lambda message_id, text: self._edit_progress_fallback(
+                        inbound.chat_id, message_id, text
+                    ),
+                    warn=self._progress_warning,
+                )
+                progress.start()
             attachment_specs = [
                 attachment for message in item.messages
                 for attachment in message_attachments(message)
@@ -1716,6 +1797,7 @@ class Gateway:
                 output_schema=workspace.schema_path,
                 job_output=workspace.output_dir,
                 options=item.codex_options,
+                on_progress=progress.publish if progress else None,
             )
             delivery = parse_delivery(
                 result.final_message, workspace, self.config.media.max_upload_bytes
@@ -1723,6 +1805,18 @@ class Gateway:
             delivery = CodexDelivery(
                 delivery.text, delivery.artifacts, result.thread_id, result.turn_id, result.status
             )
+            if progress:
+                summary = progress.finish("completed")
+                progress_finished = True
+                if summary:
+                    self._send(
+                        inbound.chat_id,
+                        summary,
+                        update_id=inbound.update_ids[0],
+                        reply_to_message_id=inbound.message_ids[0],
+                        thread_id=result.thread_id,
+                        turn_id=result.turn_id,
+                    )
             if result.thread_id:
                 with self.state_lock:
                     self.state.set_session(inbound.chat_id, result.thread_id)
@@ -1743,6 +1837,9 @@ class Gateway:
             with self.state_lock:
                 self.state.update_job(item.job_id, "completed")
         except CodexCancelledError as exc:
+            if progress and not progress_finished:
+                progress.finish("cancelled")
+                progress_finished = True
             with self.state_lock:
                 self.state.update_job(item.job_id, "cancelled", error=str(exc))
             try:
@@ -1750,6 +1847,9 @@ class Gateway:
             except TelegramApiError:
                 pass
         except (TelegramApiError, CodexExecutionError, WorkspaceError, ProcessorError, OSError) as exc:
+            if progress and not progress_finished:
+                progress.finish("failed")
+                progress_finished = True
             with self.state_lock:
                 self.state.update_job(item.job_id, "failed", error=str(exc))
             try:
@@ -1757,8 +1857,44 @@ class Gateway:
             except TelegramApiError:
                 pass
         finally:
+            if progress and not progress_finished:
+                progress.finish("failed")
             typing_stop.set()
             typing_thread.join(timeout=1)
+
+    def _send_progress_fallback(self, item: WorkItem, text: str) -> int | None:
+        inbound = item.inbound
+        receipts = self.api.send_text(
+            inbound.chat_id,
+            text,
+            reply_to_message_id=inbound.message_ids[0],
+        )
+        message_id: int | None = None
+        with self.state_lock:
+            for receipt in receipts:
+                telegram_message_id = receipt.message_id or None
+                message_id = message_id or telegram_message_id
+                self.state.record_message(
+                    inbound.update_ids[0],
+                    inbound.chat_id,
+                    telegram_message_id,
+                    "out",
+                    text,
+                    "sent",
+                    reply_to_message_id=inbound.message_ids[0],
+                    content_type="progress",
+                    job_id=item.job_id,
+                )
+        return message_id
+
+    def _edit_progress_fallback(self, chat_id: int, message_id: int, text: str) -> None:
+        self.api.edit_text(chat_id, message_id, text)
+        with self.state_lock:
+            self.state.update_outbound_message(chat_id, message_id, text)
+
+    @staticmethod
+    def _progress_warning(message: str) -> None:
+        print_json({"ok": False, "warning": message}, stream=sys.stderr)
 
     def _send_typing(self, chat_id: int) -> None:
         try:

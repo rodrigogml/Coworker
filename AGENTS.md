@@ -360,6 +360,14 @@ SQLite operacional. Essas preferências afetam solicitações futuras e não aut
 alterar backend, sandbox, rede, aprovações, diretórios, provedor ou modo super pelo
 Telegram. Nunca aceitar uma chave `--config` arbitrária recebida na conversa.
 
+Atualizações intermediárias podem ser configuradas por `/progress` nos modos `off`,
+`compact` e `detailed`. Usar `sendMessageDraft` como transporte efêmero principal e
+uma única mensagem editável como fallback. O modo compacto mostra somente marcos
+operacionais sanitizados; o detalhado pode acrescentar apenas mensagens
+`agentMessage` com fase `commentary`. Eventos ou blocos `reasoning`, argumentos,
+comandos, caminhos, logs e saída bruta de ferramentas nunca devem ser retransmitidos.
+Marcar todo progresso como provisório e enviar a resposta `final_answer` separadamente.
+
 Cada execução usa `data/telegram/jobs/<job-id>/`; somente arquivos validados dentro de
 `output/` podem ser transmitidos. Respostas e artefatos devem referenciar nativamente a
 solicitação, e os IDs devolvidos devem ser persistidos. Upload interrompido em estado
