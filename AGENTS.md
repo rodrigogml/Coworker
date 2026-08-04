@@ -441,6 +441,12 @@ autorização explícita e atual, `--profile` e envelope JSON validado. Não imp
 chamadas, métodos ou parâmetros diretamente contra a API. Upserts, boletos, PIX,
 faturamentos e emissões permanecem fora da allowlist.
 
+No Telegram restrito, uma criação simples em `account-entries` deve preparar o
+envelope por `python skills/omie/scripts/omie.py account-entries prepare`. O comando
+usa somente `COWORKER_JOB_DERIVED`, não acessa credenciais nem substitui a autorização
+da escrita. Consumir o caminho retornado com `create --input-file`, primeiro em
+`--dry-run`; não usar `apply_patch`, pipeline ou shell genérico para esse transporte.
+
 ### Todoist
 
 Para tarefas, projetos, seções e etiquetas do Todoist, usar

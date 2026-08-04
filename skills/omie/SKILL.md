@@ -67,6 +67,20 @@ Get-Content entrada.json -Raw | python skills/omie/scripts/omie.py `
   --profile EMPRESA payables create --input-stdin
 ```
 
+No gateway Telegram restrito, não usar `apply_patch`, pipeline ou shell para criar o
+envelope. Para uma criação simples de lançamento direto, executar o preparador fechado:
+
+```powershell
+python skills/omie/scripts/omie.py account-entries prepare `
+  --request-id telegram:omie:identificador-estavel `
+  --nature expense --account-id 123 --date 04/08/2026 --amount 150.00 `
+  --document-type DEB --category-code 2.01.01 --project-id 456
+```
+
+O comando não acessa credenciais nem a API. Ele cria exclusivamente dentro de
+`COWORKER_JOB_DERIVED`, não sobrescreve conteúdo e devolve o caminho a usar em
+`account-entries create --input-file CAMINHO`, primeiro com `--dry-run`.
+
 Usar o mesmo `request_id` ao retomar uma operação. Em lote, corrigir a falha e
 reenviar o mesmo envelope: a skill valida todos os itens antes da primeira escrita,
 executa em sequência e reconhece criações já existentes.

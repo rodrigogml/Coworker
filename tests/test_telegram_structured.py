@@ -551,7 +551,7 @@ class AppServerBackendTests(unittest.TestCase):
         self.assertNotIn("SEGREDO", combined)
         self.assertNotIn("raciocínio privado", combined)
 
-    def test_job_environment_exposes_only_broker_context(self) -> None:
+    def test_job_environment_exposes_only_broker_and_workspace_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             adapter = self._adapter(root)
@@ -560,6 +560,10 @@ class AppServerBackendTests(unittest.TestCase):
             environment = adapter._job_environment(output, 10)
 
         self.assertEqual(str(output), environment["COWORKER_JOB_OUTPUT"])
+        self.assertEqual(
+            str(output.parent / "derived"),
+            environment["COWORKER_JOB_DERIVED"],
+        )
         self.assertEqual("10", environment["COWORKER_CHAT_ID"])
 
     def test_app_server_interrupted_turn_is_reported_as_cancelled(self) -> None:

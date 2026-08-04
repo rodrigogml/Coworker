@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import tomllib
@@ -2082,6 +2083,114 @@ def account_entry_nature(value: Any, label: str = "data.nature") -> str:
     return str(value)
 
 
+def positive_identifier(value: Any, label: str) -> int:
+    """Valida identificadores numéricos usados no preparador local."""
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise OmieToolError(f"'{label}' deve ser um inteiro maior que zero.")
+    return value
+
+
+def job_derived_directory(
+    project_root: Path,
+    environment: Mapping[str, str],
+) -> Path:
+    """Resolve somente o diretório derivado fornecido pelo gateway atual."""
+    raw = str(environment.get("COWORKER_JOB_DERIVED", "")).strip()
+    if not raw:
+        raise OmieToolError(
+            "O preparador exige um trabalho ativo do gateway Telegram."
+        )
+    try:
+        project_data = (project_root / "data").resolve(strict=True)
+        derived = Path(raw).expanduser().resolve(strict=True)
+        derived.relative_to(project_data)
+    except (OSError, ValueError) as exc:
+        raise OmieToolError(
+            "O diretório derivado do trabalho não pertence a data/."
+        ) from exc
+    if not derived.is_dir() or derived.name.casefold() != "derived":
+        raise OmieToolError("O diretório derivado do trabalho é inválido.")
+    return derived
+
+
+def prepare_account_entry_envelope(
+    args: argparse.Namespace,
+    *,
+    project_root: Path = PROJECT_ROOT,
+    environment: Mapping[str, str] = os.environ,
+) -> dict[str, Any]:
+    """Cria sem sobrescrita um envelope fechado dentro do trabalho Telegram."""
+    request_id = request_identifier(args.request_id)
+    nature = account_entry_nature(args.nature, "--nature")
+    document_type = require_nonempty_string(
+        args.document_type, "--document-type", 5
+    )
+    if document_type not in ACCOUNT_ENTRY_DOCUMENT_TYPES:
+        raise OmieToolError("'--document-type' não pertence à allowlist.")
+    data: dict[str, Any] = {
+        "nature": nature,
+        "account": {"id": positive_identifier(args.account_id, "--account-id")},
+        "date": date_value(args.date, "--date"),
+        "amount": decimal_number(decimal_value(args.amount, "--amount")),
+        "document_type": document_type,
+        "category": {
+            "code": require_nonempty_string(
+                args.category_code, "--category-code", 20
+            )
+        },
+    }
+    for option, public_name in (
+        ("counterparty_id", "counterparty"),
+        ("project_id", "project"),
+    ):
+        value = getattr(args, option, None)
+        if value is not None:
+            data[public_name] = {
+                "id": positive_identifier(value, f"--{option.replace('_', '-')}")
+            }
+    for option, public_name, maximum in (
+        ("document_number", "document_number", 20),
+        ("observation", "observation", 5000),
+    ):
+        value = getattr(args, option, None)
+        if value is not None:
+            data[public_name] = require_nonempty_string(
+                value, f"--{option.replace('_', '-')}", maximum
+            )
+    document = {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id,
+        "data": data,
+    }
+    serialized = (
+        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    derived = job_derived_directory(project_root, environment)
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16]
+    destination = derived / f"omie-account-entry-{digest}.json"
+    if destination.exists():
+        if destination.is_symlink() or destination.read_bytes() != serialized:
+            raise OmieToolError(
+                "Já existe um envelope diferente para o mesmo request_id."
+            )
+        return {"ok": True, "created": False, "path": str(destination)}
+    try:
+        with destination.open("xb") as stream:
+            stream.write(serialized)
+    except FileExistsError as exc:
+        raise OmieToolError(
+            "O envelope foi criado concorrentemente; execute o preparador novamente."
+        ) from exc
+    except OSError as exc:
+        raise OmieToolError("Não foi possível criar o envelope do trabalho.") from exc
+    return {"ok": True, "created": True, "path": str(destination)}
+
+
+def execute_prepare_account_entry(args: argparse.Namespace) -> dict[str, Any]:
+    """Executa o preparador local sem autenticar ou acessar a API Omie."""
+    return prepare_account_entry_envelope(args)
+
+
 def validate_account_entry_category(
     item: Mapping[str, Any],
     nature: str,
@@ -2982,6 +3091,28 @@ def add_mutation_input(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(handler=execute_mutation)
 
 
+def add_account_entry_prepare(parser: argparse.ArgumentParser) -> None:
+    """Expõe somente os campos tipados do envelope direto inicial."""
+    parser.add_argument("--request-id", required=True)
+    parser.add_argument(
+        "--nature", required=True, choices=tuple(ACCOUNT_ENTRY_NATURES)
+    )
+    parser.add_argument("--account-id", required=True, type=int)
+    parser.add_argument("--date", required=True, type=validate_date)
+    parser.add_argument("--amount", required=True)
+    parser.add_argument(
+        "--document-type",
+        required=True,
+        choices=tuple(sorted(ACCOUNT_ENTRY_DOCUMENT_TYPES)),
+    )
+    parser.add_argument("--category-code", required=True)
+    parser.add_argument("--counterparty-id", type=int)
+    parser.add_argument("--project-id", type=int)
+    parser.add_argument("--document-number")
+    parser.add_argument("--observation")
+    parser.set_defaults(handler=execute_prepare_account_entry)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Constrói a CLI restrita aos contratos documentados da skill."""
     parser = argparse.ArgumentParser(
@@ -3000,6 +3131,12 @@ def build_parser() -> argparse.ArgumentParser:
         add_list_filters(list_command, name)
         show_command = operations.add_parser("show", help="Consulta um registro.")
         add_show_selectors(show_command, service)
+        if name == "account-entries":
+            prepare = operations.add_parser(
+                "prepare",
+                help="Prepara um envelope de criação no trabalho Telegram.",
+            )
+            add_account_entry_prepare(prepare)
         for operation, _ in service.mutation_calls:
             mutation = operations.add_parser(
                 operation,
@@ -3043,12 +3180,15 @@ def main() -> int:
         return 2
     client: OmieClient | None = None
     try:
-        config = load_config(Path(args.config).expanduser().resolve(), args.profile)
-        app_key, app_secret = read_entry_credentials(config.credential_ref)
-        client = OmieClient(config, app_key, app_secret)
-        app_key = ""
-        app_secret = ""
-        result = args.handler(client, args)
+        if args.handler is execute_prepare_account_entry:
+            result = args.handler(args)
+        else:
+            config = load_config(Path(args.config).expanduser().resolve(), args.profile)
+            app_key, app_secret = read_entry_credentials(config.credential_ref)
+            client = OmieClient(config, app_key, app_secret)
+            app_key = ""
+            app_secret = ""
+            result = args.handler(client, args)
     except (OmieToolError, VaultToolError, OSError) as exc:
         print_json(
             {"ok": False, "error": str(exc), "error_type": type(exc).__name__},

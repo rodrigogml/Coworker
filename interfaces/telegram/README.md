@@ -282,6 +282,10 @@ delivery-schema.json   contrato fornecido ao Codex
 result.json            resposta estruturada original
 ```
 
+O processo do Codex recebe `COWORKER_JOB_OUTPUT` e `COWORKER_JOB_DERIVED` com os
+caminhos absolutos da caixa atual. Scripts fechados podem usar `derived/` para entradas
+intermediárias; não devem aceitar um destino alternativo nem sobrescrever arquivos.
+
 Um artefato declarado precisa ser relativo a `output/`, regular, não vazio, estar sob
 o limite de upload e permanecer dentro da pasta após `Path.resolve(strict=True)`.
 Links, junctions e reparse points que escapem da saída são rejeitados. O gateway

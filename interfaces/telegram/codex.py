@@ -636,6 +636,7 @@ class CodexAdapter:
         environment = self._environment()
         if job_output is not None:
             environment["COWORKER_JOB_OUTPUT"] = str(job_output)
+            environment["COWORKER_JOB_DERIVED"] = str(job_output.parent / "derived")
         if chat_id is not None:
             environment["COWORKER_CHAT_ID"] = str(chat_id)
         return environment

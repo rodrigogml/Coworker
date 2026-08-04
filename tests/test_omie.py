@@ -1116,6 +1116,182 @@ class OmieTests(unittest.TestCase):
         self.assertEqual(result["calls"][0]["method"], "IncluirLancCC")
         self.assertFalse(any(method == "IncluirLancCC" for _, method, _ in client.calls))
 
+    def test_account_entry_prepare_writes_closed_job_envelope_idempotently(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            derived = root / "data" / "telegram" / "jobs" / "7" / "derived"
+            derived.mkdir(parents=True)
+            args = argparse.Namespace(
+                request_id="telegram:omie:entry-7",
+                nature="expense",
+                account_id=5,
+                date="04/08/2026",
+                amount="450.00",
+                document_type="99999",
+                category_code="2.01.01",
+                project_id=9,
+                counterparty_id=None,
+                document_number=None,
+                observation="Transporte autorizado",
+            )
+            environment = {"COWORKER_JOB_DERIVED": str(derived)}
+
+            created = omie.prepare_account_entry_envelope(
+                args, project_root=root, environment=environment
+            )
+            repeated = omie.prepare_account_entry_envelope(
+                args, project_root=root, environment=environment
+            )
+            document = omie.parse_input_document(
+                Path(created["path"]).read_text(encoding="utf-8")
+            )
+            def entry_show(_params):
+                raise omie.OmieApiError(None, "não encontrado")
+
+            client = FakeOperationClient(
+                {
+                    "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                    "ConsultarCategoria": {
+                        "codigo": "2.01.01",
+                        "conta_inativa": "N",
+                        "conta_despesa": "S",
+                        "conta_receita": "N",
+                        "transferencia": "N",
+                        "totalizadora": "N",
+                        "nao_exibir": "N",
+                    },
+                    "ConsultarProjeto": {
+                        "codigo": 9,
+                        "nome": "Operação",
+                        "inativo": "N",
+                    },
+                    "ConsultaLancCC": entry_show,
+                }
+            )
+            dry_run = omie.execute_mutation(
+                client,
+                argparse.Namespace(
+                    profile="empresa",
+                    input_stdin=False,
+                    input_file=created["path"],
+                    resource="account-entries",
+                    operation="create",
+                    dry_run=True,
+                ),
+            )
+
+        self.assertTrue(created["created"])
+        self.assertFalse(repeated["created"])
+        self.assertEqual(created["path"], repeated["path"])
+        self.assertEqual(document["request_id"], "telegram:omie:entry-7")
+        self.assertEqual(document["data"]["account"], {"id": 5})
+        self.assertEqual(document["data"]["project"], {"id": 9})
+        self.assertNotIn("counterparty", document["data"])
+        self.assertNotIn("departments", document["data"])
+        self.assertTrue(dry_run["dry_run"])
+        self.assertEqual(dry_run["calls"][0]["method"], "IncluirLancCC")
+
+    def test_account_entry_prepare_refuses_overwrite_and_external_directory(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary) / "project"
+            derived = root / "data" / "telegram" / "jobs" / "7" / "derived"
+            derived.mkdir(parents=True)
+            args = argparse.Namespace(
+                request_id="telegram:omie:entry-7",
+                nature="expense",
+                account_id=5,
+                date="04/08/2026",
+                amount="450.00",
+                document_type="99999",
+                category_code="2.01.01",
+                project_id=None,
+                counterparty_id=None,
+                document_number=None,
+                observation=None,
+            )
+            environment = {"COWORKER_JOB_DERIVED": str(derived)}
+            omie.prepare_account_entry_envelope(
+                args, project_root=root, environment=environment
+            )
+            args.amount = "451.00"
+            with self.assertRaises(omie.OmieToolError):
+                omie.prepare_account_entry_envelope(
+                    args, project_root=root, environment=environment
+                )
+
+            external = Path(temporary) / "external" / "derived"
+            external.mkdir(parents=True)
+            with self.assertRaises(omie.OmieToolError):
+                omie.prepare_account_entry_envelope(
+                    args,
+                    project_root=root,
+                    environment={"COWORKER_JOB_DERIVED": str(external)},
+                )
+
+    def test_account_entry_prepare_parser_uses_typed_fields(self):
+        args = omie.build_parser().parse_args(
+            [
+                "account-entries",
+                "prepare",
+                "--request-id",
+                "telegram:omie:entry-7",
+                "--nature",
+                "expense",
+                "--account-id",
+                "5",
+                "--date",
+                "04/08/2026",
+                "--amount",
+                "450.00",
+                "--document-type",
+                "99999",
+                "--category-code",
+                "2.01.01",
+            ]
+        )
+
+        self.assertIs(args.handler, omie.execute_prepare_account_entry)
+        self.assertEqual(args.account_id, 5)
+        self.assertEqual(args.category_code, "2.01.01")
+
+    def test_account_entry_prepare_main_does_not_load_credentials(self):
+        argv = [
+            "omie.py",
+            "account-entries",
+            "prepare",
+            "--request-id",
+            "telegram:omie:entry-7",
+            "--nature",
+            "expense",
+            "--account-id",
+            "5",
+            "--date",
+            "04/08/2026",
+            "--amount",
+            "450.00",
+            "--document-type",
+            "99999",
+            "--category-code",
+            "2.01.01",
+        ]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(
+                omie,
+                "prepare_account_entry_envelope",
+                return_value={"ok": True, "created": True, "path": "input.json"},
+            ),
+            patch.object(
+                omie,
+                "load_config",
+                side_effect=AssertionError("config must not be loaded"),
+            ),
+            patch.object(omie, "print_json"),
+        ):
+            result = omie.main()
+
+        self.assertEqual(result, 0)
+
     def test_batch_is_fully_validated_before_first_write(self):
         def project_show(_params):
             raise omie.OmieApiError(None, "não encontrado")
