@@ -1444,6 +1444,8 @@ def is_not_found_error(error: OmieApiError) -> bool:
             "inexistente",
             "nao localizado",
             "não localizado",
+            "nao cadastrado para o codigo",
+            "não cadastrado para o código",
         )
     )
 

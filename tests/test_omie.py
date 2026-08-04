@@ -731,6 +731,42 @@ class OmieTests(unittest.TestCase):
         self.assertNotIn("transferencia", call.params)
         self.assertLessEqual(len(call.params["cCodIntLanc"]), 20)
 
+    def test_account_entry_missing_is_not_found_but_auth_error_propagates(self):
+        service = omie.SERVICE_SPECS["account-entries"]
+        selector = {"cCodIntLanc": "cw-fa8aa68284fe12f1b"}
+        missing = omie.OmieApiError(
+            500,
+            "ERROR: Lançamento de Conta Corrente não cadastrado para o "
+            "Código de Integração [cw-fa8aa68284fe12f1b] !",
+            fault_code="SOAP-ENV:Client-103",
+        )
+        auth_error = omie.OmieApiError(
+            500,
+            "ERROR: App Key não cadastrado para esta conta.",
+            fault_code="SOAP-ENV:Client-103",
+        )
+        missing_without_accents = omie.OmieApiError(
+            500,
+            "Lancamento de Conta Corrente nao cadastrado para o codigo de integracao.",
+        )
+
+        self.assertTrue(omie.is_not_found_error(missing_without_accents))
+        self.assertIsNone(
+            omie.maybe_show(
+                FakeOperationClient({"ConsultaLancCC": missing}),
+                service,
+                selector,
+            )
+        )
+        with self.assertRaises(omie.OmieApiError) as raised:
+            omie.maybe_show(
+                FakeOperationClient({"ConsultaLancCC": auth_error}),
+                service,
+                selector,
+            )
+
+        self.assertIs(auth_error, raised.exception)
+
     def test_account_entry_create_accepts_revenue_category(self):
         def entry_show(_params):
             raise omie.OmieApiError(None, "não encontrado")
@@ -1070,7 +1106,12 @@ class OmieTests(unittest.TestCase):
 
     def test_account_entry_dry_run_never_performs_write(self):
         def entry_show(_params):
-            raise omie.OmieApiError(None, "não encontrado")
+            raise omie.OmieApiError(
+                500,
+                "ERROR: Lançamento de Conta Corrente não cadastrado para o "
+                "Código de Integração [cw-fa8aa68284fe12f1b] !",
+                fault_code="SOAP-ENV:Client-103",
+            )
 
         client = FakeOperationClient(
             {
