@@ -79,7 +79,9 @@ python skills/omie/scripts/omie.py account-entries prepare `
 
 O comando não acessa credenciais nem a API. Ele cria exclusivamente dentro de
 `COWORKER_JOB_DERIVED`, não sobrescreve conteúdo e devolve o caminho a usar em
-`account-entries create --input-file CAMINHO`, primeiro com `--dry-run`.
+`account-entries create --input-file CAMINHO`, primeiro com `--dry-run`. Confinamento,
+nome idempotente e criação exclusiva são fornecidos pelo componente compartilhado
+`interfaces.telegram.job_context`; não implementar uma segunda escrita dentro da skill.
 
 Usar o mesmo `request_id` ao retomar uma operação. Em lote, corrigir a falha e
 reenviar o mesmo envelope: a skill valida todos os itens antes da primeira escrita,

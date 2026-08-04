@@ -373,6 +373,14 @@ Cada execução usa `data/telegram/jobs/<job-id>/`; somente arquivos validados d
 solicitação, e os IDs devolvidos devem ser persistidos. Upload interrompido em estado
 ambíguo deve ser marcado como `unknown`, nunca repetido automaticamente.
 
+Quando uma skill precisar materializar um envelope JSON ou outra entrada intermediária
+durante um trabalho restrito, seu ponto de entrada público deve aceitar somente campos
+tipados e importar `interfaces.telegram.job_context`. Usar `write_job_json` para JSON;
+não duplicar resolução de `COWORKER_JOB_DERIVED`, confinamento, nome determinístico ou
+criação exclusiva dentro da skill. Não aceitar caminho de destino nem documento JSON
+completo como argumento. Se outro formato fechado for necessário, ampliar primeiro o
+módulo central e seus testes. A preparação não substitui a autorização da mutação.
+
 Converter `codex.sandbox` em um perfil explícito de permissões do Codex; não depender
 apenas do argumento legado `--sandbox`. Escrita deve permanecer limitada às raízes do
 workspace. A rede dos comandos é uma concessão separada em `codex.network_access` e

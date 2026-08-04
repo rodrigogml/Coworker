@@ -42,6 +42,10 @@ from interfaces.telegram.config import (
 )
 from interfaces.telegram.contracts import Attachment, InboundMessage, ReplyContext, TelegramReceipt
 from interfaces.telegram.identity import InstanceIdentity
+from interfaces.telegram.job_context import (
+    JobContextError,
+    write_job_json,
+)
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry
 from interfaces.telegram.state import StateStore
 from interfaces.telegram.telegram_api import TelegramApi
@@ -167,6 +171,148 @@ class StructuredStateTests(unittest.TestCase):
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_job_json_writer_is_confined_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = JobWorkspace.create(root / "data" / "telegram" / "jobs", 7)
+            environment = {"COWORKER_JOB_DERIVED": str(workspace.derived_dir)}
+            document = {"schema_version": 1, "request_id": "request-7"}
+
+            first = write_job_json(
+                "omie-account-entry",
+                "request-7",
+                document,
+                project_root=root,
+                environment=environment,
+            )
+            second = write_job_json(
+                "omie-account-entry",
+                "request-7",
+                document,
+                project_root=root,
+                environment=environment,
+            )
+            stored = json.loads(first.path.read_text(encoding="utf-8"))
+            temporary_files = list(workspace.derived_dir.glob(".*.tmp"))
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertEqual(first.path, second.path)
+        self.assertEqual(document, stored)
+        self.assertEqual([], temporary_files)
+
+    def test_job_json_writer_rejects_missing_external_and_conflicting_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "project"
+            workspace = JobWorkspace.create(root / "data" / "telegram" / "jobs", 7)
+            environment = {"COWORKER_JOB_DERIVED": str(workspace.derived_dir)}
+            first = write_job_json(
+                "omie-account-entry",
+                "request-7",
+                {"value": 1},
+                project_root=root,
+                environment=environment,
+            )
+            with self.assertRaises(JobContextError):
+                write_job_json(
+                    "omie-account-entry",
+                    "request-7",
+                    {"value": 2},
+                    project_root=root,
+                    environment=environment,
+                )
+            with self.assertRaises(JobContextError):
+                write_job_json(
+                    "../escape",
+                    "request-8",
+                    {"value": 1},
+                    project_root=root,
+                    environment=environment,
+                )
+            with self.assertRaises(JobContextError):
+                write_job_json(
+                    "omie-account-entry",
+                    "request-8",
+                    {"value": 1},
+                    project_root=root,
+                    environment={},
+                )
+            external = Path(temporary) / "external" / "derived"
+            external.mkdir(parents=True)
+            with self.assertRaises(JobContextError):
+                write_job_json(
+                    "omie-account-entry",
+                    "request-8",
+                    {"value": 1},
+                    project_root=root,
+                    environment={"COWORKER_JOB_DERIVED": str(external)},
+                )
+
+        self.assertTrue(first.path.name.startswith("omie-account-entry-"))
+
+    def test_job_json_writer_handles_identical_concurrent_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = JobWorkspace.create(root / "data" / "telegram" / "jobs", 7)
+            environment = {"COWORKER_JOB_DERIVED": str(workspace.derived_dir)}
+            barrier = threading.Barrier(2)
+            results = []
+            failures = []
+
+            def write() -> None:
+                try:
+                    barrier.wait()
+                    results.append(
+                        write_job_json(
+                            "omie-account-entry",
+                            "request-7",
+                            {"value": 1},
+                            project_root=root,
+                            environment=environment,
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - diagnostic capture
+                    failures.append(exc)
+
+            threads = [threading.Thread(target=write) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        self.assertEqual([], failures)
+        self.assertEqual(2, len(results))
+        self.assertEqual(1, sum(result.created for result in results))
+
+    def test_job_json_writer_rejects_symbolic_link_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = JobWorkspace.create(root / "data" / "telegram" / "jobs", 7)
+            environment = {"COWORKER_JOB_DERIVED": str(workspace.derived_dir)}
+            stored = write_job_json(
+                "omie-account-entry",
+                "request-7",
+                {"value": 1},
+                project_root=root,
+                environment=environment,
+            )
+            external = root / "external.json"
+            external.write_text('{"value": 1}\n', encoding="utf-8")
+            stored.path.unlink()
+            try:
+                stored.path.symlink_to(external)
+            except OSError:
+                self.skipTest("Criação de symlink indisponível nesta instalação.")
+
+            with self.assertRaises(JobContextError):
+                write_job_json(
+                    "omie-account-entry",
+                    "request-7",
+                    {"value": 1},
+                    project_root=root,
+                    environment=environment,
+                )
+
     def test_credential_request_uses_only_gateway_job_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

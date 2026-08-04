@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import sys
 import tomllib
@@ -24,10 +23,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG = PROJECT_ROOT / "data" / "config" / "omie.toml"
 EXAMPLE_CONFIG = PROJECT_ROOT / "config" / "omie.example.toml"
 PROJECT_SCRIPTS = PROJECT_ROOT / "scripts"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 if str(PROJECT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(PROJECT_SCRIPTS))
 
 from credential_vault import VaultToolError, read_entry_credentials  # noqa: E402
+from interfaces.telegram.job_context import (  # noqa: E402
+    JobContextError,
+    write_job_json,
+)
 from integration_profiles import (  # noqa: E402
     IntegrationProfileError,
     resolve_credential_ref,
@@ -2090,34 +2095,11 @@ def positive_identifier(value: Any, label: str) -> int:
     return value
 
 
-def job_derived_directory(
-    project_root: Path,
-    environment: Mapping[str, str],
-) -> Path:
-    """Resolve somente o diretório derivado fornecido pelo gateway atual."""
-    raw = str(environment.get("COWORKER_JOB_DERIVED", "")).strip()
-    if not raw:
-        raise OmieToolError(
-            "O preparador exige um trabalho ativo do gateway Telegram."
-        )
-    try:
-        project_data = (project_root / "data").resolve(strict=True)
-        derived = Path(raw).expanduser().resolve(strict=True)
-        derived.relative_to(project_data)
-    except (OSError, ValueError) as exc:
-        raise OmieToolError(
-            "O diretório derivado do trabalho não pertence a data/."
-        ) from exc
-    if not derived.is_dir() or derived.name.casefold() != "derived":
-        raise OmieToolError("O diretório derivado do trabalho é inválido.")
-    return derived
-
-
 def prepare_account_entry_envelope(
     args: argparse.Namespace,
     *,
     project_root: Path = PROJECT_ROOT,
-    environment: Mapping[str, str] = os.environ,
+    environment: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Cria sem sobrescrita um envelope fechado dentro do trabalho Telegram."""
     request_id = request_identifier(args.request_id)
@@ -2162,28 +2144,17 @@ def prepare_account_entry_envelope(
         "request_id": request_id,
         "data": data,
     }
-    serialized = (
-        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
-    derived = job_derived_directory(project_root, environment)
-    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16]
-    destination = derived / f"omie-account-entry-{digest}.json"
-    if destination.exists():
-        if destination.is_symlink() or destination.read_bytes() != serialized:
-            raise OmieToolError(
-                "Já existe um envelope diferente para o mesmo request_id."
-            )
-        return {"ok": True, "created": False, "path": str(destination)}
     try:
-        with destination.open("xb") as stream:
-            stream.write(serialized)
-    except FileExistsError as exc:
-        raise OmieToolError(
-            "O envelope foi criado concorrentemente; execute o preparador novamente."
-        ) from exc
-    except OSError as exc:
-        raise OmieToolError("Não foi possível criar o envelope do trabalho.") from exc
-    return {"ok": True, "created": True, "path": str(destination)}
+        stored = write_job_json(
+            "omie-account-entry",
+            request_id,
+            document,
+            project_root=project_root,
+            environment=environment,
+        )
+    except JobContextError as exc:
+        raise OmieToolError(str(exc)) from exc
+    return {"ok": True, "created": stored.created, "path": str(stored.path)}
 
 
 def execute_prepare_account_entry(args: argparse.Namespace) -> dict[str, Any]:

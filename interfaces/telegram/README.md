@@ -286,6 +286,29 @@ O processo do Codex recebe `COWORKER_JOB_OUTPUT` e `COWORKER_JOB_DERIVED` com os
 caminhos absolutos da caixa atual. Scripts fechados podem usar `derived/` para entradas
 intermediárias; não devem aceitar um destino alternativo nem sobrescrever arquivos.
 
+### Entradas intermediárias de skills
+
+Toda skill que precise transformar campos tipados em um envelope JSON deve importar
+`interfaces.telegram.job_context.write_job_json`. Esse é o único componente responsável
+por interpretar `COWORKER_JOB_DERIVED`, confinar o destino em `data/`, gerar o nome pela
+chave idempotente, serializar deterministicamente e criar sem sobrescrita. A skill
+continua responsável por validar seu contrato de negócio antes de chamar o componente.
+
+O ponto de entrada público da skill não deve receber caminho de destino ou JSON completo
+na linha de comando. Ele devolve somente `path` e `created`; preparar o documento não
+autoriza sua aplicação. Se uma integração precisar de outro formato, o suporte deve ser
+adicionado ao módulo central com testes de confinamento e idempotência, em vez de criar
+uma implementação paralela.
+
+### Limitação conhecida: edição direta no gateway restrito
+
+> [!IMPORTANT]
+> Em workspaces Windows iniciados pelo backend Telegram, a ferramenta de patch pode
+> rejeitar um caminho válido abaixo de `data/` como externo ao projeto. O executor
+> também não oferece stdin nativo, e pipelines ou shells genéricos permanecem bloqueados
+> por projeto. Não contornar isso ampliando `config/codex.rules`: use um ponto de entrada
+> tipado da skill apoiado por `job_context.py`.
+
 Um artefato declarado precisa ser relativo a `output/`, regular, não vazio, estar sob
 o limite de upload e permanecer dentro da pasta após `Path.resolve(strict=True)`.
 Links, junctions e reparse points que escapem da saída são rejeitados. O gateway
