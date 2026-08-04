@@ -1,6 +1,6 @@
 ---
 name: omie
-description: Consultar e manipular dados permitidos do ERP Omie por API, incluindo clientes e fornecedores, projetos, categorias, departamentos, contas correntes, contas a pagar e receber, baixas, conciliações e transferências entre contas. Use quando a tarefa mencionar Omie, ERP, contrapartes, projetos ou operações financeiras mantidas no Omie.
+description: Consultar e manipular dados permitidos do ERP Omie por API, incluindo clientes e fornecedores, projetos, categorias, departamentos, contas correntes, lançamentos diretos, contas a pagar e receber, baixas, conciliações e transferências entre contas. Use quando a tarefa mencionar Omie, ERP, contrapartes, projetos ou operações financeiras mantidas no Omie.
 ---
 
 # Operar o ERP Omie
@@ -43,10 +43,16 @@ python skills/omie/scripts/omie.py --profile EMPRESA projects list
 python skills/omie/scripts/omie.py --profile EMPRESA categories list
 python skills/omie/scripts/omie.py --profile EMPRESA departments show --code DEP-1
 python skills/omie/scripts/omie.py --profile EMPRESA current-accounts list
+python skills/omie/scripts/omie.py --profile EMPRESA account-entries list --nature expense
 python skills/omie/scripts/omie.py --profile EMPRESA transfers show --integration-id ID
 ```
 
 Examinar `pagination.truncated` e continuar por `--page` quando necessário.
+
+Usar `account-entries` para receitas ou despesas lançadas diretamente em uma conta,
+sem criar título a pagar ou receber. Usar `payables`/`receivables` quando existir
+obrigação ou direito financeiro, e `transfers` somente para movimentação entre duas
+contas próprias.
 
 ## Alterar
 

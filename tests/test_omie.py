@@ -646,6 +646,476 @@ class OmieTests(unittest.TestCase):
                 integration_id="cw-test",
             )
 
+    def test_account_entries_parser_requires_nature_and_maps_origin(self):
+        parser = omie.build_parser()
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(["account-entries", "list"])
+
+        args = parser.parse_args(
+            ["--profile", "empresa", "account-entries", "list", "--nature", "expense"]
+        )
+        self.assertEqual(omie.list_params("account-entries", args), {"cOrigem": "EXTP"})
+
+        args = parser.parse_args(
+            ["--profile", "empresa", "account-entries", "list", "--nature", "revenue"]
+        )
+        self.assertEqual(omie.list_params("account-entries", args), {"cOrigem": "EXTR"})
+
+    def test_account_entry_create_builds_direct_expense_payload(self):
+        def entry_show(_params):
+            raise omie.OmieApiError(None, "não encontrado")
+
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": {
+                    "nCodCC": 5,
+                    "descricao": "Banco",
+                    "inativo": "N",
+                },
+                "ConsultarCategoria": {
+                    "codigo": "2.01.01",
+                    "descricao": "Tarifas",
+                    "conta_inativa": "N",
+                    "conta_despesa": "S",
+                    "conta_receita": "N",
+                    "transferencia": "N",
+                    "totalizadora": "N",
+                    "nao_exibir": "N",
+                },
+                "ConsultarCliente": {
+                    "codigo_cliente_omie": 8,
+                    "razao_social": "Banco",
+                    "inativo": "N",
+                },
+                "ConsultarProjeto": {
+                    "codigo": 9,
+                    "nome": "Operação",
+                    "inativo": "N",
+                },
+                "ConsultarDepartamento": {
+                    "codigo": "ADM",
+                    "descricao": "Administrativo",
+                    "inativo": "N",
+                },
+                "ConsultaLancCC": entry_show,
+            }
+        )
+        call = omie.prepare_account_entry_call(
+            client,
+            "create",
+            {
+                "data": {
+                    "nature": "expense",
+                    "account": {"id": 5},
+                    "date": "04/08/2026",
+                    "amount": "150.00",
+                    "document_type": "DEB",
+                    "category": {"code": "2.01.01"},
+                    "counterparty": {"id": 8},
+                    "project": {"id": 9},
+                    "departments": [{"code": "ADM", "percentage": "100.00"}],
+                    "document_number": "TARIFA-08",
+                    "observation": "Tarifa bancária",
+                }
+            },
+            "entry-1",
+        )[0]
+
+        self.assertEqual(call.method, "IncluirLancCC")
+        self.assertEqual(call.params["cabecalho"]["nValorLanc"], 150)
+        self.assertEqual(call.params["detalhes"]["cTipo"], "DEB")
+        self.assertEqual(call.params["detalhes"]["cCodCateg"], "2.01.01")
+        self.assertEqual(call.params["detalhes"]["nCodCliente"], 8)
+        self.assertEqual(call.params["detalhes"]["nCodProjeto"], 9)
+        self.assertEqual(call.params["departamentos"], [{"cCodDep": "ADM", "nPerDep": 100}])
+        self.assertNotIn("transferencia", call.params)
+        self.assertLessEqual(len(call.params["cCodIntLanc"]), 20)
+
+    def test_account_entry_create_accepts_revenue_category(self):
+        def entry_show(_params):
+            raise omie.OmieApiError(None, "não encontrado")
+
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                "ConsultarCategoria": {
+                    "codigo": "1.01.01",
+                    "conta_inativa": "N",
+                    "conta_despesa": "N",
+                    "conta_receita": "S",
+                    "transferencia": "N",
+                    "totalizadora": "N",
+                    "nao_exibir": "N",
+                },
+                "ConsultaLancCC": entry_show,
+            }
+        )
+        call = omie.prepare_account_entry_call(
+            client,
+            "create",
+            {
+                "data": {
+                    "nature": "revenue",
+                    "account": {"id": 5},
+                    "date": "04/08/2026",
+                    "amount": "25.00",
+                    "document_type": "DIN",
+                    "category": {"code": "1.01.01"},
+                }
+            },
+            "entry-revenue-1",
+        )[0]
+        self.assertEqual(call.params["cabecalho"]["nValorLanc"], 25)
+        self.assertEqual(call.params["detalhes"]["cCodCateg"], "1.01.01")
+
+    def test_account_entry_rejects_invalid_categories_and_document_type(self):
+        base_category = {
+            "codigo": "2.01.01",
+            "conta_inativa": "N",
+            "conta_despesa": "S",
+            "conta_receita": "N",
+            "transferencia": "N",
+            "totalizadora": "N",
+            "nao_exibir": "N",
+        }
+        invalid_variants = (
+            {"conta_inativa": "S"},
+            {"totalizadora": "S"},
+            {"nao_exibir": "S"},
+            {"transferencia": "S"},
+            {"conta_despesa": "N", "conta_receita": "S"},
+        )
+        for changes in invalid_variants:
+            with self.subTest(changes=changes):
+                category = {**base_category, **changes}
+                client = FakeOperationClient(
+                    {
+                        "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                        "ConsultarCategoria": category,
+                    }
+                )
+                with self.assertRaises(omie.OmieToolError):
+                    omie.account_entry_payload(
+                        client,
+                        {},
+                        {
+                            "nature": "expense",
+                            "account": {"id": 5},
+                            "date": "04/08/2026",
+                            "amount": "10.00",
+                            "document_type": "DIN",
+                            "category": {"code": "2.01.01"},
+                        },
+                        integration_id="cw-entry",
+                    )
+
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                "ConsultarCategoria": base_category,
+            }
+        )
+        for document_type in ("TRA", "din", "INVALID"):
+            with self.subTest(document_type=document_type), self.assertRaises(omie.OmieToolError):
+                omie.account_entry_payload(
+                    client,
+                    {},
+                    {
+                        "nature": "expense",
+                        "account": {"id": 5},
+                        "date": "04/08/2026",
+                        "amount": "10.00",
+                        "document_type": document_type,
+                        "category": {"code": "2.01.01"},
+                    },
+                    integration_id="cw-entry",
+                )
+
+    def test_account_entry_rejects_mixed_category_natures(self):
+        def category_show(params):
+            code = params["codigo"]
+            return {
+                "codigo": code,
+                "conta_inativa": "N",
+                "conta_despesa": "S" if code.startswith("2") else "N",
+                "conta_receita": "S" if code.startswith("1") else "N",
+                "transferencia": "N",
+                "totalizadora": "N",
+                "nao_exibir": "N",
+            }
+
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                "ConsultarCategoria": category_show,
+            }
+        )
+        with self.assertRaises(omie.OmieToolError):
+            omie.account_entry_payload(
+                client,
+                {},
+                {
+                    "nature": "expense",
+                    "account": {"id": 5},
+                    "date": "04/08/2026",
+                    "amount": "100.00",
+                    "document_type": "DIN",
+                    "categories": [
+                        {"code": "2.01", "percentage": "50.00"},
+                        {"code": "1.01", "percentage": "50.00"},
+                    ],
+                },
+                integration_id="cw-entry",
+            )
+
+    def test_account_entry_update_preserves_manual_id_and_clears_optional_fields(self):
+        current = {
+            "nCodLanc": 44,
+            "cCodIntLanc": "",
+            "cabecalho": {"nCodCC": 5, "dDtLanc": "04/08/2026", "nValorLanc": 100},
+            "detalhes": {
+                "cCodCateg": "2.01.01",
+                "cTipo": "DIN",
+                "cNumDoc": "DOC-1",
+                "cObs": "Anterior",
+            },
+            "departamentos": [{"cCodDep": "ADM", "nPerc": 100}],
+            "diversos": {"cOrigem": "EXTP", "cNatureza": "P"},
+        }
+        client = FakeOperationClient(
+            {
+                "ConsultaLancCC": current,
+                "ConsultarCategoria": {
+                    "codigo": "2.01.01",
+                    "conta_inativa": "N",
+                    "conta_despesa": "S",
+                    "conta_receita": "N",
+                    "transferencia": "N",
+                    "totalizadora": "N",
+                    "nao_exibir": "N",
+                },
+            }
+        )
+        call = omie.prepare_account_entry_call(
+            client,
+            "update",
+            {
+                "selector": {"id": 44},
+                "data": {
+                    "nature": "expense",
+                    "document_number": None,
+                    "observation": None,
+                    "departments": [],
+                },
+            },
+            "entry-update-1",
+        )[0]
+
+        self.assertEqual(call.params["nCodLanc"], 44)
+        self.assertNotIn("cCodIntLanc", call.params)
+        self.assertNotIn("cNumDoc", call.params["detalhes"])
+        self.assertNotIn("cObs", call.params["detalhes"])
+        self.assertNotIn("departamentos", call.params)
+
+    def test_account_entry_blocks_nature_change_and_non_manual_origins(self):
+        expense = {
+            "nCodLanc": 44,
+            "cabecalho": {"nCodCC": 5, "dDtLanc": "04/08/2026", "nValorLanc": 100},
+            "detalhes": {"cCodCateg": "2.01.01", "cTipo": "DIN"},
+            "diversos": {"cOrigem": "EXTP", "cNatureza": "P"},
+        }
+        client = FakeOperationClient({"ConsultaLancCC": expense})
+        with self.assertRaises(omie.OmieToolError):
+            omie.prepare_account_entry_call(
+                client,
+                "update",
+                {
+                    "selector": {"id": 44},
+                    "data": {"nature": "revenue", "observation": "Conversão"},
+                },
+                "entry-update-2",
+            )
+
+        transfer = {**expense, "diversos": {"cOrigem": "TRAP", "cNatureza": "P"}}
+        client = FakeOperationClient({"ConsultaLancCC": transfer})
+        with self.assertRaises(omie.OmieToolError):
+            omie.prepare_account_entry_call(
+                client,
+                "delete",
+                {"selector": {"id": 44}, "confirm_delete": True},
+                "entry-delete-1",
+            )
+
+    def test_account_entry_delete_requires_confirmation_and_accepts_manual_entry(self):
+        current = {
+            "nCodLanc": 44,
+            "diversos": {"cOrigem": "EXTR", "cNatureza": "R"},
+        }
+        client = FakeOperationClient({"ConsultaLancCC": current})
+        with self.assertRaises(omie.OmieToolError):
+            omie.prepare_account_entry_call(
+                client,
+                "delete",
+                {"selector": {"id": 44}, "confirm_delete": False},
+                "entry-delete-2",
+            )
+        call = omie.prepare_account_entry_call(
+            client,
+            "delete",
+            {"selector": {"id": 44}, "confirm_delete": True},
+            "entry-delete-3",
+        )[0]
+        self.assertEqual(call.method, "ExcluirLancCC")
+        self.assertEqual(call.params, {"nCodLanc": 44})
+
+    def test_account_entry_rejects_non_positive_amount_and_stale_allocations(self):
+        category = {
+            "codigo": "2.01.01",
+            "conta_inativa": "N",
+            "conta_despesa": "S",
+            "conta_receita": "N",
+            "transferencia": "N",
+            "totalizadora": "N",
+            "nao_exibir": "N",
+        }
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                "ConsultarCategoria": category,
+            }
+        )
+        with self.assertRaises(omie.OmieToolError):
+            omie.account_entry_payload(
+                client,
+                {},
+                {
+                    "nature": "expense",
+                    "account": {"id": 5},
+                    "date": "04/08/2026",
+                    "amount": "0.00",
+                    "document_type": "DIN",
+                    "category": {"code": "2.01.01"},
+                },
+                integration_id="cw-entry",
+            )
+
+        current = {
+            "nCodLanc": 44,
+            "cabecalho": {"nCodCC": 5, "dDtLanc": "04/08/2026", "nValorLanc": 100},
+            "detalhes": {
+                "aCodCateg": [
+                    {"cCodCateg": "2.01.01", "nValor": 60, "nPerc": 60},
+                    {"cCodCateg": "2.01.02", "nValor": 40, "nPerc": 40},
+                ],
+                "cTipo": "DIN",
+            },
+            "diversos": {"cOrigem": "EXTP", "cNatureza": "P"},
+        }
+        def category_by_code(params):
+            return {**category, "codigo": params["codigo"]}
+        client = FakeOperationClient(
+            {"ConsultaLancCC": current, "ConsultarCategoria": category_by_code}
+        )
+        with self.assertRaises(omie.OmieToolError):
+            omie.prepare_account_entry_call(
+                client,
+                "update",
+                {
+                    "selector": {"id": 44},
+                    "data": {"nature": "expense", "amount": "120.00"},
+                },
+                "entry-update-rateio",
+            )
+
+    def test_account_entry_delete_recovers_unknown_transport_state(self):
+        class DeleteRecoveryClient(FakeOperationClient):
+            def __init__(self):
+                super().__init__()
+                self.consultations = 0
+
+            def call(self, service, method, params):
+                if method == "ConsultaLancCC":
+                    self.consultations += 1
+                    if self.consultations == 1:
+                        return {
+                            "nCodLanc": 44,
+                            "diversos": {"cOrigem": "EXTP", "cNatureza": "P"},
+                        }
+                    raise omie.OmieApiError(None, "não encontrado")
+                if method == "ExcluirLancCC":
+                    raise omie.OmieUnknownStateError("timeout")
+                return super().call(service, method, params)
+
+        document = {
+            "schema_version": 1,
+            "request_id": "entry-delete-recovery",
+            "selector": {"id": 44},
+            "confirm_delete": True,
+        }
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "input.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            args = argparse.Namespace(
+                profile="empresa",
+                input_stdin=False,
+                input_file=str(path),
+                resource="account-entries",
+                operation="delete",
+                dry_run=False,
+            )
+            result = omie.execute_mutation(DeleteRecoveryClient(), args)
+
+        self.assertEqual(result["results"][0]["status"], "recovered_after_timeout")
+        self.assertEqual(result["results"][0]["item"], {"deleted": True})
+
+    def test_account_entry_dry_run_never_performs_write(self):
+        def entry_show(_params):
+            raise omie.OmieApiError(None, "não encontrado")
+
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": {"nCodCC": 5, "inativo": "N"},
+                "ConsultarCategoria": {
+                    "codigo": "2.01.01",
+                    "conta_inativa": "N",
+                    "conta_despesa": "S",
+                    "conta_receita": "N",
+                    "transferencia": "N",
+                    "totalizadora": "N",
+                    "nao_exibir": "N",
+                },
+                "ConsultaLancCC": entry_show,
+            }
+        )
+        document = {
+            "schema_version": 1,
+            "request_id": "entry-dry-run",
+            "data": {
+                "nature": "expense",
+                "account": {"id": 5},
+                "date": "04/08/2026",
+                "amount": "10.00",
+                "document_type": "DIN",
+                "category": {"code": "2.01.01"},
+            },
+        }
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "input.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            args = argparse.Namespace(
+                profile="empresa",
+                input_stdin=False,
+                input_file=str(path),
+                resource="account-entries",
+                operation="create",
+                dry_run=True,
+            )
+            result = omie.execute_mutation(client, args)
+
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["calls"][0]["method"], "IncluirLancCC")
+        self.assertFalse(any(method == "IncluirLancCC" for _, method, _ in client.calls))
+
     def test_batch_is_fully_validated_before_first_write(self):
         def project_show(_params):
             raise omie.OmieApiError(None, "não encontrado")

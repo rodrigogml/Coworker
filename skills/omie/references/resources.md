@@ -2,13 +2,16 @@
 
 ## Paginação comum
 
-Todas as listagens aceitam:
+A maioria das listagens aceita:
 
 - `--page N`: consulta uma página, iniciando em 1;
 - `--all-pages`: percorre páginas até `max_pages`;
 - `--only-api`: solicita somente registros importados pela API;
 - `--changed-from DD/MM/AAAA` e `--changed-to DD/MM/AAAA`;
 - `--only-created` ou `--only-changed`.
+
+`transfers` e `account-entries` usam os filtros próprios de `ListarLancCC`, descritos
+nas seções correspondentes.
 
 ## Empresas
 
@@ -50,7 +53,8 @@ python skills/omie/scripts/omie.py current-accounts show --integration-id BANCO-
 ```
 
 Esses recursos são somente de leitura e servem também para validar referências de
-títulos, baixas e transferências.
+títulos, baixas, lançamentos diretos e transferências. A saída de categorias inclui
+os marcadores de receita, despesa, transferência, totalização e disponibilidade.
 
 ## Produtos
 
@@ -74,6 +78,19 @@ python skills/omie/scripts/omie.py receivables show --id 123
 Contas a pagar aceitam `create`, `update`, `delete`, `pay` e `cancel-payment`.
 Contas a receber aceitam `create`, `update`, `delete`, `receive`, `cancel-receipt`,
 `reconcile` e `unreconcile`.
+
+## Lançamentos diretos em conta
+
+```powershell
+python skills/omie/scripts/omie.py --profile EMPRESA account-entries list --nature expense
+python skills/omie/scripts/omie.py --profile EMPRESA account-entries list --nature revenue
+python skills/omie/scripts/omie.py --profile EMPRESA account-entries show --id 123
+python skills/omie/scripts/omie.py --profile EMPRESA account-entries show --integration-id ID
+```
+
+`list` exige `--nature`: `expense` filtra lançamentos manuais `EXTP` e `revenue`
+filtra `EXTR`. As mutações disponíveis são `create`, `update` e `delete`; consultar
+[operations.md](operations.md) antes de preparar o envelope.
 
 ## Transferências entre contas
 

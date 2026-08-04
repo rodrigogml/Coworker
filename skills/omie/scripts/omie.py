@@ -282,6 +282,28 @@ SERVICE_SPECS = {
         "nRegistros",
         "nTotRegistros",
     ),
+    "account-entries": ServiceSpec(
+        "account-entries",
+        "financas/contacorrentelancamentos/",
+        "ListarLancCC",
+        "listaLancamentos",
+        "ConsultaLancCC",
+        (
+            ("id", "nCodLanc", "Código interno do lançamento."),
+            ("integration-id", "cCodIntLanc", "Código de integração do lançamento."),
+        ),
+        (
+            ("create", "IncluirLancCC"),
+            ("update", "AlterarLancCC"),
+            ("delete", "ExcluirLancCC"),
+        ),
+        "nPagina",
+        "nRegPorPagina",
+        "nPagina",
+        "nTotPaginas",
+        "nRegistros",
+        "nTotRegistros",
+    ),
     "sales-orders": ServiceSpec(
         "sales-orders",
         "produtos/pedido/",
@@ -661,7 +683,18 @@ def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
     if resource == "categories":
         return pick(
             item,
-            ("codigo", "descricao", "descricao_padrao", "tipo_categoria", "conta_inativa"),
+            (
+                "codigo",
+                "descricao",
+                "descricao_padrao",
+                "tipo_categoria",
+                "conta_inativa",
+                "conta_despesa",
+                "conta_receita",
+                "transferencia",
+                "totalizadora",
+                "nao_exibir",
+            ),
         )
     if resource == "departments":
         return pick(
@@ -718,8 +751,8 @@ def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
                 "status_titulo",
             ),
         )
-    if resource == "transfers":
-        return {
+    if resource in ("transfers", "account-entries"):
+        summary = {
             **pick(item, ("nCodLanc", "cCodIntLanc", "nCodAgrup")),
             "cabecalho": pick(
                 item.get("cabecalho", {}) if isinstance(item.get("cabecalho"), dict) else {},
@@ -737,14 +770,26 @@ def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
                     "cObs",
                 ),
             ),
-            "transferencia": pick(
+            "departamentos": item.get("departamentos", []),
+            "diversos": pick(
+                item.get("diversos", {})
+                if isinstance(item.get("diversos"), dict)
+                else {},
+                ("cOrigem", "cNatureza", "dDtConc"),
+            ),
+            "info": pick(
+                item.get("info", {}) if isinstance(item.get("info"), dict) else {},
+                ("cImpAPI",),
+            ),
+        }
+        if resource == "transfers":
+            summary["transferencia"] = pick(
                 item.get("transferencia", {})
                 if isinstance(item.get("transferencia"), dict)
                 else {},
                 ("nCodCCDestino",),
-            ),
-            "departamentos": item.get("departamentos", []),
-        }
+            )
+        return summary
     if resource == "sales-orders":
         header = item.get("cabecalho")
         total = item.get("total_pedido")
@@ -790,6 +835,8 @@ def list_params(resource: str, args: argparse.Namespace) -> dict[str, Any]:
     """Monta apenas filtros documentados e explicitamente informados."""
     if resource == "transfers":
         return {}
+    if resource == "account-entries":
+        return {"cOrigem": ACCOUNT_ENTRY_NATURES[args.nature][1]}
     params: dict[str, Any] = {
         "apenas_importado_api": "S" if getattr(args, "only_api", False) else "N"
     }
@@ -901,6 +948,43 @@ TRANSFER_FIELDS = {
     "departments",
     "document_number",
     "observation",
+}
+ACCOUNT_ENTRY_FIELDS = {
+    "nature",
+    "account",
+    "date",
+    "amount",
+    "document_type",
+    "category",
+    "categories",
+    "counterparty",
+    "project",
+    "departments",
+    "document_number",
+    "observation",
+}
+ACCOUNT_ENTRY_DOCUMENT_TYPES = {
+    "ADI",
+    "BOL",
+    "CRT",
+    "CHQ",
+    "CON",
+    "CRE",
+    "DRF",
+    "DAS",
+    "DEB",
+    "DIN",
+    "DOC",
+    "GUIA",
+    "PROT",
+    "REC",
+    "RPA",
+    "TED",
+    "99999",
+}
+ACCOUNT_ENTRY_NATURES = {
+    "expense": ("P", "EXTP", "conta_despesa"),
+    "revenue": ("R", "EXTR", "conta_receita"),
 }
 SETTLEMENT_FIELDS = {
     "current_account",
@@ -1310,6 +1394,10 @@ def resource_selector(resource: str, value: Any) -> dict[str, Any]:
             {"id", "integration_id"},
             {"id": "nCodLanc", "integration_id": "cCodIntLanc"},
         ),
+        "account-entries": (
+            {"id", "integration_id"},
+            {"id": "nCodLanc", "integration_id": "cCodIntLanc"},
+        ),
     }
     allowed, mapping = definitions[resource]
     selector = exact_selector(value, allowed, "selector")
@@ -1317,7 +1405,10 @@ def resource_selector(resource: str, value: Any) -> dict[str, Any]:
     if key == "id" and (not isinstance(selected, int) or isinstance(selected, bool)):
         raise OmieToolError("'selector.id' deve ser inteiro.")
     if key == "integration_id":
-        selected = require_nonempty_string(selected, "selector.integration_id", 60)
+        max_length = 20 if resource == "account-entries" else 60
+        selected = require_nonempty_string(
+            selected, "selector.integration_id", max_length
+        )
     return {mapping[key]: selected}
 
 
@@ -1984,6 +2075,390 @@ def prepare_financial_call(
     ]
 
 
+def account_entry_nature(value: Any, label: str = "data.nature") -> str:
+    """Valida a natureza pública de um lançamento direto."""
+    if value not in ACCOUNT_ENTRY_NATURES:
+        raise OmieToolError(f"'{label}' deve ser 'expense' ou 'revenue'.")
+    return str(value)
+
+
+def validate_account_entry_category(
+    item: Mapping[str, Any],
+    nature: str,
+) -> None:
+    """Recusa categorias incompatíveis com um lançamento manual direto."""
+    if is_inactive(item):
+        raise OmieToolError("A categoria do lançamento está inativa.")
+    if item.get("totalizadora") == "S":
+        raise OmieToolError("A categoria do lançamento não pode ser totalizadora.")
+    if item.get("nao_exibir") == "S":
+        raise OmieToolError("A categoria do lançamento não está disponível para uso.")
+    if item.get("transferencia") == "S":
+        raise OmieToolError(
+            "Categorias de transferência devem ser usadas pelo recurso 'transfers'."
+        )
+    expected_flag = ACCOUNT_ENTRY_NATURES[nature][2]
+    if item.get(expected_flag) != "S":
+        label = "despesa" if nature == "expense" else "receita"
+        raise OmieToolError(f"A categoria informada não é uma categoria de {label}.")
+
+
+def account_entry_category_payload(
+    client: OmieClient,
+    values: Any,
+    total: Decimal,
+    nature: str,
+) -> list[dict[str, Any]]:
+    """Resolve e valida um rateio de categorias de mesma natureza."""
+    if not isinstance(values, list) or not values:
+        raise OmieToolError("'categories' deve ser uma lista não vazia.")
+    entries: list[tuple[Any, str, Decimal]] = []
+    modes: set[str] = set()
+    for index, raw in enumerate(values, 1):
+        item = require_object(raw, f"categories[{index}]")
+        reject_unknown_fields(
+            item,
+            {"code", "name", "amount", "percentage"},
+            f"categories[{index}]",
+        )
+        selectors = [key for key in ("code", "name") if item.get(key) not in (None, "")]
+        allocations = [key for key in ("amount", "percentage") if item.get(key) is not None]
+        if len(selectors) != 1:
+            raise OmieToolError(
+                f"'categories[{index}]' deve informar exatamente 'code' ou 'name'."
+            )
+        if len(allocations) != 1:
+            raise OmieToolError(
+                f"'categories[{index}]' deve informar exatamente 'amount' ou 'percentage'."
+            )
+        identifier, category = resolve_reference(
+            client, "category", {selectors[0]: item[selectors[0]]}
+        )
+        validate_account_entry_category(category, nature)
+        mode = allocations[0]
+        modes.add(mode)
+        entries.append(
+            (identifier, mode, decimal_value(item[mode], f"categories[{index}].{mode}"))
+        )
+    if len(modes) != 1:
+        raise OmieToolError("Não misture valores e percentuais em 'categories'.")
+    mode = next(iter(modes))
+    expected = total if mode == "amount" else Decimal("100.00")
+    if sum((entry[2] for entry in entries), Decimal("0")) != expected:
+        label = "valor do lançamento" if mode == "amount" else "100%"
+        raise OmieToolError(f"O rateio de 'categories' deve fechar exatamente em {label}.")
+    return [
+        {
+            "cCodCateg": identifier,
+            "nValor" if mode == "amount" else "nPerc": decimal_number(value),
+        }
+        for identifier, _, value in entries
+    ]
+
+
+def validate_existing_allocations(
+    values: Any,
+    total: Decimal,
+    *,
+    label: str,
+    amount_key: str,
+    percentage_key: str,
+) -> None:
+    """Confere rateios já existentes após uma atualização do valor total."""
+    if not values:
+        return
+    if not isinstance(values, list):
+        raise OmieToolError(f"O rateio existente de '{label}' é inválido.")
+    amounts: list[Decimal | None] = []
+    percentages: list[Decimal | None] = []
+    for index, raw in enumerate(values, 1):
+        item = require_object(raw, f"{label}[{index}]")
+        if item.get(amount_key) is None and item.get(percentage_key) is None:
+            raise OmieToolError(f"O rateio existente de '{label}' é inválido.")
+        amounts.append(
+            decimal_value(item[amount_key], f"{label}[{index}].{amount_key}")
+            if item.get(amount_key) is not None
+            else None
+        )
+        percentages.append(
+            decimal_value(item[percentage_key], f"{label}[{index}].{percentage_key}")
+            if item.get(percentage_key) is not None
+            else None
+        )
+    for allocation_values, expected, target in (
+        (amounts, total, "valor do lançamento"),
+        (percentages, Decimal("100.00"), "100%"),
+    ):
+        present = [value for value in allocation_values if value is not None]
+        if present and len(present) != len(values):
+            raise OmieToolError(f"O rateio existente de '{label}' é inconsistente.")
+        if present and sum(present, Decimal("0")) != expected:
+            raise OmieToolError(
+                f"O rateio de '{label}' deve fechar exatamente em {target}."
+            )
+
+
+def validate_current_entry_categories(
+    client: OmieClient,
+    details: Mapping[str, Any],
+    total: Decimal,
+    nature: str,
+) -> None:
+    """Valida as categorias preservadas de um lançamento existente."""
+    if details.get("cCodCateg") not in (None, ""):
+        _, category = resolve_reference(client, "category", {"code": details["cCodCateg"]})
+        validate_account_entry_category(category, nature)
+        return
+    values = details.get("aCodCateg")
+    if not isinstance(values, list) or not values:
+        raise OmieToolError("Informe 'category' ou 'categories' no lançamento.")
+    for index, raw in enumerate(values, 1):
+        item = require_object(raw, f"categories[{index}]")
+        code = item.get("cCodCateg")
+        if code in (None, ""):
+            raise OmieToolError("O rateio existente possui categoria sem código.")
+        _, category = resolve_reference(client, "category", {"code": code})
+        validate_account_entry_category(category, nature)
+    validate_existing_allocations(
+        values,
+        total,
+        label="categories",
+        amount_key="nValor",
+        percentage_key="nPerc",
+    )
+
+
+def current_account_entry_nature(current: Mapping[str, Any]) -> str:
+    """Obtém a natureza apenas de origens manuais diretas permitidas."""
+    diverse = current.get("diversos", {})
+    if not isinstance(diverse, dict):
+        raise OmieToolError("A Omie não devolveu a origem do lançamento.")
+    origin = diverse.get("cOrigem")
+    for nature, (api_nature, api_origin, _) in ACCOUNT_ENTRY_NATURES.items():
+        if origin == api_origin:
+            returned_nature = diverse.get("cNatureza")
+            if returned_nature not in (None, "", api_nature):
+                raise OmieToolError("A origem e a natureza do lançamento são incompatíveis.")
+            return nature
+    raise OmieToolError(
+        "Somente lançamentos manuais diretos EXTP ou EXTR podem ser alterados ou excluídos."
+    )
+
+
+def account_entry_payload(
+    client: OmieClient,
+    current: Mapping[str, Any],
+    data: Mapping[str, Any],
+    *,
+    integration_id: str | None,
+) -> dict[str, Any]:
+    """Monta um lançamento manual direto de receita ou despesa."""
+    reject_unknown_fields(data, ACCOUNT_ENTRY_FIELDS, "data")
+    nature = account_entry_nature(data.get("nature"))
+    header = (
+        dict(current.get("cabecalho", {}))
+        if isinstance(current.get("cabecalho"), dict)
+        else {}
+    )
+    details = (
+        dict(current.get("detalhes", {}))
+        if isinstance(current.get("detalhes"), dict)
+        else {}
+    )
+    departments = (
+        list(current.get("departamentos", []))
+        if isinstance(current.get("departamentos"), list)
+        else []
+    )
+
+    if "account" in data:
+        header["nCodCC"] = resolve_reference(client, "current_account", data["account"])[0]
+    if "date" in data:
+        header["dDtLanc"] = date_value(data["date"], "data.date")
+    if "amount" in data:
+        header["nValorLanc"] = decimal_number(decimal_value(data["amount"], "data.amount"))
+    total = decimal_value(header.get("nValorLanc"), "data.amount")
+
+    if "document_type" in data:
+        document_type = require_nonempty_string(
+            data["document_type"], "data.document_type", 5
+        )
+        if document_type not in ACCOUNT_ENTRY_DOCUMENT_TYPES:
+            raise OmieToolError(
+                "'data.document_type' não pertence à allowlist de lançamentos diretos."
+            )
+        details["cTipo"] = document_type
+
+    if "category" in data and "categories" in data:
+        raise OmieToolError("Use 'category' ou 'categories', nunca ambos.")
+    if "category" in data:
+        identifier, category = resolve_reference(client, "category", data["category"])
+        validate_account_entry_category(category, nature)
+        details["cCodCateg"] = identifier
+        details.pop("aCodCateg", None)
+    elif "categories" in data:
+        details["aCodCateg"] = account_entry_category_payload(
+            client, data["categories"], total, nature
+        )
+        details.pop("cCodCateg", None)
+    else:
+        validate_current_entry_categories(client, details, total, nature)
+
+    if "counterparty" in data:
+        if data["counterparty"] is None:
+            details.pop("nCodCliente", None)
+        else:
+            details["nCodCliente"] = resolve_reference(client, "customer", data["counterparty"])[0]
+    if "project" in data:
+        if data["project"] is None:
+            details.pop("nCodProjeto", None)
+        else:
+            details["nCodProjeto"] = resolve_reference(client, "project", data["project"])[0]
+    if "departments" in data:
+        if data["departments"] == []:
+            departments = []
+        else:
+            allocations = allocation_payload(client, data["departments"], total, "department")
+            departments = [
+                {
+                    "cCodDep": entry["cCodDep"],
+                    **({"nValDep": entry["nValDep"]} if "nValDep" in entry else {}),
+                    **({"nPerDep": entry["nPerDep"]} if "nPerDep" in entry else {}),
+                }
+                for entry in allocations
+            ]
+    else:
+        validate_existing_allocations(
+            departments,
+            total,
+            label="departments",
+            amount_key="nValDep",
+            percentage_key="nPerDep",
+        )
+    for public, official, maximum in (
+        ("document_number", "cNumDoc", 20),
+        ("observation", "cObs", 5000),
+    ):
+        if public in data:
+            if data[public] is None:
+                details.pop(official, None)
+            else:
+                details[official] = require_nonempty_string(data[public], f"data.{public}", maximum)
+
+    required = {
+        "account": header.get("nCodCC"),
+        "date": header.get("dDtLanc"),
+        "amount": header.get("nValorLanc"),
+        "document_type": details.get("cTipo"),
+    }
+    missing = [name for name, value in required.items() if value in (None, "")]
+    if missing:
+        raise OmieToolError(f"Campos obrigatórios do lançamento ausentes: {', '.join(missing)}.")
+    if details.get("cTipo") == "TRA":
+        raise OmieToolError("Use o recurso 'transfers' para tipos de documento TRA.")
+    payload: dict[str, Any] = {"cabecalho": header, "detalhes": details}
+    if integration_id:
+        payload["cCodIntLanc"] = integration_id
+    if departments:
+        payload["departamentos"] = departments
+    return payload
+
+
+def prepare_account_entry_call(
+    client: OmieClient,
+    operation: str,
+    item: Mapping[str, Any],
+    request_id: str,
+) -> list[PreparedCall]:
+    """Prepara o ciclo CRUD de um lançamento manual direto."""
+    service = SERVICE_SPECS["account-entries"]
+    if operation == "create":
+        data = require_data(item)
+        integration_id = derived_integration_id(request_id, "account-entry", max_length=20)
+        payload = account_entry_payload(client, {}, data, integration_id=integration_id)
+        selector = {"cCodIntLanc": integration_id}
+        existing = maybe_show(client, service, selector)
+        if existing is not None:
+            existing_nature = current_account_entry_nature(existing)
+            if existing_nature != account_entry_nature(data.get("nature")):
+                raise OmieToolError("O request_id já identifica lançamento de outra natureza.")
+        return [
+            PreparedCall(
+                service,
+                service.mutation_call(operation),
+                payload,
+                "account-entries",
+                operation,
+                request_id,
+                selector,
+                summarize("account-entries", existing) if existing else None,
+            )
+        ]
+
+    selector = resource_selector("account-entries", item.get("selector"))
+    current = maybe_show(client, service, selector)
+    if current is None:
+        if operation == "delete":
+            return [
+                PreparedCall(
+                    service,
+                    service.mutation_call(operation),
+                    selector,
+                    "account-entries",
+                    operation,
+                    request_id,
+                    selector,
+                    {"deleted": True},
+                )
+            ]
+        raise OmieToolError("Lançamento direto não encontrado.")
+    current_nature = current_account_entry_nature(current)
+    if operation == "delete":
+        if item.get("confirm_delete") is not True:
+            raise OmieToolError("A exclusão exige 'confirm_delete': true.")
+        return [
+            PreparedCall(
+                service,
+                service.mutation_call(operation),
+                selector,
+                "account-entries",
+                operation,
+                request_id,
+                selector,
+            )
+        ]
+
+    data = require_data(item)
+    if set(data) <= {"nature"}:
+        raise OmieToolError("'data' deve conter ao menos uma alteração além de 'nature'.")
+    requested_nature = account_entry_nature(data.get("nature"))
+    if requested_nature != current_nature:
+        raise OmieToolError("Não é permitido converter despesa em receita ou vice-versa.")
+    current_integration_id = current.get("cCodIntLanc")
+    payload = account_entry_payload(
+        client,
+        current,
+        data,
+        integration_id=(
+            str(current_integration_id)
+            if current_integration_id not in (None, "")
+            else None
+        ),
+    )
+    payload.update(selector)
+    return [
+        PreparedCall(
+            service,
+            service.mutation_call(operation),
+            payload,
+            "account-entries",
+            operation,
+            request_id,
+            selector,
+        )
+    ]
+
+
 def transfer_payload(
     client: OmieClient,
     current: Mapping[str, Any],
@@ -2223,6 +2698,8 @@ def prepare_mutation_item(
         )
     if resource == "transfers":
         return prepare_transfer_call(client, operation, item, request_id)
+    if resource == "account-entries":
+        return prepare_account_entry_call(client, operation, item, request_id)
     raise OmieToolError(f"Mutação não suportada em '{resource}'.")
 
 
@@ -2313,6 +2790,15 @@ def execute_mutation(
                 recovered = maybe_show(
                     client, call.service, call.recovery_selector
                 )
+            if recovered is None and call.operation == "delete" and call.recovery_selector:
+                results.append(
+                    {
+                        "index": index,
+                        "status": "recovered_after_timeout",
+                        "item": {"deleted": True},
+                    }
+                )
+                continue
             if recovered is None:
                 raise
             results.append(
@@ -2440,7 +2926,7 @@ def add_list_filters(parser: argparse.ArgumentParser, resource: str) -> None:
         action="store_true",
         help="Percorre páginas até o limite configurado.",
     )
-    if resource != "transfers":
+    if resource not in ("transfers", "account-entries"):
         parser.add_argument("--only-api", action="store_true")
         parser.add_argument("--changed-from", type=validate_date)
         parser.add_argument("--changed-to", type=validate_date)
@@ -2457,6 +2943,13 @@ def add_list_filters(parser: argparse.ArgumentParser, resource: str) -> None:
     if resource in ("sales-orders", "service-orders"):
         parser.add_argument("--customer-id", type=int)
         parser.add_argument("--status")
+    if resource == "account-entries":
+        parser.add_argument(
+            "--nature",
+            required=True,
+            choices=tuple(ACCOUNT_ENTRY_NATURES),
+            help="Natureza manual: expense (EXTP) ou revenue (EXTR).",
+        )
     parser.set_defaults(handler=execute_list)
 
 

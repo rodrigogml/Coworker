@@ -150,6 +150,67 @@ O valor pode ser parcial, mas não pode exceder o saldo aberto. Cancelamentos us
 em `receivables` como `reconcile` e `unreconcile`. Nessas quatro operações, o
 `selector` identifica a baixa, não o título.
 
+## Lançamentos diretos em conta
+
+Usar `account-entries` para receitas ou despesas realizadas diretamente em uma conta,
+sem gerar título a pagar ou receber. Criação e alteração exigem `nature` igual a
+`expense` ou `revenue`; a skill consulta as categorias e confirma a natureza antes da
+gravação.
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "tarifa-bancaria-20260804-001",
+  "data": {
+    "nature": "expense",
+    "account": {"id": 123},
+    "date": "04/08/2026",
+    "amount": "150.00",
+    "document_type": "DEB",
+    "category": {"code": "2.01.01"},
+    "counterparty": {"id": 456},
+    "project": {"name": "Reforma da matriz"},
+    "departments": [{"code": "DEP-ADMIN", "percentage": "100.00"}],
+    "document_number": "TARIFA-08",
+    "observation": "Tarifa bancária"
+  }
+}
+```
+
+Campos obrigatórios na criação: `nature`, `account`, `date`, `amount`,
+`document_type` e exatamente um entre `category` e `categories`. O valor deve ser
+positivo. Rateios devem usar somente valores ou somente percentuais e fechar no valor
+do lançamento ou em 100%.
+
+Tipos de documento permitidos: `ADI`, `BOL`, `CRT`, `CHQ`, `CON`, `CRE`, `DRF`,
+`DAS`, `DEB`, `DIN`, `DOC`, `GUIA`, `PROT`, `REC`, `RPA`, `TED` e `99999`.
+`TRA` pertence exclusivamente ao recurso `transfers`.
+
+Uma alteração é parcial, mas sempre exige `nature` como declaração de segurança:
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "tarifa-bancaria-20260804-ajuste",
+  "selector": {"id": 12345},
+  "data": {
+    "nature": "expense",
+    "amount": "145.00",
+    "observation": null,
+    "departments": []
+  }
+}
+```
+
+`null` remove `counterparty`, `project`, `document_number` ou `observation`;
+`departments: []` remove o rateio departamental. Alterar o valor exige que rateios
+preservados continuem fechando no novo total. Não é permitido converter despesa em
+receita ou vice-versa: excluir e criar um novo lançamento exige autorizações próprias.
+
+Alteração e exclusão aceitam somente lançamentos manuais diretos `EXTP` e `EXTR`,
+inclusive os criados na interface Omie. Registros sem código de integração devem ser
+selecionados por `id`. A exclusão exige `confirm_delete: true`.
+
 ## Transferências entre contas
 
 Usar `transfers list|show|create|update|delete`. A inclusão gera um único

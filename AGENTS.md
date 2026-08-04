@@ -434,8 +434,9 @@ uma única entrada do KeePassXC: App Key no campo `Username` e App Secret no cam
 `Password`. O script deve obter ambos internamente.
 
 Consultas são permitidas dentro do escopo solicitado. A skill oferece operações
-controladas para clientes/fornecedores, projetos, contas a pagar e receber, baixas,
-conciliações de recebimentos e transferências entre contas. Toda escrita exige
+controladas para clientes/fornecedores, projetos, lançamentos diretos em conta,
+contas a pagar e receber, baixas, conciliações de recebimentos e transferências entre
+contas. Toda escrita exige
 autorização explícita e atual, `--profile` e envelope JSON validado. Não improvisar
 chamadas, métodos ou parâmetros diretamente contra a API. Upserts, boletos, PIX,
 faturamentos e emissões permanecem fora da allowlist.
