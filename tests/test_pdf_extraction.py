@@ -163,7 +163,8 @@ class PdfExtractionTests(unittest.TestCase):
             root = Path(temporary) / "project"
             input_dir = root / "data" / "telegram" / "jobs" / "7" / "input"
             input_dir.mkdir(parents=True)
-            inside = input_dir / "receipt.pdf"
+            inside = input_dir / "2026" / "08" / "123" / "receipt.pdf"
+            inside.parent.mkdir(parents=True)
             inside.write_bytes(_pdf_bytes(["ok"]))
             outside = Path(temporary) / "outside.pdf"
             outside.write_bytes(_pdf_bytes(["fora"]))
