@@ -74,7 +74,8 @@ envelope. Para uma criação simples de lançamento direto, executar o preparado
 python skills/omie/scripts/omie.py account-entries prepare `
   --request-id telegram:omie:identificador-estavel `
   --nature expense --account-id 123 --date 04/08/2026 --amount 150.00 `
-  --document-type DEB --category-code 2.01.01 --project-id 456
+  --document-type DEB --category-code 2.01.01 --project-id 456 `
+  --department DEP-ADMIN:100
 ```
 
 O comando não acessa credenciais nem a API. Ele cria exclusivamente dentro de
@@ -82,6 +83,10 @@ O comando não acessa credenciais nem a API. Ele cria exclusivamente dentro de
 `account-entries create --input-file CAMINHO`, primeiro com `--dry-run`. Confinamento,
 nome idempotente e criação exclusiva são fornecidos pelo componente compartilhado
 `interfaces.telegram.job_context`; não implementar uma segunda escrita dentro da skill.
+Repetir `--department CODIGO:PERCENTUAL` para ratear entre departamentos; os
+percentuais devem ser positivos, não podem repetir códigos e devem somar exatamente
+100. O preparador mantém a categoria única informada por `--category-code`; essa opção
+não cria rateio de categorias.
 
 Usar o mesmo `request_id` ao retomar uma operação. Em lote, corrigir a falha e
 reenviar o mesmo envelope: a skill valida todos os itens antes da primeira escrita,

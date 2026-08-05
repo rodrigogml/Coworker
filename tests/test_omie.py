@@ -1172,6 +1172,7 @@ class OmieTests(unittest.TestCase):
                 category_code="2.01.01",
                 project_id=9,
                 counterparty_id=None,
+                department=["ADM:100"],
                 document_number=None,
                 observation="Transporte autorizado",
             )
@@ -1206,6 +1207,11 @@ class OmieTests(unittest.TestCase):
                         "nome": "Operação",
                         "inativo": "N",
                     },
+                    "ConsultarDepartamento": {
+                        "codigo": "ADM",
+                        "descricao": "Administrativo",
+                        "inativo": "N",
+                    },
                     "ConsultaLancCC": entry_show,
                 }
             )
@@ -1228,9 +1234,21 @@ class OmieTests(unittest.TestCase):
         self.assertEqual(document["data"]["account"], {"id": 5})
         self.assertEqual(document["data"]["project"], {"id": 9})
         self.assertNotIn("counterparty", document["data"])
-        self.assertNotIn("departments", document["data"])
+        self.assertEqual(
+            document["data"]["departments"],
+            [{"code": "ADM", "percentage": 100}],
+        )
         self.assertTrue(dry_run["dry_run"])
         self.assertEqual(dry_run["calls"][0]["method"], "IncluirLancCC")
+        self.assertEqual(
+            dry_run["calls"][0]["params"]["departamentos"],
+            [{"cCodDep": "ADM", "nPerDep": 100}],
+        )
+        self.assertEqual(
+            dry_run["calls"][0]["params"]["detalhes"]["cCodCateg"],
+            "2.01.01",
+        )
+        self.assertNotIn("aCodCateg", dry_run["calls"][0]["params"]["detalhes"])
 
     def test_account_entry_prepare_refuses_overwrite_and_external_directory(self):
         with TemporaryDirectory() as temporary:
@@ -1247,6 +1265,7 @@ class OmieTests(unittest.TestCase):
                 category_code="2.01.01",
                 project_id=None,
                 counterparty_id=None,
+                department=[],
                 document_number=None,
                 observation=None,
             )
@@ -1288,12 +1307,65 @@ class OmieTests(unittest.TestCase):
                 "99999",
                 "--category-code",
                 "2.01.01",
+                "--department",
+                "INFRA:60",
+                "--department",
+                "OPERACOES:40",
             ]
         )
 
         self.assertIs(args.handler, omie.execute_prepare_account_entry)
         self.assertEqual(args.account_id, 5)
         self.assertEqual(args.category_code, "2.01.01")
+        self.assertEqual(args.department, ["INFRA:60", "OPERACOES:40"])
+
+    def test_account_entry_prepare_validates_department_allocations(self):
+        self.assertEqual(
+            omie.prepare_department_allocations(["INFRA:60", "OPERACOES:40"]),
+            [
+                {"code": "INFRA", "percentage": 60},
+                {"code": "OPERACOES", "percentage": 40},
+            ],
+        )
+        for values in (
+            ["INFRA:99"],
+            ["INFRA:0", "OPERACOES:100"],
+            ["INFRA:101"],
+            [":100"],
+            ["INFRA"],
+            ["INFRA:50", "INFRA:50"],
+        ):
+            with self.subTest(values=values), self.assertRaises(omie.OmieToolError):
+                omie.prepare_department_allocations(values)
+
+    def test_account_entry_prepare_invalid_departments_do_not_create_envelope(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            derived = root / "data" / "telegram" / "jobs" / "8" / "derived"
+            derived.mkdir(parents=True)
+            args = argparse.Namespace(
+                request_id="telegram:omie:entry-8",
+                nature="expense",
+                account_id=5,
+                date="04/08/2026",
+                amount="450.00",
+                document_type="99999",
+                category_code="2.01.01",
+                project_id=None,
+                counterparty_id=None,
+                department=["INFRA:70", "OPERACOES:20"],
+                document_number=None,
+                observation=None,
+            )
+
+            with self.assertRaises(omie.OmieToolError):
+                omie.prepare_account_entry_envelope(
+                    args,
+                    project_root=root,
+                    environment={"COWORKER_JOB_DERIVED": str(derived)},
+                )
+
+            self.assertEqual(list(derived.iterdir()), [])
 
     def test_account_entry_prepare_main_does_not_load_credentials(self):
         argv = [

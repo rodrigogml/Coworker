@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -2097,6 +2097,41 @@ def positive_identifier(value: Any, label: str) -> int:
     return value
 
 
+def prepare_department_allocations(values: Sequence[str] | None) -> list[dict[str, Any]]:
+    """Converte rateios tipados CODIGO:PERCENTUAL para o contrato público."""
+    if not values:
+        return []
+    allocations: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    total = Decimal("0")
+    for index, raw in enumerate(values, 1):
+        if not isinstance(raw, str):
+            raise OmieToolError(f"'--department' #{index} deve usar CODIGO:PERCENTUAL.")
+        code, separator, percentage_text = raw.rpartition(":")
+        code = code.strip()
+        percentage_text = percentage_text.strip()
+        if not separator or not code or not percentage_text:
+            raise OmieToolError(f"'--department' #{index} deve usar CODIGO:PERCENTUAL.")
+        if code in seen:
+            raise OmieToolError(f"O departamento '{code}' foi informado mais de uma vez.")
+        percentage = decimal_value(
+            percentage_text,
+            f"--department #{index} percentual",
+        )
+        if percentage > Decimal("100"):
+            raise OmieToolError(
+                f"O percentual de '--department' #{index} deve ser menor ou igual a 100."
+            )
+        seen.add(code)
+        total += percentage
+        allocations.append(
+            {"code": code, "percentage": decimal_number(percentage)}
+        )
+    if total != Decimal("100"):
+        raise OmieToolError("O rateio de '--department' deve fechar exatamente em 100%.")
+    return allocations
+
+
 def prepare_account_entry_envelope(
     args: argparse.Namespace,
     *,
@@ -2141,6 +2176,9 @@ def prepare_account_entry_envelope(
             data[public_name] = require_nonempty_string(
                 value, f"--{option.replace('_', '-')}", maximum
             )
+    departments = prepare_department_allocations(getattr(args, "department", None))
+    if departments:
+        data["departments"] = departments
     document = {
         "schema_version": SCHEMA_VERSION,
         "request_id": request_id,
@@ -3081,6 +3119,16 @@ def add_account_entry_prepare(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--category-code", required=True)
     parser.add_argument("--counterparty-id", type=int)
     parser.add_argument("--project-id", type=int)
+    parser.add_argument(
+        "--department",
+        action="append",
+        default=[],
+        metavar="CODIGO:PERCENTUAL",
+        help=(
+            "Rateio departamental tipado; repita a opção para múltiplos "
+            "departamentos, cuja soma deve ser 100."
+        ),
+    )
     parser.add_argument("--document-number")
     parser.add_argument("--observation")
     parser.set_defaults(handler=execute_prepare_account_entry)

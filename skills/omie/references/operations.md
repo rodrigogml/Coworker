@@ -165,14 +165,22 @@ python skills/omie/scripts/omie.py account-entries prepare `
   --request-id telegram:omie:tarifa-20260804 `
   --nature expense --account-id 123 --date 04/08/2026 --amount 150.00 `
   --document-type DEB --category-code 2.01.01 `
-  --project-id 456 --observation "Tarifa bancária"
+  --project-id 456 --department DEP-ADMIN:100 `
+  --observation "Tarifa bancária"
 ```
 
 O preparador aceita ainda `--counterparty-id` e `--document-number`. Ele monta somente
-uma categoria, sem rateio de categorias ou departamentos. O JSON é criado com nome
-determinístico dentro do `derived/` do trabalho atual; repetição idêntica reutiliza o
-arquivo e conteúdo divergente para o mesmo `request_id` é recusado. O resultado não
-autoriza a escrita e deve ser consumido assim:
+uma categoria, sem rateio de categorias. Para departamentos, repetir
+`--department CODIGO:PERCENTUAL`; cada percentual deve estar entre zero (exclusivo) e
+100 (inclusivo), os códigos não podem se repetir e a soma deve fechar exatamente em
+100. Por exemplo, `--department INFRA:60 --department OPERACOES:40` gera
+`departments` com os dois rateios no contrato público da skill.
+
+O JSON é criado com nome determinístico dentro do `derived/` do trabalho atual;
+repetição idêntica reutiliza o arquivo e conteúdo divergente para o mesmo
+`request_id` é recusado. O preparador não acessa credenciais nem a API; a existência e
+atividade de cada departamento são verificadas posteriormente por `create --dry-run`
+e `create`. O resultado não autoriza a escrita e deve ser consumido assim:
 
 ```powershell
 python skills/omie/scripts/omie.py --profile EMPRESA account-entries create `
