@@ -707,6 +707,10 @@ class AppServerBackendTests(unittest.TestCase):
 
         self.assertEqual(str(output), environment["COWORKER_JOB_OUTPUT"])
         self.assertEqual(
+            str(output.parent / "input"),
+            environment["COWORKER_JOB_INPUT"],
+        )
+        self.assertEqual(
             str(output.parent / "derived"),
             environment["COWORKER_JOB_DERIVED"],
         )

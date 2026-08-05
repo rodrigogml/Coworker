@@ -729,6 +729,7 @@ class CodexIsolationTests(unittest.TestCase):
             "scripts/integration_config.py",
             "scripts/memory.py",
             "scripts/vault_entities.py",
+            "interfaces/telegram/scripts/extract_pdf_text.py",
             "interfaces/telegram/scripts/restart_gateway.py",
             "interfaces/telegram/scripts/request_credential.py",
             "skills/calendar/scripts/calendar.py",

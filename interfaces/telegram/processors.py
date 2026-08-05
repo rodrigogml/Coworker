@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
 import io
 import json
 import shutil
@@ -14,6 +13,13 @@ from pathlib import Path
 
 from interfaces.telegram.config import ProcessorConfig
 from interfaces.telegram.contracts import Attachment
+from interfaces.telegram.pdf_extraction import (
+    DEFAULT_MAX_CONTENT_BYTES,
+    HARD_MAX_FILE_BYTES,
+    PdfExtractionError,
+    dependency_available as pdf_dependency_available,
+    extract_pdf_text,
+)
 from interfaces.telegram.transcription import EccoVoxClient, TranscriptionError
 
 
@@ -44,7 +50,7 @@ class ProcessorRegistry:
     def doctor(self) -> dict[str, dict[str, str | bool]]:
         return {
             "text_json_csv_xml_zip_docx_xlsx": {"available": True, "provider": "stdlib"},
-            "pdf": {"available": importlib.util.find_spec("pypdf") is not None, "provider": "pypdf"},
+            "pdf": {"available": pdf_dependency_available(), "provider": "pypdf"},
             "ocr": {"available": shutil.which("tesseract") is not None, "provider": "tesseract"},
             "audio_transcription": self.transcription.doctor(),
             "video": {
@@ -79,8 +85,8 @@ class ProcessorRegistry:
             return PreparedContent("xlsx", self._xlsx(path), True, "XLSX extraído por XML interno.")
         if suffix == ".zip" or mime == "application/zip":
             return PreparedContent("zip", self._zip_inventory(path), True, "Somente inventário seguro; membros não foram executados.")
-        if suffix == ".pdf":
-            return PreparedContent("pdf", None, False, "Processador PDF opcional não foi aplicado; o original foi preservado.")
+        if suffix == ".pdf" or mime == "application/pdf":
+            return self._pdf(path)
         if mime.startswith("audio/"):
             return self._audio(attachment)
         if mime.startswith("video/"):
@@ -119,6 +125,52 @@ class ProcessorRegistry:
             return self._limit(path.read_text(encoding="utf-8"))
         except UnicodeDecodeError as exc:
             raise ProcessorError("O arquivo de texto não está em UTF-8.") from exc
+
+    def _pdf(self, path: Path) -> PreparedContent:
+        if not pdf_dependency_available():
+            return PreparedContent(
+                "pdf",
+                None,
+                False,
+                "Extração PDF indisponível; instale as dependências do projeto.",
+            )
+        try:
+            result = extract_pdf_text(
+                path,
+                max_pages=self.config.max_pages,
+                max_characters=self.config.max_extracted_characters,
+                max_file_bytes=HARD_MAX_FILE_BYTES,
+                max_content_bytes=DEFAULT_MAX_CONTENT_BYTES,
+            )
+        except PdfExtractionError:
+            return PreparedContent(
+                "pypdf",
+                None,
+                False,
+                "O PDF não pôde ser extraído com segurança; o original foi preservado.",
+            )
+        if result.needs_ocr:
+            return PreparedContent(
+                "pypdf",
+                None,
+                False,
+                "PDF sem texto pesquisável; OCR local é necessário.",
+            )
+        if not result.text:
+            return PreparedContent(
+                "pypdf",
+                None,
+                False,
+                "A extração PDF ficou incompleta; o original foi preservado.",
+            )
+        limit_note = " com limites aplicados" if result.truncated else ""
+        return PreparedContent(
+            "pypdf",
+            result.text,
+            True,
+            f"Texto pesquisável extraído de {result.pages_processed}/"
+            f"{result.page_count} página(s){limit_note}; conteúdo não confiável.",
+        )
 
     def _limit(self, value: str) -> str:
         return value[: self.config.max_extracted_characters]

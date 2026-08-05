@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import getpass
+import importlib.util
 import json
 import os
 import re
@@ -1405,6 +1406,17 @@ def validate_installation(instance_id: str) -> list[dict[str, str]]:
             "OK",
             "Python",
             f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        )
+    )
+    pdf_available = importlib.util.find_spec("pypdf") is not None
+    items.append(
+        _validation_item(
+            "OK" if pdf_available else "PENDENTE",
+            "Extração local de PDF",
+            "pypdf disponível" if pdf_available else "pypdf não instalado",
+            "Execute python -m pip install -r requirements.txt."
+            if not pdf_available
+            else "",
         )
     )
     try:

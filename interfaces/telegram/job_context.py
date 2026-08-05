@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+INPUT_ENVIRONMENT_VARIABLE = "COWORKER_JOB_INPUT"
 DERIVED_ENVIRONMENT_VARIABLE = "COWORKER_JOB_DERIVED"
 _NAMESPACE_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
@@ -28,28 +29,65 @@ class JobJsonFile:
     created: bool
 
 
+def _resolve_job_directory(
+    environment_variable: str,
+    expected_name: str,
+    project_root: Path,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    effective_environment = os.environ if environment is None else environment
+    raw = str(effective_environment.get(environment_variable, "")).strip()
+    if not raw:
+        raise JobContextError(f"{environment_variable} não foi definido pelo gateway.")
+    try:
+        project_data = (project_root / "data").resolve(strict=True)
+        directory = Path(raw).expanduser().resolve(strict=True)
+        directory.relative_to(project_data)
+    except (OSError, ValueError) as exc:
+        raise JobContextError("O diretório do trabalho não pertence a data/.") from exc
+    if not directory.is_dir() or directory.name.casefold() != expected_name:
+        raise JobContextError("O diretório do trabalho é inválido.")
+    return directory
+
+
+def resolve_job_input_file(
+    value: str | Path,
+    *,
+    project_root: Path,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Resolve somente arquivo regular localizado no ``input/`` do trabalho atual."""
+    input_directory = _resolve_job_directory(
+        INPUT_ENVIRONMENT_VARIABLE,
+        "input",
+        project_root,
+        environment,
+    )
+    raw = Path(value).expanduser()
+    candidate = raw if raw.is_absolute() else input_directory / raw
+    try:
+        if candidate.is_symlink():
+            raise JobContextError("O arquivo de entrada não é regular e seguro.")
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(input_directory)
+    except (OSError, ValueError) as exc:
+        raise JobContextError("O arquivo não pertence à entrada do trabalho.") from exc
+    if not resolved.is_file() or resolved.is_symlink():
+        raise JobContextError("O arquivo de entrada não é regular e seguro.")
+    return resolved
+
+
 def resolve_job_derived_directory(
     project_root: Path,
     environment: Mapping[str, str] | None = None,
 ) -> Path:
     """Resolve o ``derived/`` atual e confirma seu confinamento em ``data/``."""
-    effective_environment = os.environ if environment is None else environment
-    raw = str(effective_environment.get(DERIVED_ENVIRONMENT_VARIABLE, "")).strip()
-    if not raw:
-        raise JobContextError(
-            f"{DERIVED_ENVIRONMENT_VARIABLE} não foi definido pelo gateway."
-        )
-    try:
-        project_data = (project_root / "data").resolve(strict=True)
-        derived = Path(raw).expanduser().resolve(strict=True)
-        derived.relative_to(project_data)
-    except (OSError, ValueError) as exc:
-        raise JobContextError(
-            "O diretório derivado do trabalho não pertence a data/."
-        ) from exc
-    if not derived.is_dir() or derived.name.casefold() != "derived":
-        raise JobContextError("O diretório derivado do trabalho é inválido.")
-    return derived
+    return _resolve_job_directory(
+        DERIVED_ENVIRONMENT_VARIABLE,
+        "derived",
+        project_root,
+        environment,
+    )
 
 
 def _existing_result(destination: Path, serialized: bytes) -> JobJsonFile:

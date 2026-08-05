@@ -283,8 +283,9 @@ result.json            resposta estruturada original
 ```
 
 O processo do Codex recebe `COWORKER_JOB_OUTPUT` e `COWORKER_JOB_DERIVED` com os
-caminhos absolutos da caixa atual. Scripts fechados podem usar `derived/` para entradas
-intermediárias; não devem aceitar um destino alternativo nem sobrescrever arquivos.
+caminhos absolutos da caixa atual, além de `COWORKER_JOB_INPUT` somente para validar
+arquivos recebidos. Scripts fechados podem usar `derived/` para entradas intermediárias;
+não devem aceitar um destino alternativo nem sobrescrever arquivos.
 
 ### Entradas intermediárias de skills
 
@@ -326,8 +327,19 @@ sobrescreve arquivos e devolve apenas metadados seguros. Arquivos em
 Sem dependências externas, a interface prepara texto UTF-8, JSON, CSV, XML, inventário
 de ZIP e extração básica de DOCX/XLSX por XML interno. ZIP possui limites de membros e
 tamanho descompactado e rejeita path traversal. Imagens seguem como entrada visual
-nativa. PDF, OCR e vídeo possuem diagnóstico opcional; quando a dependência não está
-disponível, o original é preservado e essa limitação é informada ao Codex. Áudio pode
+nativa. PDFs pesquisáveis são extraídos localmente com `pypdf`, respeitando os limites
+de páginas e caracteres de `[processors]`; metadados devolvem somente nomes de campos,
+nunca valores. O comando fechado abaixo permite repetir a leitura sem aceitar caminhos
+fora do `input/` atual:
+
+```powershell
+python interfaces/telegram/scripts/extract_pdf_text.py --input CAMINHO_DO_PDF
+```
+
+O JSON informa `needs_ocr: true` quando não há texto pesquisável. OCR não é executado
+nem enviado a serviço remoto automaticamente; o original é preservado. Se `pypdf` não
+estiver instalado, o diagnóstico orienta `python -m pip install -r requirements.txt`.
+Vídeo mantém apenas diagnóstico opcional. Áudio pode
 ser transcrito pelo EccoVox configurado em `[processors.transcription]`, por CLI
 isolado ou HTTP. O configurador local oferece host, porta, instalação e modelo. Uma
 mensagem Telegram do tipo `voice` com confiança

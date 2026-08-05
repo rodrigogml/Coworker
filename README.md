@@ -94,7 +94,9 @@ python -m pip install -r requirements.txt
 ```
 
 PyKeePass permite que a Coworker leia e grave atributos personalizados protegidos no
-arquivo KDBX. As demais ferramentas continuam preferindo a biblioteca padrão.
+arquivo KDBX. `pypdf` extrai localmente texto pesquisável dos PDFs recebidos pelo
+Telegram; PDFs escaneados são apenas sinalizados para OCR. As demais ferramentas
+continuam preferindo a biblioteca padrão.
 
 Antes do bootstrap, a IA deve diagnosticar o ambiente:
 
