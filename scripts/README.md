@@ -65,6 +65,33 @@ Todos os comandos produzem JSON. Senhas, tokens, chaves privadas e outros segred
 recusados. O parâmetro `--credential-ref` registra somente o nome de uma credencial
 armazenada em um cofre externo.
 
+## Bancos operacionais privados
+
+`instance_db.py` fornece armazenamento SQLite estruturado para dados operacionais da
+instância, separado de `data/memory.sqlite3`. Bancos são identificados por nome e
+criados exclusivamente em `data/instance_db/`; a ferramenta não aceita caminhos,
+SQL arbitrário ou extensões.
+
+```powershell
+python scripts/instance_db.py database create tarefas --purpose "Rotinas recorrentes"
+python scripts/instance_db.py table create tarefas jobs `
+  --column id:integer:primary `
+  --column status:text:required `
+  --column title:text:required
+python scripts/instance_db.py row insert tarefas jobs `
+  --value status=draft --value title="Revisar comprovante"
+python scripts/instance_db.py row list tarefas jobs --where status=draft
+python scripts/instance_db.py row show tarefas jobs --where draft_key=job-1
+python scripts/instance_db.py table add-column tarefas jobs --column notes:text
+python scripts/instance_db.py database backup tarefas
+```
+
+Tabelas e registros dos bancos próprios podem ser administrados autonomamente pela
+instância, inclusive excluídos. A exclusão do banco inteiro exige `--confirm` e move
+o arquivo para a lixeira privada; purgas permanentes não são automáticas. Não
+armazenar senhas, tokens ou chaves. Para schemas específicos da instância, usar os
+comandos declarativos da ferramenta, não criar migrations públicas.
+
 ## Cofre KeePassXC
 
 `credential_vault.py` integra a Coworker ao KeePassXC conforme
