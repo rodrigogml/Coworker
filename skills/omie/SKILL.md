@@ -31,6 +31,13 @@ exige o perfil explícito, mesmo que exista `default_profile`.
   determinístico.
 - Manter boleto, PIX, faturamento e emissão fiscal fora desta skill.
 
+Em `payables update` e `receivables update`, `data.reconcile` é booleano e altera o
+status de conciliação do documento (`true` conciliado, `false` não conciliado),
+traduzido para `conciliar_documento = "S"/"N"`. As operações `receivables reconcile`
+e `receivables unreconcile` continuam destinadas à baixa identificada pelo seletor.
+Para `account-entries`, a API oficial de `AlterarLancCC` não expõe conciliação no
+contrato de alteração; a skill não simula esse campo.
+
 ## Consultar
 
 Usar `doctor` quando for necessário diagnosticar autenticação. Preferir `show`
@@ -53,6 +60,10 @@ Usar `account-entries` para receitas ou despesas lançadas diretamente em uma co
 sem criar título a pagar ou receber. Usar `payables`/`receivables` quando existir
 obrigação ou direito financeiro, e `transfers` somente para movimentação entre duas
 contas próprias.
+
+O comando `account-entries update` aceita atualizações parciais de valores e campos
+específicos (por exemplo `amount`, `date`, `category`, `project`, `departments`,
+`document_number` e `observation`), preservando os campos omitidos.
 
 ## Alterar
 

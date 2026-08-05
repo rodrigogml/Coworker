@@ -95,6 +95,9 @@ Usar `payables create|update|delete` ou
 - `document_type`, `fiscal_document_number`, `issue_date` e `observation`;
 - `installments`, somente em `create`.
 
+Em `update`, `reconcile` é um booleano: `true` marca o documento como conciliado e
+`false` remove a conciliação. O update continua parcial e preserva campos omitidos.
+
 ```json
 {
   "schema_version": 1,

@@ -941,6 +941,7 @@ FINANCIAL_FIELDS = {
     "project",
     "departments",
     "installments",
+    "reconcile",
 }
 TRANSFER_FIELDS = {
     "source_account",
@@ -1831,6 +1832,10 @@ def apply_financial_patch(
             )
     if "issue_date" in data:
         payload["data_emissao"] = date_value(data["issue_date"], "data.issue_date")
+    if "reconcile" in data:
+        if not isinstance(data["reconcile"], bool):
+            raise OmieToolError("'data.reconcile' deve ser booleano.")
+        payload["conciliar_documento"] = "S" if data["reconcile"] else "N"
     if "category" in data and "categories" in data:
         raise OmieToolError("Use 'category' ou 'categories', nunca ambos.")
     total = decimal_value(payload.get("valor_documento"), "data.amount")

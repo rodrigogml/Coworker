@@ -76,6 +76,8 @@ python skills/omie/scripts/omie.py receivables show --id 123
 ```
 
 Contas a pagar aceitam `create`, `update`, `delete`, `pay` e `cancel-payment`.
+Em `update`, `data.reconcile` altera o status de conciliação do documento como
+booleano (`true`/`false`).
 Contas a receber aceitam `create`, `update`, `delete`, `receive`, `cancel-receipt`,
 `reconcile` e `unreconcile`.
 

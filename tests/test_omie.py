@@ -583,6 +583,51 @@ class OmieTests(unittest.TestCase):
                 }
             )
 
+    def test_financial_update_changes_reconciliation_and_preserves_partial_values(self):
+        current = {
+            "codigo_lancamento_omie": 20,
+            "codigo_lancamento_integracao": "PAY-20",
+            "codigo_cliente_fornecedor": 7,
+            "data_vencimento": "10/08/2026",
+            "valor_documento": 100,
+            "codigo_categoria": "2.01.01",
+            "data_previsao": "10/08/2026",
+            "id_conta_corrente": 5,
+            "numero_documento": "DOC",
+            "observacao": "old",
+        }
+        client = FakeOperationClient({"ConsultarContaPagar": current})
+        call = omie.prepare_financial_call(
+            client,
+            "payables",
+            "update",
+            {"selector": {"id": 20}, "data": {"amount": "125.50", "reconcile": True}},
+            "pay-update-1",
+        )[0]
+        self.assertEqual(call.method, "AlterarContaPagar")
+        self.assertEqual(call.params["valor_documento"], 125.5)
+        self.assertEqual(call.params["conciliar_documento"], "S")
+        self.assertEqual(call.params["codigo_lancamento_omie"], 20)
+        self.assertEqual(call.params["observacao"], "old")
+
+        call = omie.prepare_financial_call(
+            FakeOperationClient({"ConsultarContaPagar": current}),
+            "payables",
+            "update",
+            {"selector": {"id": 20}, "data": {"reconcile": False}},
+            "pay-update-2",
+        )[0]
+        self.assertEqual(call.params["conciliar_documento"], "N")
+
+        with self.assertRaisesRegex(omie.OmieToolError, "booleano"):
+            omie.prepare_financial_call(
+                FakeOperationClient({"ConsultarContaPagar": current}),
+                "payables",
+                "update",
+                {"selector": {"id": 20}, "data": {"reconcile": "true"}},
+                "pay-update-3",
+            )
+
     def test_financial_delete_detects_settled_status_without_paid_value(self):
         self.assertGreater(
             omie.title_paid_amount({"status_titulo": "LIQUIDADO"}),
@@ -939,6 +984,8 @@ class OmieTests(unittest.TestCase):
                 "selector": {"id": 44},
                 "data": {
                     "nature": "expense",
+                    "amount": "120.00",
+                    "date": "05/08/2026",
                     "document_number": None,
                     "observation": None,
                     "departments": [],
@@ -948,10 +995,23 @@ class OmieTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(call.params["nCodLanc"], 44)
+        self.assertEqual(call.params["cabecalho"]["nValorLanc"], 120)
+        self.assertEqual(call.params["cabecalho"]["dDtLanc"], "05/08/2026")
         self.assertNotIn("cCodIntLanc", call.params)
         self.assertNotIn("cNumDoc", call.params["detalhes"])
         self.assertNotIn("cObs", call.params["detalhes"])
         self.assertNotIn("departamentos", call.params)
+
+        with self.assertRaisesRegex(omie.OmieToolError, "reconcile"):
+            omie.prepare_account_entry_call(
+                client,
+                "update",
+                {
+                    "selector": {"id": 44},
+                    "data": {"nature": "expense", "reconcile": True},
+                },
+                "entry-update-reconcile",
+            )
 
     def test_account_entry_blocks_nature_change_and_non_manual_origins(self):
         expense = {
