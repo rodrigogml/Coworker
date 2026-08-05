@@ -487,6 +487,106 @@ class OmieTests(unittest.TestCase):
         )[0]
         self.assertEqual(call.method, "ExcluirCliente")
 
+    def test_customer_prepare_is_typed_confined_and_idempotent(self):
+        args = argparse.Namespace(
+            request_id="telegram:customer:foster-1",
+            legal_name="FOSTER LIMA LTDA",
+            trade_name=None,
+            tax_id="03.390.722/0001-98",
+            email="financeiro@example.com",
+            phone_ddd=None,
+            phone=None,
+            contact=None,
+            homepage=None,
+            address=None,
+            address_number=None,
+            neighborhood=None,
+            complement=None,
+            state=None,
+            city=None,
+            zip_code=None,
+            observation="Plotagem de projetos",
+        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            derived = root / "data" / "telegram" / "jobs" / "job-1" / "derived"
+            derived.mkdir(parents=True)
+            environment = {"COWORKER_JOB_DERIVED": str(derived)}
+            first = omie.prepare_customer_envelope(
+                args, project_root=root, environment=environment
+            )
+            second = omie.prepare_customer_envelope(
+                args, project_root=root, environment=environment
+            )
+            document = json.loads(Path(first["path"]).read_text(encoding="utf-8"))
+            self.assertTrue(first["created"])
+            self.assertFalse(second["created"])
+            self.assertEqual(document["data"]["razao_social"], "FOSTER LIMA LTDA")
+            self.assertEqual(document["data"]["nome_fantasia"], "FOSTER LIMA LTDA")
+            self.assertEqual(document["data"]["cnpj_cpf"], "03390722000198")
+
+    def test_customer_prepare_rejects_invalid_tax_id_and_external_destination(self):
+        args = argparse.Namespace(
+            request_id="customer-invalid",
+            legal_name="Fornecedor",
+            trade_name="Fornecedor",
+            tax_id="03.390.722/0001-99",
+            email=None,
+            phone_ddd=None,
+            phone=None,
+            contact=None,
+            homepage=None,
+            address=None,
+            address_number=None,
+            neighborhood=None,
+            complement=None,
+            state=None,
+            city=None,
+            zip_code=None,
+            observation=None,
+        )
+        with self.assertRaisesRegex(omie.OmieToolError, "CPF ou CNPJ"):
+            omie.prepare_customer_envelope(args)
+        args.tax_id = "03.390.722/0001-98"
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(omie.OmieToolError):
+                omie.prepare_customer_envelope(
+                    args,
+                    project_root=Path(directory),
+                    environment={"COWORKER_JOB_DERIVED": directory},
+                )
+
+    def test_customer_create_reuses_existing_tax_id_instead_of_duplicating(self):
+        client = FakeOperationClient(
+            {
+                "ListarClientes": [
+                    {
+                        "codigo_cliente_omie": 77,
+                        "codigo_cliente_integracao": "existing-77",
+                        "cnpj_cpf": "03390722000198",
+                        "razao_social": "FOSTER LIMA LTDA",
+                        "nome_fantasia": "FOSTER LIMA LTDA",
+                        "inativo": "N",
+                    }
+                ]
+            }
+        )
+        calls = omie.prepare_customer_call(
+            client,
+            "create",
+            {
+                "data": {
+                    "razao_social": "FOSTER LIMA LTDA",
+                    "nome_fantasia": "FOSTER LIMA LTDA",
+                    "cnpj_cpf": "03.390.722/0001-98",
+                }
+            },
+            "customer-existing",
+        )
+        self.assertIsNotNone(calls[0].already_applied)
+        self.assertEqual(calls[0].already_applied["codigo_cliente_omie"], 77)
+        self.assertFalse(any(method == "ConsultarCliente" for _, method, _ in client.calls))
+
     def test_exact_name_resolution_rejects_ambiguity_and_inactive_reference(self):
         ambiguous = FakeOperationClient(
             {

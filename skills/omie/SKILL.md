@@ -54,6 +54,24 @@ python skills/omie/scripts/omie.py --profile EMPRESA account-entries list --natu
 python skills/omie/scripts/omie.py --profile EMPRESA transfers show --integration-id ID
 ```
 
+Quando um comprovante trouxer CPF/CNPJ e nome de uma contraparte ausente, pesquisar
+primeiro por `customers` usando `tax_id`. Somente após autorização explícita usar o
+preparador tipado, executar `customers create --dry-run` e então a criação real:
+
+```powershell
+python skills/omie/scripts/omie.py customers prepare `
+  --request-id telegram:omie:contraparte-foster-1 `
+  --legal-name "FOSTER LIMA LTDA" --tax-id 03.390.722/0001-98
+python skills/omie/scripts/omie.py --profile EMPRESA customers create `
+  --input-file CAMINHO_DEVOLVIDO --dry-run
+```
+
+O preparador aceita somente campos tipados, grava exclusivamente em
+`COWORKER_JOB_DERIVED`, não acessa credenciais nem a API e é idempotente pelo
+`request_id`. Nunca cadastrar uma contraparte apenas por inferência; quando ela for
+obrigatória para um lançamento, mantê-lo incompleto até localizar ou cadastrar após
+autorização.
+
 Examinar `pagination.truncated` e continuar por `--page` quando necessário.
 
 Usar `account-entries` para receitas ou despesas lançadas diretamente em uma conta,

@@ -30,6 +30,10 @@ python skills/omie/scripts/omie.py customers show --id 123
 python skills/omie/scripts/omie.py customers show --integration-id ERP-123
 ```
 
+Em trabalhos Telegram restritos, `customers prepare` gera o envelope tipado dentro de
+`COWORKER_JOB_DERIVED`. Pesquise antes pelo CPF/CNPJ e use o arquivo somente depois de
+autorização explícita, primeiro em `customers create --dry-run`.
+
 As mutações disponíveis são `create`, `update`, `deactivate` e `delete`. Consultar
 [operations.md](operations.md) antes de preparar o envelope.
 

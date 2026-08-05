@@ -1189,6 +1189,35 @@ def normalize_tax_id(value: Any) -> str:
     return re.sub(r"\D", "", str(value))
 
 
+def validate_tax_id(value: Any, label: str = "tax_id") -> str:
+    """Valida CPF/CNPJ por tamanho e dígitos verificadores, retornando apenas dígitos."""
+    digits = normalize_tax_id(value)
+    if len(digits) not in (11, 14) or len(set(digits)) == 1:
+        raise OmieToolError(f"'{label}' deve conter CPF ou CNPJ válido.")
+    if len(digits) == 11:
+        weights = range(10, 1, -1)
+        first = sum(int(digit) * weight for digit, weight in zip(digits[:9], weights))
+        check1 = (first * 10) % 11 % 10
+        second = sum(int(digit) * weight for digit, weight in zip(digits[:10], range(11, 1, -1)))
+        check2 = (second * 10) % 11 % 10
+        valid = (check1, check2) == (int(digits[9]), int(digits[10]))
+    else:
+        first = sum(
+            int(digit) * weight
+            for digit, weight in zip(digits[:12], (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2))
+        )
+        check1 = 0 if first % 11 < 2 else 11 - first % 11
+        second = sum(
+            int(digit) * weight
+            for digit, weight in zip(digits[:13], (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2))
+        )
+        check2 = 0 if second % 11 < 2 else 11 - second % 11
+        valid = (check1, check2) == (int(digits[12]), int(digits[13]))
+    if not valid:
+        raise OmieToolError(f"'{label}' deve conter CPF ou CNPJ válido.")
+    return digits
+
+
 def is_inactive(item: Mapping[str, Any]) -> bool:
     """Reconhece as variações oficiais do marcador de inatividade."""
     return any(
@@ -1289,9 +1318,7 @@ def resolve_reference(
     else:
         candidates = list_all_for_resolution(client, resource)
         if key == "tax_id":
-            target = normalize_tax_id(expected)
-            if len(target) not in (11, 14):
-                raise OmieToolError("'customer.tax_id' deve conter CPF ou CNPJ válido.")
+            target = validate_tax_id(expected, "customer.tax_id")
             matches = [
                 item
                 for item in candidates
@@ -1491,6 +1518,30 @@ def prepare_customer_call(
         )
         payload["codigo_cliente_integracao"] = integration_id
         selector = {"codigo_cliente_integracao": integration_id}
+        tax_id = payload.get("cnpj_cpf")
+        if tax_id:
+            matches = [
+                candidate
+                for candidate in list_all_for_resolution(client, "customers")
+                if normalize_tax_id(candidate.get("cnpj_cpf")) == tax_id
+            ]
+            if len(matches) > 1:
+                raise OmieToolError(
+                    "CPF/CNPJ já corresponde a mais de uma contraparte no Omie."
+                )
+            if matches:
+                return [
+                    PreparedCall(
+                        service,
+                        service.mutation_call(operation),
+                        payload,
+                        "customers",
+                        operation,
+                        request_id,
+                        selector,
+                        already_applied=summarize("customers", matches[0]),
+                    )
+                ]
         existing = maybe_show(client, service, selector)
         return [
             PreparedCall(
@@ -1590,6 +1641,8 @@ def validate_customer_payload(
         payload["nome_fantasia"] = require_nonempty_string(
             payload.get("nome_fantasia"), "data.nome_fantasia", 100
         )
+    if "cnpj_cpf" in payload:
+        payload["cnpj_cpf"] = validate_tax_id(payload["cnpj_cpf"], "data.cnpj_cpf")
     text_limits = {
         "cnpj_cpf": 20,
         "telefone1_ddd": 5,
@@ -2205,6 +2258,67 @@ def prepare_account_entry_envelope(
 def execute_prepare_account_entry(args: argparse.Namespace) -> dict[str, Any]:
     """Executa o preparador local sem autenticar ou acessar a API Omie."""
     return prepare_account_entry_envelope(args)
+
+
+def prepare_customer_envelope(
+    args: argparse.Namespace,
+    *,
+    project_root: Path = PROJECT_ROOT,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Cria envelope tipado de contraparte no derived do trabalho atual."""
+    request_id = request_identifier(args.request_id)
+    legal_name = require_nonempty_string(args.legal_name, "--legal-name", 60)
+    trade_name = require_nonempty_string(
+        args.trade_name if args.trade_name is not None else legal_name,
+        "--trade-name",
+        100,
+    )
+    data: dict[str, Any] = {
+        "razao_social": legal_name,
+        "nome_fantasia": trade_name,
+        "cnpj_cpf": validate_tax_id(args.tax_id, "--tax-id"),
+    }
+    option_map = (
+        ("email", "email", 500),
+        ("phone_ddd", "telefone1_ddd", 5),
+        ("phone", "telefone1_numero", 15),
+        ("contact", "contato", 100),
+        ("homepage", "homepage", 100),
+        ("address", "endereco", 60),
+        ("address_number", "endereco_numero", 60),
+        ("neighborhood", "bairro", 60),
+        ("complement", "complemento", 60),
+        ("state", "estado", 2),
+        ("city", "cidade", 40),
+        ("zip_code", "cep", 10),
+        ("observation", "observacao", 5000),
+    )
+    for argument, field, maximum in option_map:
+        value = getattr(args, argument, None)
+        if value is not None:
+            data[field] = require_nonempty_string(value, f"--{argument.replace('_', '-')}", maximum)
+    document = {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id,
+        "data": data,
+    }
+    try:
+        stored = write_job_json(
+            "omie-customer",
+            request_id,
+            document,
+            project_root=project_root,
+            environment=environment,
+        )
+    except JobContextError as exc:
+        raise OmieToolError(str(exc)) from exc
+    return {"ok": True, "created": stored.created, "path": str(stored.path)}
+
+
+def execute_prepare_customer(args: argparse.Namespace) -> dict[str, Any]:
+    """Executa o preparador de contraparte sem autenticar ou acessar a API Omie."""
+    return prepare_customer_envelope(args)
 
 
 def validate_account_entry_category(
@@ -3139,6 +3253,28 @@ def add_account_entry_prepare(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(handler=execute_prepare_account_entry)
 
 
+def add_customer_prepare(parser: argparse.ArgumentParser) -> None:
+    """Expõe somente campos tipados para preparar uma contraparte."""
+    parser.add_argument("--request-id", required=True)
+    parser.add_argument("--legal-name", required=True)
+    parser.add_argument("--trade-name")
+    parser.add_argument("--tax-id", required=True)
+    parser.add_argument("--email")
+    parser.add_argument("--phone-ddd")
+    parser.add_argument("--phone")
+    parser.add_argument("--contact")
+    parser.add_argument("--homepage")
+    parser.add_argument("--address")
+    parser.add_argument("--address-number")
+    parser.add_argument("--neighborhood")
+    parser.add_argument("--complement")
+    parser.add_argument("--state")
+    parser.add_argument("--city")
+    parser.add_argument("--zip-code")
+    parser.add_argument("--observation")
+    parser.set_defaults(handler=execute_prepare_customer)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Constrói a CLI restrita aos contratos documentados da skill."""
     parser = argparse.ArgumentParser(
@@ -3163,6 +3299,12 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Prepara um envelope de criação no trabalho Telegram.",
             )
             add_account_entry_prepare(prepare)
+        if name == "customers":
+            prepare = operations.add_parser(
+                "prepare",
+                help="Prepara um envelope tipado no trabalho Telegram.",
+            )
+            add_customer_prepare(prepare)
         for operation, _ in service.mutation_calls:
             mutation = operations.add_parser(
                 operation,
@@ -3206,7 +3348,7 @@ def main() -> int:
         return 2
     client: OmieClient | None = None
     try:
-        if args.handler is execute_prepare_account_entry:
+        if args.handler in (execute_prepare_account_entry, execute_prepare_customer):
             result = args.handler(args)
         else:
             config = load_config(Path(args.config).expanduser().resolve(), args.profile)
