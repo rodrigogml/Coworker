@@ -9,6 +9,9 @@ O repositório contém apenas o núcleo reutilizável: instruções, skills, scr
 migrations, testes e modelos. Memória, configurações locais, bancos e credenciais
 permanecem em `data/`, fora do Git.
 
+O roadmap de capacidades transversais, incluindo agendamento, scripts privados e
+roteamento de grupos e tópicos do Telegram, está em [NEXT_FEATURES.md](NEXT_FEATURES.md).
+
 > [!IMPORTANT]
 > O projeto está em estágio experimental e é **Windows-first**. Memória, instruções e
 > integrações baseadas em Python são portáveis, mas o desbloqueio automático do cofre
