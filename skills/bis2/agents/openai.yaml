@@ -1,0 +1,4 @@
+interface:
+  display_name: "BIS2"
+  short_description: "Acessa servidores BIS2 via BISCMD."
+  default_prompt: "Use a skill BIS2 para consultar ou operar o BIS2 configurado para esta instância."

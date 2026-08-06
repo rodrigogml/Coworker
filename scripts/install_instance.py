@@ -27,6 +27,8 @@ SECRETS_CONFIG = DATA_DIR / "config" / "secrets.toml"
 GATEWAY = PROJECT_ROOT / "interfaces" / "telegram" / "gateway.py"
 VAULT_TOOL = PROJECT_ROOT / "scripts" / "credential_vault.py"
 MEMORY_TOOL = PROJECT_ROOT / "scripts" / "memory.py"
+BIS2_CONFIG = DATA_DIR / "config" / "bis2.toml"
+BIS2_TOOL = PROJECT_ROOT / "skills" / "bis2" / "scripts" / "bis2.py"
 
 IDENTITY_FIELDS = (
     ("instance_id", "Identificador técnico"),
@@ -414,6 +416,204 @@ minimum_confidence = {float(values['minimum_confidence']):.2f}
     if updated == current:
         updated = current.rstrip() + "\n\n" + block
     _replace_config(TELEGRAM_CONFIG, updated)
+
+
+def _default_bis2_values() -> dict[str, Any]:
+    return {
+        "java_executable": "",
+        "jar_path": "C:/opt/BISCMD/BISCMD-9.0.jar",
+        "working_dir": "C:/opt/BISCMD",
+        "timeout_seconds": 300,
+        "default_profile": "turing",
+        "profiles": {
+            "turing": {
+                "host": "192.168.3.64",
+                "port": 8080,
+                "credential_ref": "BIS2/Turing/BISCMD",
+            }
+        },
+    }
+
+
+def _bis2_content(values: dict[str, Any]) -> str:
+    profiles = values.get("profiles", {})
+    lines = [
+        "java_executable = " + _toml_string(str(values.get("java_executable", ""))),
+        "jar_path = " + _toml_string(str(values.get("jar_path", ""))),
+        "working_dir = " + _toml_string(str(values.get("working_dir", ""))),
+        f"timeout_seconds = {int(values.get('timeout_seconds', 300))}",
+        "default_profile = " + _toml_string(str(values.get("default_profile", ""))),
+        "",
+    ]
+    for name in sorted(profiles):
+        profile = profiles[name]
+        lines.extend(
+            (
+                f"[profiles.{name}]",
+                "host = " + _toml_string(str(profile.get("host", ""))),
+                f"port = {int(profile.get('port', 8080))}",
+                "credential_ref = " + _toml_string(
+                    str(profile.get("credential_ref", ""))
+                ),
+                "",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _load_bis2_values() -> dict[str, Any]:
+    values = _default_bis2_values()
+    if not BIS2_CONFIG.is_file():
+        return values
+    try:
+        with BIS2_CONFIG.open("rb") as stream:
+            root = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise InstallError(f"Não foi possível ler a configuração '{BIS2_CONFIG}'.") from exc
+    for key in ("java_executable", "jar_path", "working_dir", "timeout_seconds", "default_profile"):
+        if key in root:
+            values[key] = root[key]
+    profiles = root.get("profiles")
+    if isinstance(profiles, dict) and profiles:
+        values["profiles"] = {
+            str(name): {
+                "host": str(profile.get("host", "")),
+                "port": int(profile.get("port", 8080)),
+                "credential_ref": str(profile.get("credential_ref", "")),
+            }
+            for name, profile in profiles.items()
+            if isinstance(profile, dict)
+        }
+    return values
+
+
+def _save_bis2_values(values: dict[str, Any]) -> None:
+    _replace_config(BIS2_CONFIG, _bis2_content(values))
+
+
+def _default_bis2_credential_ref(profile_name: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9]+", "", profile_name.title()) or profile_name
+    return f"BIS2/{label}/BISCMD"
+
+
+def _configure_bis2_profile(values: dict[str, Any]) -> bool:
+    profiles = dict(values.get("profiles", {}))
+    print("\nPerfis BIS2:")
+    for name in sorted(profiles):
+        profile = profiles[name]
+        print(
+            f"  - {name}: {profile.get('host')}:{profile.get('port')} "
+            f"({profile.get('credential_ref')})"
+        )
+    name = _ask("Nome do perfil", str(values.get("default_profile", "turing")))
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise InstallError("O perfil deve usar de 1 a 64 letras, números, '_' ou '-'.")
+    current = profiles.get(name, {})
+    host = _ask("Host/IP do servidor BIS2", str(current.get("host", "192.168.3.64")))
+    port = _ask("Porta HTTP remoting do WildFly", str(current.get("port", 8080)))
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise InstallError("A porta BIS2 deve estar entre 1 e 65535.")
+    credential_ref = _ask(
+        "Referência da credencial no KeePassXC",
+        str(current.get("credential_ref") or _default_bis2_credential_ref(name)),
+    )
+    profiles[name] = {
+        "host": host,
+        "port": int(port),
+        "credential_ref": credential_ref,
+    }
+    values["profiles"] = profiles
+    if _yes_no(f"Usar {name} como perfil padrão", default=name == values.get("default_profile")):
+        values["default_profile"] = name
+    _save_bis2_values(values)
+    print("Perfil BIS2 salvo.")
+    if _yes_no(f"Salvar/atualizar a credencial {credential_ref} no cofre agora", default=False):
+        if not _vault_operational(str(_load_identity_values()["instance_id"])):
+            raise InstallError("Conclua primeiro a configuração do cofre KeePassXC.")
+        username = _ask("Usuário WildFly ApplicationRealm", "biscmd")
+        password = getpass.getpass("Senha do usuário WildFly (entrada mascarada): ")
+        if not password:
+            raise InstallError("A senha do BIS2 não pode ficar vazia.")
+        try:
+            from credential_vault import VaultToolError, write_entry_credentials
+
+            write_entry_credentials(credential_ref, username, password)
+        except VaultToolError as exc:
+            raise InstallError("A credencial BIS2 não foi salva no cofre.") from exc
+        finally:
+            password = ""
+        print("Credencial BIS2 salva diretamente no cofre.")
+    return True
+
+
+def configure_bis2(instance_id: str) -> None:
+    values = _load_bis2_values()
+    if not BIS2_CONFIG.is_file():
+        _save_bis2_values(values)
+        print("Configuração BIS2 criada em data/config/bis2.toml.")
+    while True:
+        profiles = values.get("profiles", {})
+        print("\nBIS2 / BISCMD")
+        print(f"  1. Java: {values.get('java_executable') or '(PATH)'}")
+        print(f"  2. JAR: {values.get('jar_path')}")
+        print(f"  3. Pasta de execução: {values.get('working_dir')}")
+        print(f"  4. Timeout: {values.get('timeout_seconds')} segundos")
+        print(f"  5. Perfil padrão: {values.get('default_profile')}")
+        print(f"  6. Adicionar/alterar perfil ({len(profiles)} cadastrado(s))")
+        print("  7. Testar conexão (doctor)")
+        print("  0. Voltar")
+        answer = input("Escolha uma opção: ").strip()
+        if answer in {"", "0"}:
+            return
+        if answer == "1":
+            values["java_executable"] = _ask("Caminho do java.exe vazio para PATH", str(values.get("java_executable", "")))
+            _save_bis2_values(values)
+        elif answer == "2":
+            values["jar_path"] = _ask("Caminho do BISCMD.jar", str(values.get("jar_path", "")))
+            _save_bis2_values(values)
+        elif answer == "3":
+            values["working_dir"] = _ask("Pasta de execução do BISCMD", str(values.get("working_dir", "")))
+            _save_bis2_values(values)
+        elif answer == "4":
+            timeout = _ask("Timeout em segundos", str(values.get("timeout_seconds", 300)))
+            if not timeout.isdigit() or int(timeout) <= 0:
+                print("Informe um timeout positivo.")
+                continue
+            values["timeout_seconds"] = int(timeout)
+            _save_bis2_values(values)
+        elif answer == "5":
+            profile = _ask("Perfil padrão", str(values.get("default_profile", "")))
+            if profile not in profiles:
+                print("Esse perfil não existe.")
+                continue
+            values["default_profile"] = profile
+            _save_bis2_values(values)
+        elif answer == "6":
+            _configure_bis2_profile(values)
+            values = _load_bis2_values()
+        elif answer == "7":
+            profile = _ask("Perfil para testar", str(values.get("default_profile", "")))
+            result = _run_json(
+                [sys.executable, str(BIS2_TOOL), "--profile", profile, "doctor"],
+                timeout=int(values.get("timeout_seconds", 300)) + 30,
+            )
+            print("Conexão BIS2 OK." if result.get("ok") else "Conexão BIS2 falhou.")
+        else:
+            print("Escolha uma opção válida.")
+
+
+def configure_skill_integrations(instance_id: str) -> None:
+    while True:
+        print("\nSkills e integrações")
+        print("  1. BIS2 / BISCMD")
+        print("  0. Voltar ao menu principal")
+        answer = input("Escolha uma opção: ").strip()
+        if answer in {"", "0"}:
+            return
+        if answer == "1":
+            configure_bis2(instance_id)
+        else:
+            print("Escolha uma opção válida.")
 
 
 def configure_transcription(instance_id: str) -> None:
@@ -1620,6 +1820,23 @@ def validate_installation(instance_id: str) -> list[dict[str, str]]:
                 "ERRO", "Configuração Telegram/Codex", "inválida", str(exc)
             )
         )
+    if BIS2_CONFIG.is_file():
+        try:
+            bis2_values = _load_bis2_values()
+            jar_path = _resolve_configured_path(str(bis2_values["jar_path"]))
+            profiles = bis2_values.get("profiles", {})
+            items.append(
+                _validation_item(
+                    "OK" if jar_path.is_file() and profiles else "PENDENTE",
+                    "BIS2 / BISCMD",
+                    f"jar={jar_path}; perfis={len(profiles)}",
+                    "Configure o caminho do JAR e ao menos um perfil BIS2."
+                    if not jar_path.is_file() or not profiles
+                    else "",
+                )
+            )
+        except (InstallError, OSError, ValueError, TypeError) as exc:
+            items.append(_validation_item("ERRO", "BIS2 / BISCMD", "inválido", str(exc)))
     return items
 
 
@@ -1681,6 +1898,7 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
         print("  5. Memória local")
         print("  6. Gerenciar gateway Telegram")
         print("  7. Transcrição local/remota com EccoVox")
+        print("  8. Skills e integrações")
         print("  9. Sair do configurador")
         answer = input("Escolha uma seção: ").strip()
         try:
@@ -1736,6 +1954,8 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
                 if not TELEGRAM_CONFIG.is_file():
                     _write_new(TELEGRAM_CONFIG, _telegram_content(instance_id))
                 configure_transcription(instance_id)
+            elif answer == "8":
+                configure_skill_integrations(instance_id)
             elif answer == "9":
                 break
             else:
@@ -1821,7 +2041,7 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         "memory_initialized": bool(memory.get("ok", True)),
         "telegram_config_created": telegram_created,
         "telegram": telegram_result,
-        "skills_configured": False,
+        "skills_configured": BIS2_CONFIG.is_file(),
     }
 
 

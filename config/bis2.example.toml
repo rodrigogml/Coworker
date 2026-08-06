@@ -1,0 +1,10 @@
+java_executable = ""
+jar_path = "C:/opt/BISCMD/BISCMD-9.0.jar"
+working_dir = "C:/opt/BISCMD"
+timeout_seconds = 300
+default_profile = "turing"
+
+[profiles.turing]
+host = "192.168.3.64"
+port = 8080
+credential_ref = "BIS2/Turing/BISCMD"

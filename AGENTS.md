@@ -441,6 +441,19 @@ A autorização para criar, alterar ou excluir domínios e aliases deve vir do p
 explícito e atual. Esta skill não envia mensagens nem gera senhas. `--dry-run` é
 somente uma prévia técnica e não constitui autorização.
 
+### BIS2
+
+Para acessar servidores BIS2 por meio do BISCMD, usar `skills/bis2/SKILL.md` e
+executar `python skills/bis2/scripts/bis2.py`. Usuário e senha do ApplicationRealm
+devem permanecer em uma única entrada do KeePassXC: usuário em `Username` e senha em
+`Password`. O script deve obter ambos internamente e injetá-los no processo do BISCMD
+sem gravar credenciais em arquivo temporário.
+
+Consultas são permitidas dentro do escopo solicitado. Operações fiscais ou alterações
+no BIS2 exigem autorização explícita e atual, `--profile` informado de forma explícita
+e os parâmetros de confirmação exigidos pelo comando. Não chamar o JAR diretamente
+quando houver credenciais envolvidas.
+
 ### Omie
 
 Para consultar ou manipular dados permitidos do ERP Omie, usar
