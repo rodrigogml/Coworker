@@ -192,6 +192,7 @@ class TelegramApi:
         text: str,
         *,
         reply_to_message_id: int | None = None,
+        message_thread_id: int | None = None,
         reply_markup: dict[str, Any] | None = None,
     ) -> list[TelegramReceipt]:
         if not text.strip():
@@ -207,6 +208,8 @@ class TelegramApi:
             }
             if index == 0 and reply_to_message_id is not None:
                 payload["reply_parameters"] = {"message_id": reply_to_message_id}
+            if message_thread_id is not None:
+                payload["message_thread_id"] = message_thread_id
             if index == len(chunks) - 1 and reply_markup is not None:
                 payload["reply_markup"] = reply_markup
             result = self.call(
@@ -215,6 +218,28 @@ class TelegramApi:
             )
             receipts.append(_receipt(result))
         return receipts
+
+    def get_chat(self, chat_id: int) -> dict[str, Any]:
+        """Consulta metadados do grupo para o diagnóstico de automações."""
+        return dict(self.call("getChat", {"chat_id": chat_id}))
+
+    def get_chat_member(self, chat_id: int, user_id: int) -> dict[str, Any]:
+        """Consulta permissões de um membro sem expor o token."""
+        return dict(self.call("getChatMember", {"chat_id": chat_id, "user_id": user_id}))
+
+    def create_forum_topic(self, chat_id: int, name: str) -> dict[str, Any]:
+        """Cria tópico somente no grupo previamente validado."""
+        if not name.strip() or len(name.encode("utf-8")) > 128:
+            raise TelegramApiError("O título do tópico deve ter de 1 a 128 bytes.")
+        return dict(self.call("createForumTopic", {"chat_id": chat_id, "name": name.strip()}))
+
+    def close_forum_topic(self, chat_id: int, message_thread_id: int) -> bool:
+        """Fecha um tópico sem apagar seu histórico."""
+        return bool(self.call("closeForumTopic", {"chat_id": chat_id, "message_thread_id": message_thread_id}))
+
+    def reopen_forum_topic(self, chat_id: int, message_thread_id: int) -> bool:
+        """Reabre um tópico fechado pelo bot."""
+        return bool(self.call("reopenForumTopic", {"chat_id": chat_id, "message_thread_id": message_thread_id}))
 
     def send_draft(self, chat_id: int, draft_id: int, text: str) -> bool:
         """Publica uma prévia efêmera; o mesmo identificador anima as atualizações."""

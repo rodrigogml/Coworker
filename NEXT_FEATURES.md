@@ -70,6 +70,22 @@ descreve os dois modelos.
    acesso administrativo à instância.
 6. Preservar o isolamento de `CODEX_HOME`, sandbox, cofre, memória e dados privados.
 
+## Retenção configurável
+
+As retenções são independentes e podem ser definidas globalmente, por grupo e por
+tarefa. O padrão mínimo do projeto será de 180 dias:
+
+- mensagens brutas do Telegram: 180 dias;
+- anexos recebidos e arquivos temporários: 180 dias;
+- artefatos produzidos por jobs: 180 dias;
+- resumos e checkpoints: 180 dias;
+- threads internas do Codex: manter enquanto ativas e arquivar depois, sem apagar
+  automaticamente no MVP.
+
+O instalador deverá permitir valores maiores, mas rejeitar valores inferiores a 180
+dias. A limpeza deve ser explícita, auditável e limitada aos dados administrados pelo
+Coworker; não deve apagar arquivos internos do `CODEX_HOME` sem política específica.
+
 ## Arquitetura geral
 
 ```text

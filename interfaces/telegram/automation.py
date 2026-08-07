@@ -157,3 +157,50 @@ def validate_task_definition(
         prompt=prompt,
         enabled=enabled,
     )
+
+
+def diagnose_group(
+    chat: Mapping[str, Any],
+    bot_member: Mapping[str, Any],
+    *,
+    privacy_disabled_confirmed: bool,
+    require_forum: bool = True,
+) -> dict[str, Any]:
+    """Avalia grupo e permissões necessárias sem tentar alterar o Telegram."""
+    checks: dict[str, dict[str, Any]] = {}
+    chat_type = str(chat.get("type", ""))
+    checks["supergroup"] = {
+        "ok": chat_type == "supergroup",
+        "observed": chat_type,
+        "action": "Converta o grupo para supergrupo." if chat_type != "supergroup" else "",
+    }
+    forum_ok = not require_forum or chat.get("is_forum") is True
+    checks["forum"] = {
+        "ok": forum_ok,
+        "observed": chat.get("is_forum"),
+        "action": "Ative o modo Fórum no supergrupo." if not forum_ok else "",
+    }
+    status = str(bot_member.get("status", ""))
+    admin_ok = status in {"administrator", "creator"}
+    checks["administrator"] = {
+        "ok": admin_ok,
+        "observed": status,
+        "action": "Promova o bot a administrador." if not admin_ok else "",
+    }
+    manage_topics = bool(bot_member.get("can_manage_topics")) or status == "creator"
+    checks["manage_topics"] = {
+        "ok": manage_topics,
+        "observed": bot_member.get("can_manage_topics"),
+        "action": "Conceda ao bot a permissão de gerenciar tópicos." if not manage_topics else "",
+    }
+    checks["privacy"] = {
+        "ok": privacy_disabled_confirmed,
+        "observed": privacy_disabled_confirmed,
+        "action": "Desligue a privacidade do bot no @BotFather e confirme no configurador."
+        if not privacy_disabled_confirmed
+        else "",
+    }
+    return {
+        "valid": all(item["ok"] for item in checks.values()),
+        "checks": checks,
+    }

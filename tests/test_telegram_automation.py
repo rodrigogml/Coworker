@@ -2,6 +2,7 @@ import unittest
 
 from interfaces.telegram.automation import (
     AutomationContractError,
+    diagnose_group,
     fallback_notification,
     topic_title_for_run,
     validate_task_definition,
@@ -76,6 +77,21 @@ class TelegramAutomationContractTests(unittest.TestCase):
         value["resumable"] = True
         task = validate_task_definition(value, group_valid=True)
         self.assertTrue(task.resumable)
+
+    def test_group_diagnostic_requires_forum_admin_topics_and_privacy_confirmation(self):
+        diagnostic = diagnose_group(
+            {"type": "supergroup", "is_forum": True},
+            {"status": "administrator", "can_manage_topics": True},
+            privacy_disabled_confirmed=True,
+        )
+        self.assertTrue(diagnostic["valid"])
+        diagnostic = diagnose_group(
+            {"type": "supergroup", "is_forum": False},
+            {"status": "member", "can_manage_topics": False},
+            privacy_disabled_confirmed=False,
+        )
+        self.assertFalse(diagnostic["valid"])
+        self.assertFalse(diagnostic["checks"]["privacy"]["ok"])
 
 
 if __name__ == "__main__":

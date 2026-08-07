@@ -53,6 +53,7 @@ from interfaces.telegram.config import (  # noqa: E402
     TelegramConfigError,
     load_config,
 )
+from interfaces.telegram.automation import diagnose_group  # noqa: E402
 from interfaces.telegram.identity import IdentityConfigError, InstanceIdentity  # noqa: E402
 from interfaces.telegram.feedback import choose_message  # noqa: E402
 from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
@@ -2242,6 +2243,26 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
                         "description": config.identity.telegram_description,
                     },
                 }
+                group_results: dict[str, Any] = {}
+                for group in config.groups:
+                    try:
+                        chat = api.get_chat(group.chat_id)
+                        member = api.get_chat_member(group.chat_id, int(bot.get("id")))
+                        group_results[group.alias] = diagnose_group(
+                            chat,
+                            member,
+                            privacy_disabled_confirmed=group.privacy_disabled_confirmed,
+                            require_forum=group.forum_required,
+                        )
+                    except (TelegramApiError, ValueError, TypeError) as exc:
+                        group_results[group.alias] = {
+                            "valid": False,
+                            "checks": {},
+                            "error": str(exc),
+                        }
+                result["telegram"]["groups"] = group_results
+                if any(not item.get("valid") for item in group_results.values()):
+                    result["ok"] = False
             finally:
                 api.close()
         except (GatewayError, TelegramApiError, OSError) as exc:

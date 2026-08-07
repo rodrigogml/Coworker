@@ -6,6 +6,24 @@ state_dir = ""
 poll_timeout_seconds = 45
 request_timeout_seconds = 60
 
+# Retenções mínimas de contexto e artefatos. O configurador aceita valores maiores,
+# mas não permite menos de 180 dias.
+[retention]
+raw_messages_days = 180
+attachments_days = 180
+artifacts_days = 180
+summaries_days = 180
+
+# Grupos são vinculados por handshake do configurador. Não informe credenciais aqui.
+# [groups.financeiro]
+# chat_id = -1001234567890
+# enabled = true
+# forum_required = true
+# default_topic_policy = "run"
+# capture_mode = "mentions_and_replies"
+# retention_days = 180
+# privacy_disabled_confirmed = false
+
 [pairing]
 ttl_seconds = 600
 max_attempts = 5

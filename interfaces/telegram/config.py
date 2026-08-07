@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tomllib
 from dataclasses import dataclass
@@ -104,6 +105,30 @@ class FeedbackConfig:
 
 
 @dataclass(frozen=True)
+class RetentionConfig:
+    """Retenções locais configuráveis para automação e contexto."""
+
+    raw_messages_days: int = 180
+    attachments_days: int = 180
+    artifacts_days: int = 180
+    summaries_days: int = 180
+
+
+@dataclass(frozen=True)
+class TelegramGroupConfig:
+    """Política privada de um grupo Telegram vinculado à instância."""
+
+    alias: str
+    chat_id: int
+    enabled: bool = True
+    forum_required: bool = True
+    default_topic_policy: str = "run"
+    capture_mode: str = "mentions_and_replies"
+    retention_days: int = 180
+    privacy_disabled_confirmed: bool = False
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     identity: InstanceIdentity
     transport: str
@@ -118,6 +143,8 @@ class TelegramConfig:
     processors: ProcessorConfig
     webhook: WebhookConfig
     feedback: FeedbackConfig = FeedbackConfig()
+    retention: RetentionConfig = RetentionConfig()
+    groups: tuple[TelegramGroupConfig, ...] = ()
 
 
 def _mapping(values: dict[str, Any], name: str) -> dict[str, Any]:
@@ -159,6 +186,86 @@ def _string_list(raw: Any, name: str, *, max_items: int = 100) -> tuple[str, ...
     if len(values) > max_items or any(not item or len(item) > 80 for item in values):
         raise TelegramConfigError(f"'{name}' deve conter até {max_items} valores de 1 a 80 caracteres.")
     return values
+
+
+def _retention_config(values: dict[str, Any]) -> RetentionConfig:
+    """Lê retenções com padrão mínimo de 180 dias."""
+    raw = values.get("retention", {})
+    if not isinstance(raw, dict):
+        raise TelegramConfigError("A seção [retention] deve ser uma tabela TOML.")
+    fields = (
+        "raw_messages_days",
+        "attachments_days",
+        "artifacts_days",
+        "summaries_days",
+    )
+    numbers: list[int] = []
+    for field in fields:
+        try:
+            number = int(raw.get(field, 180))
+        except (TypeError, ValueError) as exc:
+            raise TelegramConfigError(f"'retention.{field}' deve ser inteiro.") from exc
+        if number < 180:
+            raise TelegramConfigError(
+                f"'retention.{field}' não pode ser menor que 180 dias."
+            )
+        numbers.append(number)
+    return RetentionConfig(*numbers)
+
+
+def _group_configs(values: dict[str, Any], retention: RetentionConfig) -> tuple[TelegramGroupConfig, ...]:
+    """Valida grupos sem aceitar permissões ou IDs ambíguos."""
+    raw = values.get("groups", {})
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise TelegramConfigError("A seção [groups] deve ser uma tabela TOML.")
+    groups: list[TelegramGroupConfig] = []
+    for alias, item in raw.items():
+        if not isinstance(alias, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,31}", alias):
+            raise TelegramConfigError("Aliases de grupos devem usar letras minúsculas, números, '_' ou '-'.")
+        if not isinstance(item, dict):
+            raise TelegramConfigError(f"'groups.{alias}' deve ser uma tabela TOML.")
+        try:
+            chat_id = int(item.get("chat_id"))
+        except (TypeError, ValueError) as exc:
+            raise TelegramConfigError(f"'groups.{alias}.chat_id' deve ser inteiro.") from exc
+        if chat_id >= 0:
+            raise TelegramConfigError(f"'groups.{alias}.chat_id' deve identificar um grupo/supergrupo.")
+        enabled = item.get("enabled", True)
+        forum_required = item.get("forum_required", True)
+        if not isinstance(enabled, bool) or not isinstance(forum_required, bool):
+            raise TelegramConfigError(f"'groups.{alias}.enabled/forum_required' devem ser booleanos.")
+        topic_policy = str(item.get("default_topic_policy", "run")).strip().casefold()
+        if topic_policy not in {"task", "run", "case"}:
+            raise TelegramConfigError(f"'groups.{alias}.default_topic_policy' inválida.")
+        capture_mode = str(item.get("capture_mode", "mentions_and_replies")).strip().casefold()
+        if capture_mode not in {"mentions_and_replies", "full_topic"}:
+            raise TelegramConfigError(f"'groups.{alias}.capture_mode' inválida.")
+        try:
+            group_retention = int(item.get("retention_days", retention.raw_messages_days))
+        except (TypeError, ValueError) as exc:
+            raise TelegramConfigError(f"'groups.{alias}.retention_days' deve ser inteiro.") from exc
+        if group_retention < 180:
+            raise TelegramConfigError(f"'groups.{alias}.retention_days' não pode ser menor que 180 dias.")
+        privacy_confirmed = item.get("privacy_disabled_confirmed", False)
+        if not isinstance(privacy_confirmed, bool):
+            raise TelegramConfigError(
+                f"'groups.{alias}.privacy_disabled_confirmed' deve ser booleano."
+            )
+        groups.append(
+            TelegramGroupConfig(
+                alias,
+                chat_id,
+                enabled,
+                forum_required,
+                topic_policy,
+                capture_mode,
+                group_retention,
+                privacy_confirmed,
+            )
+        )
+    return tuple(groups)
 
 
 def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
@@ -404,6 +511,8 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     feedback_values = values.get("feedback", {})
     if not isinstance(feedback_values, dict):
         raise TelegramConfigError("A seção [feedback] deve ser uma tabela TOML.")
+    retention = _retention_config(values)
+    groups = _group_configs(values, retention)
     typing_interval = float(feedback_values.get("typing_interval_seconds", 4.0))
     if not 1.0 <= typing_interval <= 5.0:
         raise TelegramConfigError(
@@ -479,4 +588,6 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             ),
             typing_interval,
         ),
+        retention=retention,
+        groups=groups,
     )

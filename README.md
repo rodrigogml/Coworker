@@ -12,6 +12,15 @@ permanecem em `data/`, fora do Git.
 O roadmap de capacidades transversais, incluindo agendamento, scripts privados e
 roteamento de grupos e tópicos do Telegram, está em [NEXT_FEATURES.md](NEXT_FEATURES.md).
 
+> [!WARNING]
+> O executor de scripts Python privados da instância usa, inicialmente, um sandbox
+> limitado. Isso não equivale a isolamento forte do sistema operacional: um script
+> malicioso ou comprometido pode tentar explorar permissões do processo. Scripts
+> devem ser tratados como código confiável, permanecer sem rede por padrão, usar
+> somente os diretórios e integrações declarados e nunca receber credenciais
+> diretamente. O isolamento por conta restrita/sandbox do sistema será uma etapa
+> posterior antes de liberar shells ou execuções menos controladas.
+
 > [!IMPORTANT]
 > O projeto está em estágio experimental e é **Windows-first**. Memória, instruções e
 > integrações baseadas em Python são portáveis, mas o desbloqueio automático do cofre
