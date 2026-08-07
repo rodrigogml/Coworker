@@ -21,6 +21,15 @@ class TelegramAutomationStateTests(unittest.TestCase):
                         },
                         group_alias="financeiro",
                     )
+                state.save_task(
+                    {
+                        "task_uid": "task_draft",
+                        "topic_title": "Rascunho",
+                        "script_id": "review_finance",
+                        "enabled": False,
+                    },
+                    group_alias="financeiro",
+                )
                 state.upsert_group("financeiro", -1001, valid=True)
                 state.save_task(
                     {

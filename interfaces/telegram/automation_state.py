@@ -124,8 +124,6 @@ class AutomationState:
     def save_task(self, definition: Mapping[str, Any], *, group_alias: str | None = None) -> AutomationTask:
         """Valida e salva uma tarefa; habilitação exige grupo válido."""
         group_valid = group_alias is None or self.group_valid(group_alias)
-        if group_alias is not None and not group_valid:
-            raise AutomationStateError("O grupo de destino não está válido.")
         try:
             task = validate_task_definition(definition, group_valid=group_valid)
         except AutomationContractError as exc:
