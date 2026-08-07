@@ -376,7 +376,8 @@ ao particular do owner, quando o owner já tiver iniciado o bot, precedida exata
 por um cabeçalho operacional equivalente a:
 
 ```text
-Falha ao enviar a mensagem a seguir para o tópico [título]
+Falha ao enviar a mensagem para o tópico [título]:
+
 Motivo: [diagnóstico sanitizado]
 ```
 
@@ -585,7 +586,8 @@ Codex livre.
     privacidade habilitada e apresenta instruções corretivas.
 25. O scheduler não habilita novas tarefas enquanto o grupo estiver inválido.
 26. Uma mensagem que falha no tópico é encaminhada ao particular do owner com o
-    cabeçalho `Falha ao enviar a mensagem a seguir para o tópico [título]`.
+    cabeçalho `Falha ao enviar a mensagem para o tópico [título]:`, seguido de
+    uma linha em branco antes do conteúdo.
 27. O gateway recebe todas as mensagens para formar contexto, mas só aciona o Codex
     quando há menção, resposta, comando ou aprovação pendente.
 28. Privacidade habilitada no @BotFather torna o grupo inelegível para agendamento.
@@ -602,6 +604,14 @@ Codex livre.
   etapa que ainda exige confirmação específica?
 
 ## Próxima etapa
+
+O primeiro núcleo de contratos foi implementado em
+`interfaces/telegram/automation.py`, com testes em
+`tests/test_telegram_automation.py`. Ele já centraliza validação de `task_uid`,
+`topic_title`, políticas `task`/`run`/`case`, regras de `resume`, bloqueio de
+tarefas habilitadas sem grupo válido e o cabeçalho exato do fallback ao owner. Ele
+ainda não executa scripts, agenda processos nem chama a API Telegram; essas camadas
+serão construídas sobre o contrato testado.
 
 O próximo artefato deve ser uma especificação da feature `automation-and-group-routing`,
 com contratos para scheduler, runner, eventos, roteamento Telegram e política de
