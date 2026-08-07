@@ -71,6 +71,7 @@ class InboundMessage:
     reply_context: ReplyContext | None = None
     telegram_message_thread_id: int | None = None
     chat_type: str = "private"
+    codex_thread_id: str | None = None
 
 
 @dataclass(frozen=True)

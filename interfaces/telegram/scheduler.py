@@ -39,6 +39,9 @@ class ScheduledTask:
     run_at: str | None = None
     enabled: bool = True
     resumable: bool = False
+    topic_policy: str = "run"
+    telegram_chat_id: int | None = None
+    group_alias: str | None = None
 
 
 def validate_task(task: ScheduledTask, project_root: Path) -> Path | None:
@@ -52,6 +55,10 @@ def validate_task(task: ScheduledTask, project_root: Path) -> Path | None:
         raise SchedulerError("thread_policy inválido.")
     if task.thread_policy == "resume" and not task.resumable:
         raise SchedulerError("resume exige tarefa marcada como retornável.")
+    if task.topic_policy not in {"task", "run", "case"}:
+        raise SchedulerError("topic_policy inválida.")
+    if task.telegram_chat_id is not None and task.telegram_chat_id >= 0:
+        raise SchedulerError("telegram_chat_id deve identificar um grupo.")
     if bool(task.script_path) == bool(task.prompt):
         raise SchedulerError("Informe exatamente script_path ou prompt.")
     if task.trigger == "interval" and (task.interval_seconds or 0) < 60:
@@ -112,7 +119,8 @@ class SchedulerStore:
             "SELECT definition_json FROM tasks WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=?)",
             (now,),
         ).fetchall()
-        return [ScheduledTask(**json.loads(row["definition_json"])) for row in rows]
+        tasks = [ScheduledTask(**json.loads(row["definition_json"])) for row in rows]
+        return [task for task in tasks if task.trigger != "event"]
 
     def begin(self, task: ScheduledTask) -> str:
         run_uid = f"run-{uuid.uuid4().hex[:20]}"

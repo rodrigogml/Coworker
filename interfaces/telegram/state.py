@@ -524,6 +524,22 @@ class StateStore:
         ]
         return result
 
+    def topic_session(self, chat_id: int, message_thread_id: int) -> str | None:
+        row = self.connection.execute(
+            "SELECT codex_thread_id FROM telegram_topic_sessions WHERE chat_id=? AND message_thread_id=?",
+            (chat_id, message_thread_id),
+        ).fetchone()
+        return str(row["codex_thread_id"]) if row and row["codex_thread_id"] else None
+
+    def set_topic_session(self, chat_id: int, message_thread_id: int, thread_id: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """INSERT INTO telegram_topic_sessions(chat_id,message_thread_id,codex_thread_id,last_used_at)
+                   VALUES(?,?,?,?) ON CONFLICT(chat_id,message_thread_id) DO UPDATE SET
+                   codex_thread_id=excluded.codex_thread_id,last_used_at=excluded.last_used_at""",
+                (chat_id, message_thread_id, thread_id, iso()),
+            )
+
     def update_message_context(
         self, message_record_id: int, *, thread_id: str | None, turn_id: str | None
     ) -> None:

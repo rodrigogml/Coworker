@@ -51,6 +51,7 @@ class TelegramAutomationStateTests(unittest.TestCase):
                     telegram_root_message_id=99,
                 )
                 self.assertEqual(state.run_for_topic(-1001, 42)["run_uid"], "run_001")
+                self.assertEqual(state.run_for_codex_thread("codex-001")["run_uid"], "run_001")
                 with self.assertRaises(AutomationStateError):
                     state.bind_conversation(
                         "run_001",

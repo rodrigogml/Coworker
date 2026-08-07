@@ -163,6 +163,26 @@ class AutomationState:
             )
         return task
 
+    def task(self, task_uid: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM automation_tasks WHERE task_uid=?", (task_uid,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def set_task_enabled(self, task_uid: str, enabled: bool) -> None:
+        row = self.connection.execute(
+            "SELECT group_alias FROM automation_tasks WHERE task_uid=?", (task_uid,)
+        ).fetchone()
+        if row is None:
+            raise AutomationStateError("Tarefa não encontrada.")
+        if enabled and row["group_alias"] and not self.group_valid(row["group_alias"]):
+            raise AutomationStateError("Grupo Telegram inválido; tarefa não pode ser habilitada.")
+        with self.connection:
+            self.connection.execute(
+                "UPDATE automation_tasks SET enabled=?,updated_at=? WHERE task_uid=?",
+                (int(enabled), _now(), task_uid),
+            )
+
     def create_run(self, run_uid: str, task_uid: str, *, event_uid: str | None = None) -> None:
         """Cria uma execução idempotente e rejeita evento duplicado."""
         try:
@@ -238,3 +258,31 @@ class AutomationState:
             (chat_id, message_thread_id),
         ).fetchone()
         return dict(row) if row else None
+
+    def run_for_codex_thread(self, codex_thread_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM automation_runs WHERE codex_thread_id=?",
+            (codex_thread_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_run_status(self, run_uid: str, status: str) -> None:
+        if status not in {"queued", "running", "waiting-agent", "succeeded", "failed", "unknown", "cancelled", "notification_pending"}:
+            raise AutomationStateError("Estado de execução inválido.")
+        with self.connection:
+            self.connection.execute(
+                "UPDATE automation_runs SET status=?,updated_at=? WHERE run_uid=?",
+                (status, _now(), run_uid),
+            )
+
+    def set_codex_thread(self, run_uid: str, codex_thread_id: str) -> None:
+        if not codex_thread_id.strip():
+            raise AutomationStateError("codex_thread_id é obrigatório.")
+        try:
+            with self.connection:
+                self.connection.execute(
+                    "UPDATE automation_runs SET codex_thread_id=?,updated_at=? WHERE run_uid=?",
+                    (codex_thread_id.strip(), _now(), run_uid),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise AutomationStateError("A thread Codex já está vinculada a outra execução.") from exc

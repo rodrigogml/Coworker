@@ -494,6 +494,7 @@ python scripts/automation.py validate TASK_ID
 python scripts/automation.py history TASK_ID
 python scripts/automation.py enable TASK_ID
 python scripts/automation.py disable TASK_ID
+python scripts/automation.py create TASK_ID --topic-title "Relatório" --group-alias financeiro --chat-id -100123 --prompt "Verifique a rotina" --enabled
 ```
 
 ### Telegram

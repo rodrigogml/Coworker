@@ -53,7 +53,7 @@ from interfaces.telegram.config import (  # noqa: E402
     TelegramConfigError,
     load_config,
 )
-from interfaces.telegram.automation import diagnose_group  # noqa: E402
+from interfaces.telegram.automation import diagnose_group, topic_title_for_run  # noqa: E402
 from interfaces.telegram.identity import IdentityConfigError, InstanceIdentity  # noqa: E402
 from interfaces.telegram.feedback import choose_message  # noqa: E402
 from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
@@ -62,6 +62,7 @@ from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
 )
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
 from interfaces.telegram.scheduler import SchedulerStore, TaskScheduler, run_python_script  # noqa: E402
+from interfaces.telegram.automation_state import AutomationState, AutomationStateError  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
 from interfaces.telegram.progress import (  # noqa: E402
     PROGRESS_MODES,
@@ -305,7 +306,9 @@ class Gateway:
         self.config = config
         self.api = api
         self.state = StateStore(config.state_dir)
-        self.scheduler_store = SchedulerStore(config.state_dir / "scheduler.sqlite3")
+        automation_db = config.project_root / "data" / "automation" / "scheduler.sqlite3"
+        self.scheduler_store = SchedulerStore(automation_db)
+        self.automation_state = AutomationState(automation_db)
         self.state.recover_interrupted_jobs()
         self.state_lock = threading.RLock()
         self.registry = ProcessRegistry()
@@ -342,9 +345,100 @@ class Gateway:
         return any(entity.get("type") == "mention" for entity in (message.get("entities") or []))
 
     def _run_scheduled_task(self, task, run_uid: str) -> object:
+        if task.telegram_chat_id is None:
+            return {"ok": False, "status": "notification_pending", "run_uid": run_uid}
+        group = next((g for g in self.config.groups if g.chat_id == task.telegram_chat_id), None)
+        if group is None or not self.automation_state.group_valid(group.alias):
+            return {"ok": False, "status": "notification_pending", "reason": "grupo Telegram inválido"}
+        definition = {
+            "task_uid": task.task_uid, "topic_title": task.topic_title,
+            "topic_policy": task.topic_policy, "thread_policy": task.thread_policy,
+            "trigger": task.trigger, "resumable": task.resumable,
+            "prompt": task.prompt if not task.script_path else None,
+            "script_id": task.task_uid if task.script_path else None, "enabled": True,
+        }
+        if self.automation_state.task(task.task_uid) is None:
+            self.automation_state.save_task(definition, group_alias=group.alias)
+        try:
+            self.automation_state.create_run(run_uid, task.task_uid)
+        except AutomationStateError:
+            existing = self.automation_state.run_for_topic(task.telegram_chat_id, 0)
+            if existing:
+                return {"ok": False, "status": "duplicate", "run_uid": run_uid}
+            raise
+        event_result = None
         if task.script_path:
-            return run_python_script(self.config.project_root / task.script_path, self.config.project_root)
-        return {"ok": False, "status": "prompt_pending", "run_uid": run_uid}
+            event_result = run_python_script(self.config.project_root / task.script_path, self.config.project_root)
+            if not event_result.get("ok"):
+                self.automation_state.update_run_status(run_uid, "failed")
+                return event_result
+            try:
+                event = json.loads(str(event_result.get("stdout") or "{}"))
+            except json.JSONDecodeError:
+                event = {"matched": False}
+            if not event.get("matched"):
+                self.automation_state.update_run_status(run_uid, "succeeded")
+                return {"ok": True, "matched": False}
+            prompt = str((event.get("agent_request") or {}).get("prompt") or task.prompt or "Analise o evento estruturado.")
+        else:
+            prompt = task.prompt or "Execute a tarefa agendada conforme as instruções aprovadas."
+        result = self.codex.run(task.telegram_chat_id, prompt, None, [], options=self._codex_options(task.telegram_chat_id))
+        title = topic_title_for_run(task.topic_title, task.topic_policy, run_uid)
+        try:
+            topic = self.api.create_forum_topic(task.telegram_chat_id, title)
+            topic_id = int(topic.get("message_thread_id"))
+            receipts = self._send(task.telegram_chat_id, result.final_message, telegram_message_thread_id=topic_id)
+            self.automation_state.bind_conversation(
+                run_uid, codex_thread_id=result.thread_id or f"codex:{run_uid}",
+                telegram_chat_id=task.telegram_chat_id,
+                telegram_message_thread_id=topic_id,
+                telegram_root_message_id=receipts[0] if receipts else 0,
+            )
+            self.automation_state.update_run_status(run_uid, "succeeded")
+            return {"ok": True, "run_uid": run_uid, "thread_id": result.thread_id, "topic_id": topic_id, "event": event_result}
+        except TelegramApiError as exc:
+            self.automation_state.update_run_status(run_uid, "notification_pending")
+            owner = self.state.owner()
+            if owner:
+                self._send(owner.chat_id, f"Falha ao enviar a mensagem para o tópico {title}:\r\n\r\nMotivo: {exc}\r\n\r\n{result.final_message}")
+            return {"ok": False, "status": "notification_pending", "error": str(exc)}
+
+    def deliver_automation_message(
+        self,
+        *,
+        run_uid: str,
+        task_uid: str,
+        chat_id: int,
+        topic_title: str,
+        body: str,
+    ) -> dict[str, Any]:
+        """Publica uma execução no tópico e conserva fallback privado ao owner."""
+        try:
+            topic = self.api.create_forum_topic(chat_id, topic_title)
+            thread_id = int(topic.get("message_thread_id"))
+            receipt_ids = self._send(
+                chat_id, body, telegram_message_thread_id=thread_id
+            )
+            root_message_id = receipt_ids[0] if receipt_ids else 0
+            self.automation_state.bind_conversation(
+                run_uid,
+                codex_thread_id=f"pending:{run_uid}",
+                telegram_chat_id=chat_id,
+                telegram_message_thread_id=thread_id,
+                telegram_root_message_id=root_message_id,
+            )
+            return {"ok": True, "chat_id": chat_id, "message_thread_id": thread_id, "message_id": root_message_id}
+        except (TelegramApiError, ValueError, AutomationStateError) as exc:
+            owner = self.state.owner()
+            if owner is None:
+                return {"ok": False, "status": "notification_pending", "error": str(exc)}
+            from interfaces.telegram.automation import fallback_notification
+            fallback = fallback_notification(topic_title, str(exc), body)
+            try:
+                self._send(owner.chat_id, fallback)
+                return {"ok": False, "status": "notification_failed", "fallback": True}
+            except TelegramApiError:
+                return {"ok": False, "status": "notification_pending", "error": str(exc)}
 
     def close(self) -> None:
         self.stop_event.set()
@@ -367,6 +461,7 @@ class Gateway:
         self.processors.close()
         self.scheduler.stop()
         self.scheduler_store.close()
+        self.automation_state.close()
         self.api.close()
 
     def drain_and_close(self) -> None:
@@ -390,6 +485,7 @@ class Gateway:
         self.processors.close()
         self.scheduler.stop()
         self.scheduler_store.close()
+        self.automation_state.close()
         self.api.close()
 
     def run_polling(self) -> None:
@@ -1040,6 +1136,13 @@ class Gateway:
             )
             return
         reply_context = self._reply_context(chat_id, message)
+        mapped_codex_thread: str | None = None
+        if is_group and telegram_message_thread_id is not None:
+            mapped = self.automation_state.run_for_topic(chat_id, telegram_message_thread_id)
+            if mapped:
+                mapped_codex_thread = mapped.get("codex_thread_id") or None
+            if mapped_codex_thread is None:
+                mapped_codex_thread = self.state.topic_session(chat_id, telegram_message_thread_id)
         with self.state_lock:
             message_record_id = self.state.record_message(
                 update_id, chat_id, message_id, "in", text or None, "received",
@@ -1062,6 +1165,7 @@ class Gateway:
             (update_id,), chat_id, user_id, (message_id,), text,
             media_group_id, tuple(content), reply_context,
             telegram_message_thread_id, chat_type,
+            mapped_codex_thread,
         )
         if media_group_id:
             self._queue_album(inbound, message, message_record_id)
@@ -1771,7 +1875,12 @@ class Gateway:
             with self.state_lock:
                 self.state.update_job(item.job_id, "running")
                 self.state.set_job_workspace(item.job_id, workspace.root)
-                thread_id = self.state.session(inbound.chat_id)
+                if inbound.codex_thread_id:
+                    thread_id = inbound.codex_thread_id
+                elif inbound.chat_type != "private" and inbound.telegram_message_thread_id is not None:
+                    thread_id = self.state.topic_session(inbound.chat_id, inbound.telegram_message_thread_id)
+                else:
+                    thread_id = self.state.session(inbound.chat_id)
             if item.progress_mode != "off":
                 progress = TelegramProgressReporter(
                     self.api,
@@ -1890,6 +1999,10 @@ class Gateway:
                     for record_id in item.message_record_ids:
                         self.state.update_message_context(
                             record_id, thread_id=result.thread_id, turn_id=result.turn_id
+                        )
+                    if inbound.chat_type != "private" and inbound.telegram_message_thread_id is not None:
+                        self.state.set_topic_session(
+                            inbound.chat_id, inbound.telegram_message_thread_id, result.thread_id
                         )
             if delivery.text:
                 self._send(
@@ -2280,6 +2393,7 @@ def command_permissions(args: argparse.Namespace) -> dict[str, Any]:
 def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(Path(args.config), require_codex=False)
     state = StateStore(config.state_dir)
+    automation_state = AutomationState(config.project_root / "data" / "automation" / "scheduler.sqlite3")
     result: dict[str, Any] = {
         "ok": True,
         "telegram": None,
@@ -2322,6 +2436,11 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
                             privacy_disabled_confirmed=group.privacy_disabled_confirmed,
                             require_forum=group.forum_required,
                         )
+                        automation_state.upsert_group(
+                            group.alias, group.chat_id,
+                            valid=bool(group_results[group.alias].get("valid")),
+                            diagnostics=group_results[group.alias],
+                        )
                     except (TelegramApiError, ValueError, TypeError) as exc:
                         group_results[group.alias] = {
                             "valid": False,
@@ -2352,6 +2471,7 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
             )
         return result
     finally:
+        automation_state.close()
         state.close()
 
 
