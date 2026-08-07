@@ -69,6 +69,8 @@ class InboundMessage:
     media_group_id: str | None = None
     attachments: tuple[Attachment, ...] = ()
     reply_context: ReplyContext | None = None
+    telegram_message_thread_id: int | None = None
+    chat_type: str = "private"
 
 
 @dataclass(frozen=True)

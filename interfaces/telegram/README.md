@@ -456,3 +456,15 @@ Ao reiniciar, jobs que estavam na fila ou executando são marcados como falhos. 
 artefato que estava em `uploading` passa para `unknown`: ele não é reenviado
 automaticamente, pois a Bot API pode ter aceitado o upload antes da queda e não oferece
 uma chave geral de idempotência para essa operação.
+### Grupos, tópicos e scheduler
+
+Grupos configurados como supergrupo-fórum passam por validação de privacidade
+desligada, permissão de gerenciamento de tópicos e membros autorizados. Todas as
+mensagens são registradas para formar contexto, mas somente menções, respostas ao
+bot, comandos e aprovações chegam ao Codex.
+
+O scheduler privado usa `state_dir/scheduler.sqlite3` e é iniciado/encerrado com o
+gateway. O MVP executa somente scripts Python existentes em `data/`, `interfaces/`
+ou `skills/`, sem shell, código inline ou caminho externo. A retenção de mensagens,
+anexos, artefatos e resumos usa padrão mínimo de 180 dias, configurável para prazos
+maiores no TOML privado.

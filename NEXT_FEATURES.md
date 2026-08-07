@@ -633,3 +633,10 @@ O próximo artefato deve ser uma especificação da feature `automation-and-grou
 com contratos para scheduler, runner, eventos, roteamento Telegram e política de
 usuários. Depois dela, elaborar o plano técnico e decompor as fases em tarefas
 executáveis.
+## Estado executável do MVP
+
+O núcleo inicial do scheduler está em `interfaces/telegram/scheduler.py`: tarefas
+persistentes em SQLite privado, gatilhos `interval`/`once`/`event`, execução Python sem
+shell e validação de caminhos dentro do projeto. O gateway inicia e encerra o scheduler
+junto com seu ciclo de vida. A retenção configurável usa 180 dias como mínimo para
+mensagens, anexos, artefatos e resumos.

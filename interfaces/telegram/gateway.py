@@ -61,6 +61,7 @@ from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
     spawn_relauncher,
 )
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
+from interfaces.telegram.scheduler import SchedulerStore, TaskScheduler, run_python_script  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
 from interfaces.telegram.progress import (  # noqa: E402
     PROGRESS_MODES,
@@ -304,6 +305,7 @@ class Gateway:
         self.config = config
         self.api = api
         self.state = StateStore(config.state_dir)
+        self.scheduler_store = SchedulerStore(config.state_dir / "scheduler.sqlite3")
         self.state.recover_interrupted_jobs()
         self.state_lock = threading.RLock()
         self.registry = ProcessRegistry()
@@ -325,6 +327,24 @@ class Gateway:
         self.credential_lock = threading.RLock()
         self.credential_captures: dict[int, CredentialCapture] = {}
         self.credential_requests_seen: set[str] = set()
+        self.bot_username: str | None = None
+        self.scheduler = TaskScheduler(self.scheduler_store, config.project_root, self._run_scheduled_task)
+
+    def _group_config(self, chat_id: int):
+        return next((group for group in self.config.groups if group.chat_id == chat_id and group.enabled), None)
+
+    def _group_triggered(self, message: dict[str, Any], text: str) -> bool:
+        reply = message.get("reply_to_message")
+        if isinstance(reply, dict) and isinstance(reply.get("from"), dict) and reply["from"].get("is_bot"):
+            return True
+        if self.bot_username and re.search(rf"@{re.escape(self.bot_username)}\b", text, re.IGNORECASE):
+            return True
+        return any(entity.get("type") == "mention" for entity in (message.get("entities") or []))
+
+    def _run_scheduled_task(self, task, run_uid: str) -> object:
+        if task.script_path:
+            return run_python_script(self.config.project_root / task.script_path, self.config.project_root)
+        return {"ok": False, "status": "prompt_pending", "run_uid": run_uid}
 
     def close(self) -> None:
         self.stop_event.set()
@@ -345,6 +365,8 @@ class Gateway:
             with self.state_lock:
                 self.state.close()
         self.processors.close()
+        self.scheduler.stop()
+        self.scheduler_store.close()
         self.api.close()
 
     def drain_and_close(self) -> None:
@@ -366,6 +388,8 @@ class Gateway:
             with self.state_lock:
                 self.state.close()
         self.processors.close()
+        self.scheduler.stop()
+        self.scheduler_store.close()
         self.api.close()
 
     def run_polling(self) -> None:
@@ -377,6 +401,7 @@ class Gateway:
         self.api.delete_webhook()
         self.worker.start()
         self.credential_broker.start()
+        self.scheduler.start()
         offset: int | None = None
         while (
             not self.stop_event.is_set() and not self.restart_event.is_set()
@@ -395,6 +420,11 @@ class Gateway:
 
     def _sync_public_metadata(self) -> None:
         """Atualiza metadados sem impedir o polling quando a API limitar edições."""
+        try:
+            me = self.api.get_me() if hasattr(self.api, "get_me") else {}
+            self.bot_username = str(me.get("username") or "").strip() or None
+        except TelegramApiError:
+            self.bot_username = None
         operations = (
             ("comandos", lambda: self.api.set_commands(BOT_COMMANDS)),
             (
@@ -429,10 +459,14 @@ class Gateway:
         turn_id: str | None = None,
         job_id: int | None = None,
         reply_markup: dict[str, Any] | None = None,
+        telegram_message_thread_id: int | None = None,
     ) -> list[int]:
+        thread_kwargs = ({"message_thread_id": telegram_message_thread_id}
+                         if telegram_message_thread_id is not None else {})
         if reply_markup is None:
             receipts = self.api.send_text(
-                chat_id, text, reply_to_message_id=reply_to_message_id
+                chat_id, text, reply_to_message_id=reply_to_message_id,
+                **thread_kwargs
             )
         else:
             receipts = self.api.send_text(
@@ -440,6 +474,7 @@ class Gateway:
                 text,
                 reply_to_message_id=reply_to_message_id,
                 reply_markup=reply_markup,
+                **thread_kwargs,
             )
         records: list[int] = []
         with self.state_lock:
@@ -450,6 +485,7 @@ class Gateway:
                         "sent", reply_to_message_id=reply_to_message_id,
                         thread_id=thread_id, turn_id=turn_id,
                         content_type="text", job_id=job_id,
+                        telegram_message_thread_id=telegram_message_thread_id,
                     )
                 )
             if job_id is not None and records:
@@ -939,7 +975,10 @@ class Gateway:
             with self.state_lock:
                 self.state.finish_update(update_id, "invalid", "identificadores ausentes")
             return
-        if str(chat.get("type", "")) != "private":
+        chat_type = str(chat.get("type", ""))
+        group_config = self._group_config(chat_id) if chat_type in {"group", "supergroup"} else None
+        is_group = group_config is not None
+        if chat_type != "private" and not is_group:
             with self.state_lock:
                 self.state.finish_update(update_id, "unauthorized")
             return
@@ -952,10 +991,28 @@ class Gateway:
             self._handle_unpaired(update_id, chat_id, user_id, message_id, sender, command, argument)
             return
         with self.state_lock:
-            authorized = self.state.is_authorized(user_id, chat_id)
+            authorized = (
+                self.state.group_member_allowed(user_id, chat_id)
+                if is_group
+                else self.state.is_authorized(user_id, chat_id)
+            )
         if not authorized:
             with self.state_lock:
                 self.state.finish_update(update_id, "unauthorized")
+            return
+        telegram_message_thread_id = message.get("message_thread_id")
+        try:
+            telegram_message_thread_id = int(telegram_message_thread_id) if telegram_message_thread_id is not None else None
+        except (TypeError, ValueError):
+            telegram_message_thread_id = None
+        if is_group and not self._group_triggered(message, text) and not command:
+            with self.state_lock:
+                self.state.record_message(
+                    update_id, chat_id, message_id, "in", text or None, "captured",
+                    sender_user_id=user_id, telegram_message_thread_id=telegram_message_thread_id,
+                    chat_type=chat_type,
+                )
+                self.state.finish_update(update_id, "captured")
             return
         media_group_id = str(message.get("media_group_id") or "") or None
         content = message_attachments(message)
@@ -989,6 +1046,9 @@ class Gateway:
                 reply_to_message_id=(reply_context.message_id if reply_context else None),
                 media_group_id=media_group_id,
                 content_type=(content[0].logical_type if content else "text"),
+                sender_user_id=user_id,
+                telegram_message_thread_id=telegram_message_thread_id,
+                chat_type=chat_type,
             )
         if command:
             self._handle_command(update_id, chat_id, command, argument, reply_context)
@@ -1001,6 +1061,7 @@ class Gateway:
         inbound = InboundMessage(
             (update_id,), chat_id, user_id, (message_id,), text,
             media_group_id, tuple(content), reply_context,
+            telegram_message_thread_id, chat_type,
         )
         if media_group_id:
             self._queue_album(inbound, message, message_record_id)
@@ -1030,6 +1091,7 @@ class Gateway:
                 else self.config.feedback.immediate_messages
             ),
             reply_to_message_id=message_id,
+            telegram_message_thread_id=telegram_message_thread_id,
         )
 
     def _capture_secret(
@@ -1817,6 +1879,7 @@ class Gateway:
                         reply_to_message_id=inbound.message_ids[0],
                         thread_id=result.thread_id,
                         turn_id=result.turn_id,
+                        telegram_message_thread_id=inbound.telegram_message_thread_id,
                     )
             if result.thread_id:
                 with self.state_lock:
@@ -1833,6 +1896,7 @@ class Gateway:
                     inbound.chat_id, delivery.text, update_id=inbound.update_ids[0],
                     reply_to_message_id=inbound.message_ids[0], thread_id=result.thread_id,
                     turn_id=result.turn_id, job_id=item.job_id,
+                    telegram_message_thread_id=inbound.telegram_message_thread_id,
                 )
             self._deliver_artifacts(item, delivery)
             with self.state_lock:
@@ -1865,10 +1929,13 @@ class Gateway:
 
     def _send_progress_fallback(self, item: WorkItem, text: str) -> int | None:
         inbound = item.inbound
+        kwargs = ({"message_thread_id": inbound.telegram_message_thread_id}
+                  if inbound.telegram_message_thread_id is not None else {})
         receipts = self.api.send_text(
             inbound.chat_id,
             text,
             reply_to_message_id=inbound.message_ids[0],
+            **kwargs,
         )
         message_id: int | None = None
         with self.state_lock:
@@ -1885,6 +1952,7 @@ class Gateway:
                     reply_to_message_id=inbound.message_ids[0],
                     content_type="progress",
                     job_id=item.job_id,
+                    telegram_message_thread_id=inbound.telegram_message_thread_id,
                 )
         return message_id
 

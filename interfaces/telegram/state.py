@@ -131,6 +131,27 @@ class StateStore:
             (user_id, chat_id),
         ).fetchone() is not None
 
+    def group_member_allowed(self, user_id: int, chat_id: int) -> bool:
+        owner = self.owner()
+        if owner and owner.user_id == user_id:
+            return True
+        return self.connection.execute(
+            "SELECT 1 FROM telegram_group_members WHERE user_id=? AND chat_id=? AND revoked_at IS NULL",
+            (user_id, chat_id),
+        ).fetchone() is not None
+
+    def grant_group_member(self, chat_id: int, user_id: int, role: str = "member") -> None:
+        if role not in {"owner", "admin", "member"}:
+            raise StateError("Papel de grupo inválido.")
+        self.connection.execute(
+            """INSERT INTO telegram_group_members(chat_id,user_id,role,granted_at,revoked_at)
+               VALUES (?,?,?,?,NULL)
+               ON CONFLICT(chat_id,user_id) DO UPDATE SET role=excluded.role,
+               granted_at=excluded.granted_at, revoked_at=NULL""",
+            (chat_id, user_id, role, iso()),
+        )
+        self.connection.commit()
+
     def begin_pairing(self, ttl_seconds: int, max_attempts: int) -> tuple[str, str]:
         if self.owner():
             raise StateError("Já existe uma proprietária vinculada.")
@@ -466,16 +487,21 @@ class StateStore:
         media_group_id: str | None = None,
         content_type: str | None = None,
         job_id: int | None = None,
+        sender_user_id: int | None = None,
+        telegram_message_thread_id: int | None = None,
+        chat_type: str | None = None,
     ) -> int:
         cursor = self.connection.execute(
             """INSERT INTO messages
                (update_id,chat_id,message_id,direction,text,created_at,status,
-                reply_to_message_id,thread_id,turn_id,media_group_id,content_type,job_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                reply_to_message_id,thread_id,turn_id,media_group_id,content_type,job_id,
+                sender_user_id,telegram_message_thread_id,chat_type)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 update_id, chat_id, message_id, direction, text, iso(), status,
                 reply_to_message_id, thread_id, turn_id, media_group_id,
-                content_type, job_id,
+                content_type, job_id, sender_user_id,
+                telegram_message_thread_id, chat_type,
             ),
         )
         self.connection.commit()
