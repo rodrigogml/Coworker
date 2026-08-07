@@ -382,7 +382,14 @@ class Gateway:
             prompt = str((event.get("agent_request") or {}).get("prompt") or task.prompt or "Analise o evento estruturado.")
         else:
             prompt = task.prompt or "Execute a tarefa agendada conforme as instruções aprovadas."
-        result = self.codex.run(task.telegram_chat_id, prompt, None, [], options=self._codex_options(task.telegram_chat_id))
+        try:
+            result = self.codex.run(
+                task.telegram_chat_id, prompt, None, [],
+                options=self._codex_options(task.telegram_chat_id),
+            )
+        except CodexExecutionError:
+            self.automation_state.update_run_status(run_uid, "unknown")
+            raise
         title = topic_title_for_run(task.topic_title, task.topic_policy, run_uid)
         try:
             topic = self.api.create_forum_topic(task.telegram_chat_id, title)
