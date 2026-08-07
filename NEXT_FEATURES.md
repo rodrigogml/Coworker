@@ -22,6 +22,16 @@ instância, execução do agente e colaboração por grupos e tópicos do Telegr
 - O modo padrão será uma nova thread do Codex por execução.
 - A instalação e a administração do grupo continuam sob controle da pessoa
   proprietária.
+- Toda tarefa agendada deve informar um título de tópico obrigatório e exclusivo;
+  eventos que criem tarefas devem fornecer esse título no próprio evento.
+- Com política `task`, o título Telegram é exatamente o título recebido.
+- Com política `run`, o título é `<título recebido>: <variação>`; a variação é
+  curta, determinística e não substitui o título original.
+- Nenhuma tarefa pode ser habilitada enquanto o supergrupo principal não estiver
+  vinculado, validado como Fórum, com o bot administrador e com privacidade
+  desabilitada.
+- A captura integral das mensagens ocorre localmente, mas o contexto só é enviado ao
+  agente quando ele é mencionado ou quando recebe uma resposta a uma mensagem sua.
 
 ## Limites reais do Telegram
 
@@ -37,12 +47,12 @@ persistido junto do `chat_id` e do identificador da tarefa. [A documentação do
 API](https://core.telegram.org/bots/api) descreve `createForumTopic`, a exigência de
 administração e os campos `chat_id`/`message_thread_id`.
 
-O modo de privacidade do grupo também muda o que o bot consegue observar. Com
-privacidade habilitada, ele recebe comandos, menções e respostas dirigidas a ele,
-mas não possui o histórico completo da conversa. Para responder a uma menção com
-contexto integral, o bot precisa ser administrador ou operar com privacidade
-desabilitada e registrar as mensagens recebidas localmente. [A FAQ oficial explica
-essa diferença](https://core.telegram.org/bots/faq).
+O modo de privacidade do grupo muda o que o bot consegue observar. Com privacidade
+habilitada, ele recebe somente comandos, menções e respostas dirigidas a ele, sem o
+histórico completo da conversa. Como esta arquitetura exige captura local de todas
+as mensagens, a privacidade será obrigatoriamente desligada no @BotFather e o bot
+deverá permanecer administrador. [A FAQ oficial explica essa diferença]
+(https://core.telegram.org/bots/faq).
 
 O modo de tópicos em conversa privada com o bot pode ser habilitado pelo
 @BotFather, mas não substitui o supergrupo-fórum quando várias pessoas precisam
@@ -290,12 +300,59 @@ O proprietário cria um supergrupo, ativa o modo fórum, adiciona o bot e config
 o bot como administrador com o menor conjunto de direitos necessário. O bot pode
 então criar um tópico por tarefa, caso ou evento.
 
+### Guia do configurador
+
+O instalador terá uma seção interativa `Telegram → Grupo principal` com ajuda em
+cada verificação. Ela não criará o grupo: orientará a pessoa proprietária a criá-lo
+manualmente e a corrigir cada pendência.
+
+O diagnóstico deverá verificar, nesta ordem:
+
+1. bot autenticado e token válido;
+2. código de vínculo recebido no grupo;
+3. `chat_id` vinculado à instância correta;
+4. grupo do tipo supergrupo;
+5. modo Fórum ativo;
+6. bot presente no grupo;
+7. bot administrador;
+8. permissão `can_manage_topics` concedida;
+9. privacidade do bot desligada no @BotFather;
+10. owner local associado ao grupo;
+11. política de captura e retenção definida;
+12. capacidade de criar um tópico de teste e fechá-lo.
+
+Cada falha deve exibir: estado observado, impacto, instrução de correção e
+comando/atalho para repetir a verificação. O configurador não deve permitir
+habilitar ou agendar tarefas enquanto qualquer requisito obrigatório estiver
+pendente.
+
+O resultado deve distinguir `valid`, `invalid`, `pending` e `not_configured`. Uma
+falha de notificação em tarefa já existente não apaga a tarefa nem a execução; ela
+ativa o fallback descrito abaixo.
+
 Exemplos de tópicos:
 
 - `Tarefa: revisar e-mails de fornecedores`;
 - `Evento: comprovante Pix 2026-08-06`;
 - `Caso: cadastro de contraparte`;
 - `Relatório: fechamento semanal`.
+
+### Título fornecido pela tarefa
+
+O campo `topic_title` é obrigatório na definição da tarefa e deve ser validado
+antes da habilitação. Eventos dinâmicos devem transportar o mesmo campo. O valor
+deve ser não vazio, ter no máximo 128 caracteres UTF-8 e ser único entre as tarefas
+ativas do mesmo grupo, salvo quando a política usar um tópico por execução.
+
+As regras de nome são:
+
+- `task`: usar exatamente `topic_title`, sem prefixo ou alteração;
+- `run`: usar `topic_title: variation`, com uma variação curta derivada de
+  `run_uid` ou `event_uid`;
+- `case`: usar exatamente `topic_title` enquanto o caso estiver ativo.
+
+O UID não substitui o título. Ele aparece apenas no corpo da mensagem raiz, nos
+comandos e no banco operacional.
 
 O bot deve reutilizar o tópico da tarefa quando a execução for retomável e criar um
 novo tópico quando o evento for independente. O usuário continua livre para fixar,
@@ -314,9 +371,21 @@ Quando uma tarefa produzir uma notificação:
 6. envia a resposta final no mesmo tópico.
 
 Se a tarefa não puder publicar no grupo, o resultado deve ser registrado como
-`notification_pending` ou `notification_failed`, sem misturar a mensagem com a
-conversa privada. O fallback privado deve ser uma exceção explícita, nunca o
-comportamento silencioso.
+`notification_pending` ou `notification_failed`. O gateway deve enviar a mensagem
+ao particular do owner, quando o owner já tiver iniciado o bot, precedida exatamente
+por um cabeçalho operacional equivalente a:
+
+```text
+Falha ao enviar a mensagem a seguir para o tópico [título]
+Motivo: [diagnóstico sanitizado]
+```
+
+O corpo original deve ser preservado abaixo do cabeçalho, com anexos referenciados
+pelos caminhos seguros do job. O fallback não deve ser encaminhado para a sessão
+privada atual do Codex: ele é uma notificação ao owner e conserva `task_uid`,
+`run_uid` e `message_thread_id` para posterior reenvio. Se o particular do owner
+também estiver indisponível, manter o artefato em `output/` e registrar a falha
+para o diagnóstico local.
 
 ### Contexto de grupo
 
@@ -327,10 +396,22 @@ O bot deve responder somente quando:
 - receber um comando permitido;
 - estiver tratando uma resposta dentro de um tópico de tarefa autorizado.
 
-Para fornecer contexto completo, o gateway precisa manter um log local das mensagens
-recebidas no grupo. Privacidade Telegram habilitada não entrega histórico completo ao
-bot; portanto, o grupo de trabalho deverá usar bot administrador ou privacidade
-desabilitada, com retenção limitada e política de descarte.
+Para fornecer contexto completo, o gateway deve receber e registrar localmente todas
+as mensagens do grupo. A privacidade do bot deve estar obrigatoriamente desligada no
+@BotFather; se a verificação constatar privacidade habilitada, o grupo fica
+inválido para agendamento e novas tarefas não podem ser habilitadas. A captura local
+terá retenção limitada, política de descarte e controle de acesso.
+
+Receber todas as mensagens não significa enviar todas ao agente. O gateway só montará
+um contexto para o Codex quando:
+
+- o bot for mencionado;
+- uma mensagem responder a uma mensagem do bot;
+- houver um comando autorizado;
+- existir uma aprovação pendente ligada àquele tópico.
+
+Nos demais casos, a mensagem será apenas persistida conforme a retenção e não
+acionará uma thread Codex.
 
 O contexto enviado ao Codex deve ser um resumo estruturado, não uma retransmissão de
 todas as mensagens em toda resposta. O gateway deve incluir somente:
@@ -497,6 +578,17 @@ Codex livre.
 18. Nenhum script acessa arquivos fora das raízes concedidas.
 19. O reinício do gateway recupera tarefas sem duplicar efeitos.
 20. A falha da notificação não apaga o resultado da execução.
+21. Uma tarefa sem `topic_title` é recusada antes de ser habilitada.
+22. Uma tarefa `task` usa exatamente o título fornecido.
+23. Uma tarefa `run` usa `<topic_title>: <variação>` sem perder o título original.
+24. O instalador identifica grupo sem Fórum, sem `can_manage_topics` ou com
+    privacidade habilitada e apresenta instruções corretivas.
+25. O scheduler não habilita novas tarefas enquanto o grupo estiver inválido.
+26. Uma mensagem que falha no tópico é encaminhada ao particular do owner com o
+    cabeçalho `Falha ao enviar a mensagem a seguir para o tópico [título]`.
+27. O gateway recebe todas as mensagens para formar contexto, mas só aciona o Codex
+    quando há menção, resposta, comando ou aprovação pendente.
+28. Privacidade habilitada no @BotFather torna o grupo inelegível para agendamento.
 
 ## Questões para a especificação seguinte
 
