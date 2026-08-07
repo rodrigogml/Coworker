@@ -7,13 +7,16 @@ import json
 import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from interfaces.telegram.automation_state import AutomationState, AutomationStateError
 from interfaces.telegram.scheduler import ScheduledTask, SchedulerError, SchedulerStore
 
 
 def _state() -> AutomationState:
-    root = Path(__file__).resolve().parents[1]
-    return AutomationState(root / "data" / "automation" / "scheduler.sqlite3")
+    return AutomationState(PROJECT_ROOT / "data" / "automation" / "scheduler.sqlite3")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_at=args.run_at,
                 resumable=args.resumable, topic_policy=args.topic_policy,
                 telegram_chat_id=args.chat_id, group_alias=args.group_alias,
-            ), Path(__file__).resolve().parents[1])
+            ), PROJECT_ROOT)
             scheduler.close()
             result = {"ok": True, "task_uid": args.task_uid, "enabled": args.enabled}
         elif args.command == "list":
