@@ -475,6 +475,12 @@ def main(argv: list[str] | None = None) -> int:
     except (WindowsServiceError, OSError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         return 1
+    except Exception as exc:
+        # pywin32 exposes SCM access and state failures as pywintypes.error,
+        # which is not consistently an OSError across supported versions.
+        # Keep the CLI structured and actionable instead of leaking a traceback.
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 1
 
 
 if __name__ == "__main__":
