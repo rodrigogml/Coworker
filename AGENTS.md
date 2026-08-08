@@ -159,6 +159,9 @@ Para credenciais simples, usar o campo `Password`. Para autenticação formada p
 identificador e segredo, manter ambos em uma única entrada: identificador em
 `Username` e segredo em `Password`. Scripts devem ler esses campos internamente pela
 ferramenta compartilhada do cofre.
+Para duplicar somente um campo entre entradas já existentes, usar
+`credential_vault.py copy --source-field Username|Password --confirm`; a operação
+preserva a origem, altera apenas o campo indicado e não aceita valores em argumentos.
 
 ### Pessoas físicas e jurídicas no cofre
 

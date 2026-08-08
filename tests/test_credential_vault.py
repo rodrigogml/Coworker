@@ -409,6 +409,65 @@ class CredentialVaultTest(unittest.TestCase):
         self.assertTrue(result["source_removed"])
         self.assertFalse(result["secret_exposed"])
 
+    def test_copy_requires_confirmation_and_returns_no_value(self) -> None:
+        arguments = self.arguments()
+        arguments.source = "APIs/Origem"
+        arguments.target = "APIs/Destino"
+        arguments.source_field = "Password"
+        arguments.target_field = None
+        arguments.confirm = False
+        with self.assertRaises(CREDENTIAL_VAULT.VaultToolError):
+            CREDENTIAL_VAULT.command_copy(arguments)
+
+    def test_copy_password_uses_keepass_library_without_cli_value(self) -> None:
+        self.vault.touch()
+        arguments = self.arguments()
+        arguments.source = "APIs/Origem"
+        arguments.target = "APIs/Destino"
+        arguments.source_field = "Password"
+        arguments.target_field = None
+        arguments.confirm = True
+
+        class Group:
+            def __init__(self) -> None:
+                self.subgroups = []
+                self.entries = []
+
+        class Entry:
+            def __init__(self, title: str, password: str) -> None:
+                self.title = title
+                self.username = ""
+                self.password = password
+
+        root = Group()
+        apis = Group()
+        apis.name = "APIs"
+        root.subgroups = [apis]
+        source = Entry("Origem", "segredo-nao-deve-retornar")
+        target = Entry("Destino", "senha-antiga")
+        apis.entries = [source, target]
+
+        class Database:
+            root_group = root
+
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.saved = False
+
+            def save(self) -> None:
+                self.saved = True
+
+        with (
+            patch.object(CREDENTIAL_VAULT, "PyKeePass", Database),
+            patch.object(CREDENTIAL_VAULT, "read_windows_credential", return_value="mestra"),
+            patch.object(CREDENTIAL_VAULT, "ensure_keepassxc_gui_closed"),
+        ):
+            result = CREDENTIAL_VAULT.command_copy(arguments)
+
+        self.assertTrue(result["copied"])
+        self.assertFalse(result["secret_exposed"])
+        self.assertEqual("segredo-nao-deve-retornar", target.password)
+        self.assertNotIn("segredo-nao-deve-retornar", str(result))
+
     def test_add_prepares_groups_and_updates_an_existing_entry(self) -> None:
         self.vault.touch()
         arguments = self.arguments()

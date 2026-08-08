@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import getpass
+import hashlib
 import json
 import os
 import subprocess
@@ -17,6 +18,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+try:
+    from pykeepass import PyKeePass
+except ImportError:  # pragma: no cover - dependência validada na instalação
+    PyKeePass = None  # type: ignore[assignment,misc]
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -268,6 +274,15 @@ def require_file(path: Path, description: str) -> None:
     """Exige a presença de um arquivo necessário."""
     if not path.is_file():
         raise VaultToolError(f"{description} não encontrado em '{path}'.")
+
+
+def _file_fingerprint(path: Path) -> str:
+    """Calcula uma impressão do cofre para evitar sobrescrita concorrente."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def validate_entry_path(value: str) -> str:
@@ -676,6 +691,79 @@ def write_entry_credentials(
     )
 
 
+def copy_entry_field(
+    source: str,
+    target: str,
+    source_field: str,
+    target_field: str | None = None,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Copia um campo protegido entre entradas sem retornar seu valor.
+
+    A entrada de destino precisa existir para evitar a criação acidental de uma
+    credencial incompleta. O valor trafega somente pela memória do processo e
+    pela entrada padrão do KeePassXC; nunca é colocado nos argumentos do CLI.
+    """
+    normalized_source = validate_entry_path(source)
+    normalized_target = validate_entry_path(target)
+    if normalized_source == normalized_target:
+        raise VaultToolError("Origem e destino da cópia são iguais.")
+    allowed = {"Username", "Password"}
+    if source_field not in allowed:
+        raise VaultToolError("O campo de origem deve ser Username ou Password.")
+    destination_field = target_field or source_field
+    if destination_field not in allowed:
+        raise VaultToolError("O campo de destino deve ser Username ou Password.")
+    if cli_path is None or vault_path is None or credential_target is None:
+        config = load_vault_config(config_path)
+        cli_path = cli_path or config.cli_path
+        vault_path = vault_path or config.vault_path
+        credential_target = credential_target or config.credential_target
+    require_file(cli_path, "KeePassXC CLI")
+    require_file(vault_path, "Cofre")
+    master_password = read_windows_credential(credential_target)
+    value = ""
+    try:
+        ensure_keepassxc_gui_closed()
+        if PyKeePass is None:
+            raise VaultToolError("A dependência PyKeePass não está instalada.")
+        original_fingerprint = _file_fingerprint(vault_path)
+        database = PyKeePass(str(vault_path), password=master_password)
+
+        def find_entry(entry_path: str) -> Any:
+            parts = entry_path.split("/")
+            group = database.root_group
+            for group_name in parts[:-1]:
+                matches = [child for child in group.subgroups if child.name == group_name]
+                if len(matches) != 1:
+                    raise VaultToolError("O caminho da entrada é inexistente ou ambíguo.")
+                group = matches[0]
+            matches = [entry for entry in group.entries if entry.title == parts[-1]]
+            if len(matches) != 1:
+                raise VaultToolError("O título da entrada é inexistente ou ambíguo.")
+            return matches[0]
+
+        source_entry = find_entry(normalized_source)
+        target_entry = find_entry(normalized_target)
+        value = str(getattr(source_entry, source_field.casefold(), "") or "")
+        if not value:
+            raise VaultToolError(f"O campo '{source_field}' da origem está vazio.")
+        setattr(target_entry, destination_field.casefold(), value)
+        if _file_fingerprint(vault_path) != original_fingerprint:
+            raise VaultToolError("O cofre mudou durante a operação; nenhuma gravação foi feita.")
+        try:
+            database.save()
+        except Exception as exc:
+            raise VaultToolError("Não foi possível salvar a cópia no cofre.") from exc
+    finally:
+        master_password = ""
+        value = ""
+
+
 def launch_interactive(
     cli_path: Path,
     arguments: list[str],
@@ -982,6 +1070,34 @@ def command_migrate(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_copy(args: argparse.Namespace) -> dict[str, Any]:
+    """Copia um campo de credencial sem devolvê-lo ao chamador."""
+    if not args.confirm:
+        raise VaultToolError("A cópia exige a opção '--confirm'.")
+    source = validate_entry_path(args.source)
+    target = validate_entry_path(args.target)
+    source_field = str(args.source_field)
+    target_field = str(args.target_field or source_field)
+    copy_entry_field(
+        source,
+        target,
+        source_field,
+        target_field,
+        cli_path=resolved_path(args.cli),
+        vault_path=resolved_path(args.vault),
+        credential_target=args.credential_target,
+    )
+    return {
+        "ok": True,
+        "source": source,
+        "target": target,
+        "source_field": source_field,
+        "target_field": target_field,
+        "copied": True,
+        "secret_exposed": False,
+    }
+
+
 def command_enroll(args: argparse.Namespace) -> dict[str, Any]:
     """Abre o cadastro local e seguro da senha mestra."""
     cli_path = resolved_path(args.cli)
@@ -1146,6 +1262,20 @@ def build_parser(config: VaultConfig | None = None) -> argparse.ArgumentParser:
     migrate_parser.add_argument("target")
     migrate_parser.add_argument("--confirm", action="store_true")
     migrate_parser.set_defaults(handler=command_migrate)
+
+    copy_parser = commands.add_parser(
+        "copy", help="Copia Username ou Password entre entradas sem expor o valor."
+    )
+    copy_parser.add_argument("source")
+    copy_parser.add_argument("target")
+    copy_parser.add_argument(
+        "--source-field", choices=("Username", "Password"), required=True
+    )
+    copy_parser.add_argument(
+        "--target-field", choices=("Username", "Password")
+    )
+    copy_parser.add_argument("--confirm", action="store_true")
+    copy_parser.set_defaults(handler=command_copy)
 
     enroll_parser = commands.add_parser(
         "enroll", help="Cadastra a senha mestra nesta máquina."

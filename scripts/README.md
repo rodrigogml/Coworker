@@ -108,6 +108,7 @@ python scripts/credential_vault.py open
 python scripts/credential_vault.py add "APIs/Nome"
 python scripts/credential_vault.py store "APIs/Nome" --stdin
 python scripts/credential_vault.py check "APIs/Nome"
+python scripts/credential_vault.py copy "APIs/Origem" "APIs/Destino" --source-field Username --confirm
 ```
 
 O utilitário não possui comando para revelar credenciais. Antes de abrir o console,
@@ -126,6 +127,12 @@ argumentos.
 do Windows com persistência local à máquina. O cofre pode ser sincronizado pelo
 provedor escolhido pela pessoa usuária; o cadastro local deve ser repetido em cada
 computador.
+
+`copy` copia `Username` ou `Password` de uma entrada existente para outra entrada
+existente. O campo de destino é o mesmo por padrão e pode ser alterado com
+`--target-field`. A operação exige `--confirm`, preserva a origem e altera somente o
+campo selecionado; valores passam pela API PyKeePass em memória e nunca aparecem em
+argumentos, saída ou logs.
 
 ## Entidades no cofre
 

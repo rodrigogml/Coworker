@@ -430,6 +430,17 @@ python scripts/credential_vault.py migrate "APIs/Origem" "APIs/Destino" --confir
 O comando grava o destino antes de remover a origem. Se a remoção falhar, informa o
 erro e preserva a cópia já gravada no destino para evitar perda do segredo.
 
+Para copiar somente um campo entre entradas já existentes, sem remover a origem:
+
+```powershell
+python scripts/credential_vault.py copy "APIs/Origem" "APIs/Destino" `
+  --source-field Username --confirm
+```
+
+Use `--source-field Password` para senhas e `--target-field` quando a posição de
+destino for diferente. A cópia exige confirmação explícita, mantém a origem intacta,
+altera somente o campo solicitado e não expõe o valor em argumentos ou saída.
+
 Se a entrada da Cloudflare não existir, a IA deve orientar:
 
 ```powershell
