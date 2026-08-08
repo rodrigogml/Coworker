@@ -321,12 +321,26 @@ def install_service(definition: ServiceDefinition, *, non_interactive: bool = Fa
 
 def remove_service(name: str, *, timeout_seconds: int = 60) -> dict[str, Any]:
     win32service, _util, _manager = _win32()
+    try:
+        import win32con  # type: ignore
+        delete_access = win32con.DELETE
+    except (ImportError, AttributeError) as exc:
+        raise WindowsServiceError(
+            "A dependência pywin32 não expõe a permissão DELETE do SCM."
+        ) from exc
     status = service_status(name)
     if not status["installed"]:
         return {**status, "removed": False, "already_removed": True}
-    manager, service = _service_handle(
-        win32service, validate_service_name(name), win32service.SERVICE_STOP | win32service.DELETE | win32service.SERVICE_QUERY_STATUS
-    )
+    name = validate_service_name(name)
+    try:
+        manager, service = _service_handle(
+            win32service, name,
+            win32service.SERVICE_STOP | delete_access | win32service.SERVICE_QUERY_STATUS,
+        )
+    except Exception as exc:
+        raise WindowsServiceError(
+            service_exception_message(exc, action="acessar", name=name)
+        ) from exc
     try:
         if status["state_name"] not in {"stopped", "stop_pending"}:
             try:

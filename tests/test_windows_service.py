@@ -27,6 +27,37 @@ class WindowsServiceContractTests(unittest.TestCase):
         self.assertIn("acesso negado", message)
         self.assertIn("Administrador", message)
 
+    def test_remove_service_uses_win32con_delete_permission(self) -> None:
+        import win32con
+        from unittest.mock import patch
+
+        class FakeService:
+            def DeleteService(self, _service):
+                return None
+
+        fake_win32 = type(
+            "FakeWin32",
+            (),
+            {
+                "SERVICE_STOP": 1,
+                "SERVICE_QUERY_STATUS": 2,
+                "CloseServiceHandle": staticmethod(lambda _handle: None),
+                "DeleteService": staticmethod(lambda _service: None),
+            },
+        )()
+        with (
+            patch("scripts.windows_service._win32", return_value=(fake_win32, None, None)),
+            patch("scripts.windows_service.service_status", return_value={"installed": True, "state_name": "stopped"}),
+            patch("scripts.windows_service._service_handle", return_value=(object(), FakeService())) as handle,
+            patch("scripts.windows_service.validate_service_name", return_value="bis"),
+        ):
+            # The fake service intentionally lacks SCM behavior beyond deletion;
+            # this verifies permission construction before the real API call.
+            result = __import__("scripts.windows_service", fromlist=["remove_service"]).remove_service("bis")
+
+        self.assertTrue(result["removed"])
+        self.assertEqual(1 | win32con.DELETE | 2, handle.call_args.args[2])
+
     def test_service_name_contract(self):
         self.assertEqual(validate_service_name("ExampleInstance"), "ExampleInstance")
         with self.assertRaises(WindowsServiceError):
