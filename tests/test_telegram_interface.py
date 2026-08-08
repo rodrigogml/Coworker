@@ -155,10 +155,10 @@ class TelegramContentTests(unittest.TestCase):
             credential_entry("atualize a chave do Todoist"),
         )
         self.assertEqual(
-            "APIs/Telegram/rodriclone",
+            "APIs/Telegram/ExampleInstance",
             credential_entry(
                 "token do Telegram",
-                telegram_credential_ref="APIs/Telegram/rodriclone",
+                telegram_credential_ref="APIs/Telegram/ExampleInstance",
             ),
         )
 

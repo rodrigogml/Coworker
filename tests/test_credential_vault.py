@@ -530,7 +530,7 @@ class CredentialVaultTest(unittest.TestCase):
     def test_add_prepares_groups_and_updates_an_existing_entry(self) -> None:
         self.vault.touch()
         arguments = self.arguments()
-        arguments.entry = "APIs/Telegram/rodriclone"
+        arguments.entry = "APIs/Telegram/ExampleInstance"
         arguments.username = None
         arguments.url = None
         with (
@@ -561,7 +561,7 @@ class CredentialVaultTest(unittest.TestCase):
         ensure.assert_called_once_with(
             self.cli,
             self.vault,
-            "APIs/Telegram/rodriclone",
+            "APIs/Telegram/ExampleInstance",
             "senha-mestra",
         )
         self.assertEqual("edit", launch.call_args.args[1][0])
@@ -582,7 +582,7 @@ class CredentialVaultTest(unittest.TestCase):
             CREDENTIAL_VAULT._ensure_vault_groups(
                 self.cli,
                 self.vault,
-                "APIs/Telegram/rodriclone",
+            "APIs/Telegram/ExampleInstance",
                 "senha-mestra",
             )
 
@@ -600,7 +600,7 @@ class CredentialVaultTest(unittest.TestCase):
     def test_add_requires_local_enrollment_before_opening_window(self) -> None:
         self.vault.touch()
         arguments = self.arguments()
-        arguments.entry = "APIs/Telegram/rodriclone"
+        arguments.entry = "APIs/Telegram/ExampleInstance"
         arguments.username = None
         arguments.url = None
         with (

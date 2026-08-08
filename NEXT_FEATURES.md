@@ -203,7 +203,7 @@ filesystem_read = ["job/input"]
 filesystem_write = ["job/derived"]
 
 [integrations.gmail]
-profile = "Rodrigo"
+profile = "example"
 operations = ["list", "read", "download_attachment"]
 ```
 

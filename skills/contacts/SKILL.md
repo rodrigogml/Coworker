@@ -34,7 +34,7 @@ python skills/contacts/scripts/contacts.py --profile pessoal contacts search `
 python skills/contacts/scripts/contacts.py --profile pessoal contacts show `
   --resource-name people/ID
 python skills/contacts/scripts/contacts.py --profile pessoal contacts create `
-  --name "Maria Silva" --email "maria@example.com" --dry-run
+  --name "Example Person" --email "person@example.com" --dry-run
 python skills/contacts/scripts/contacts.py --profile pessoal contacts update `
   --resource-name people/ID --phone "+55 11 99999-9999" --dry-run
 python skills/contacts/scripts/contacts.py --profile pessoal groups list

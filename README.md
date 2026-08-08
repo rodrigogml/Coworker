@@ -407,8 +407,8 @@ python scripts/credential_vault.py check "APIs/Todoist"
 python skills/todoist/scripts/todoist.py doctor
 python scripts/credential_vault.py check "APIs/Notion"
 python skills/notion/scripts/notion.py doctor
-python scripts/credential_vault.py check "BIS2/Turing/BISCMD"
-python skills/bis2/scripts/bis2.py --profile turing doctor
+python scripts/credential_vault.py check "BIS2/Example/BISCMD"
+python skills/bis2/scripts/bis2.py --profile example doctor
 python scripts/credential_vault.py check "APIs/Google/OAuthClient"
 python scripts/google_accounts.py list
 python scripts/google_accounts.py doctor --profile default
@@ -601,7 +601,7 @@ python skills/forwardemail/scripts/forward_email.py aliases list `
   --domain exemplo.com
 python skills/forwardemail/scripts/forward_email.py aliases create `
   --domain exemplo.com --name contato `
-  --recipient destino@exemplo.net
+  --recipient recipient@example.com
 ```
 
 Consultas podem ser feitas dentro do escopo solicitado. Criações, alterações e
@@ -736,7 +736,7 @@ python skills/contacts/scripts/contacts.py --profile pessoal contacts search `
 python skills/contacts/scripts/contacts.py --profile pessoal contacts show `
   --resource-name people/ID
 python skills/contacts/scripts/contacts.py --profile pessoal contacts create `
-  --name "Maria Silva" --email "maria@example.com" --dry-run
+  --name "Example Person" --email "person@example.com" --dry-run
 ```
 
 Atualizações preservam os metadados de concorrência devolvidos pela People API. A

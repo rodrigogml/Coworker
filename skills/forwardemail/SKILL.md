@@ -67,10 +67,10 @@ python skills/forwardemail/scripts/forward_email.py aliases show `
   --domain exemplo.com --name contato
 python skills/forwardemail/scripts/forward_email.py aliases create `
   --domain exemplo.com --name contato `
-  --recipient destino@exemplo.net
+  --recipient recipient@example.com
 python skills/forwardemail/scripts/forward_email.py aliases update `
   --domain exemplo.com --name contato `
-  --recipient novo-destino@exemplo.net
+  --recipient new-recipient@example.com
 python skills/forwardemail/scripts/forward_email.py aliases delete `
   --domain exemplo.com --name contato
 ```

@@ -398,7 +398,7 @@ Na configura&ccedil;&atilde;o interativa, as listas de leitura e escrita s&atild
 gerenciadas incrementalmente: novos caminhos podem ser informados separados por
 v&iacute;rgula, e cada item pode ser removido individualmente. O separador antigo por
 ponto e v&iacute;rgula continua aceito. Caminhos relativos s&atilde;o resolvidos a partir
-da raiz do RodriClone; `.` representa o pr&oacute;prio reposit&oacute;rio.
+da raiz do Coworker; `.` representa o pr&oacute;prio reposit&oacute;rio.
 
 Para escrita, o menu oferece dois atalhos seguros: manter somente `data/`, que
 continua sendo o padr&atilde;o de novas inst&acirc;ncias, ou adicionar `.` para permitir

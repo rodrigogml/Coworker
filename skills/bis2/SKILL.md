@@ -15,7 +15,7 @@ processo do BISCMD sem gravá-las em arquivo temporário.
 python scripts/integration_config.py init bis2
 ```
 
-`profile` é o nome local de uma configuração de servidor BIS2, por exemplo `turing`.
+`profile` é o nome local de uma configuração de servidor BIS2, por exemplo `example`.
 Ele seleciona host, porta e referência de credencial. Quando houver mais de um
 servidor, informar `--profile NOME`.
 
@@ -39,7 +39,7 @@ que exista `default_profile`.
 Usar `doctor` para validar Java, JAR, credencial e lookup das fachadas remotas:
 
 ```powershell
-python skills/bis2/scripts/bis2.py --profile turing doctor
+python skills/bis2/scripts/bis2.py --profile example doctor
 ```
 
 Consultas podem ser executadas dentro do escopo solicitado. Escritas exigem
