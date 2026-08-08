@@ -905,6 +905,49 @@ def _gateway(*arguments: str, timeout: int = 120) -> dict[str, Any]:
     return _run_json([sys.executable, str(GATEWAY), *arguments], timeout=timeout)
 
 
+def windows_service_action(
+    instance_id: str,
+    action: str,
+    *,
+    service_name: str | None = None,
+    display_name: str | None = None,
+    startup: str = "automatic_delayed",
+    account_mode: str = "current_user",
+    non_interactive: bool = False,
+) -> dict[str, Any]:
+    """Executa uma operação do serviço Windows sem aceitar segredos em argumentos."""
+    if os.name != "nt":
+        raise InstallError("Serviços do Windows só podem ser administrados no Windows.")
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from scripts.windows_service import (
+        build_definition,
+        control_service,
+        install_service,
+        remove_service,
+        service_status,
+    )
+
+    name = service_name or instance_id
+    if action == "status":
+        return service_status(name)
+    if action == "remove":
+        return remove_service(name)
+    if action in {"start", "stop"}:
+        return control_service(name, action)
+    if action != "install":
+        raise InstallError(f"Ação de serviço desconhecida: {action}.")
+    definition = build_definition(
+        PROJECT_ROOT,
+        instance_id=instance_id,
+        display_name=display_name or instance_id,
+        service_name=service_name,
+        startup=startup,
+        account_mode=account_mode,
+    )
+    return install_service(definition, non_interactive=non_interactive)
+
+
 def configure_vault(*, non_interactive: bool) -> bool:
     """Prepara o cofre sem receber senha ou segredo pelo processo instalador."""
     vault = DATA_DIR / "secrets" / "vault.kdbx"
@@ -1465,8 +1508,8 @@ def manage_gateway(instance_id: str) -> None:
         print("  2. Iniciar")
         print("  3. Finalizar")
         print("  4. Reiniciar")
-        print("  5. Instalar como serviço [planejado]")
-        print("  6. Remover serviço [planejado]")
+        print("  5. Instalar como serviço Windows")
+        print("  6. Remover serviço Windows")
         print("  0. Voltar")
         answer = input("Escolha uma opção: ").strip()
         if answer in {"", "0"}:
@@ -1493,11 +1536,34 @@ def manage_gateway(instance_id: str) -> None:
                 result = restart_gateway(instance_id)
                 print(f"Gateway reiniciado (PID {result['pid']}).")
             continue
-        if answer in {"5", "6"}:
-            print(
-                "Gerenciamento como serviço ainda não foi implementado. "
-                "A opção já está reservada para uma etapa futura."
-            )
+        if answer == "5":
+            if os.name != "nt":
+                print("A instalaÃ§Ã£o de serviÃ§o Linux permanece planejada para um MVP futuro.")
+                continue
+            service_name = _ask("Nome do serviÃ§o", instance_id)
+            startup = _ask(
+                "InicializaÃ§Ã£o (automatic_delayed, automatic ou manual)",
+                "automatic_delayed",
+            ).casefold()
+            account_mode = _ask("Conta (current_user ou local_system)", "current_user").casefold()
+            if _yes_no("Instalar e iniciar o serviÃ§o agora", default=True):
+                result = windows_service_action(
+                    instance_id, "install", service_name=service_name,
+                    display_name=str(_load_identity_values()["display_name"]),
+                    startup=startup, account_mode=account_mode,
+                )
+                print(f"ServiÃ§o instalado: {result.get('name', service_name)}")
+                windows_service_action(instance_id, "start", service_name=service_name)
+                print("ServiÃ§o iniciado.")
+            continue
+        if answer == "6":
+            if os.name != "nt":
+                print("A remoÃ§Ã£o de serviÃ§o Linux permanece planejada para um MVP futuro.")
+                continue
+            service_name = _ask("Nome do serviÃ§o", instance_id)
+            if _yes_no(f"Parar e remover o serviÃ§o '{service_name}'", default=False):
+                windows_service_action(instance_id, "remove", service_name=service_name)
+                print("ServiÃ§o removido. Os dados da instÃ¢ncia foram preservados.")
             continue
         print("Escolha uma opção válida.")
 
@@ -1887,6 +1953,22 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
     """Executa o menu principal e mantém cada seção independente das demais."""
     current = dict(identity_values)
     last_telegram: dict[str, Any] | None = None
+    requested_service = getattr(args, "service_action", "none")
+    if requested_service != "none":
+        service_result = windows_service_action(
+            str(current["instance_id"]), requested_service,
+            service_name=getattr(args, "service_name", "") or None,
+            display_name=str(current["display_name"]),
+            startup=getattr(args, "service_startup", "automatic_delayed"),
+            account_mode=getattr(args, "service_account_mode", "current_user"),
+            non_interactive=False,
+        )
+        return {
+            "ok": True,
+            "instance_id": str(current["instance_id"]),
+            "display_name": str(current["display_name"]),
+            "service": service_result,
+        }
     while True:
         instance_id = str(current["instance_id"])
         print(f"\nConfiguração da instância {current['display_name']} ({instance_id})")
@@ -2000,6 +2082,22 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     instance_id = str(identity_values["instance_id"])
     if not args.non_interactive:
         return run_configurator(args, identity_values)
+    requested_service = getattr(args, "service_action", "none")
+    if requested_service != "none":
+        result = windows_service_action(
+            instance_id, requested_service,
+            service_name=getattr(args, "service_name", "") or None,
+            display_name=str(identity_values["display_name"]),
+            startup=getattr(args, "service_startup", "automatic_delayed"),
+            account_mode=getattr(args, "service_account_mode", "current_user"),
+            non_interactive=True,
+        )
+        return {
+            "ok": True,
+            "instance_id": instance_id,
+            "display_name": identity_values["display_name"],
+            "service": result,
+        }
 
     secrets_created, vault_tools_ready = configure_vault_executables(
         instance_id,
@@ -2042,6 +2140,7 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         "telegram_config_created": telegram_created,
         "telegram": telegram_result,
         "skills_configured": BIS2_CONFIG.is_file(),
+        "service": None,
     }
 
 
@@ -2063,6 +2162,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-start",
         action="store_true",
         help="Configura e vincula o Telegram sem manter o gateway em execução.",
+    )
+    parser.add_argument(
+        "--service-action",
+        choices=("none", "install", "remove", "start", "stop", "status"),
+        default="none",
+        help="Administra o serviÃ§o Windows da instÃ¢ncia; Linux permanece MVP futuro.",
+    )
+    parser.add_argument("--service-name", default="")
+    parser.add_argument(
+        "--service-startup",
+        choices=("automatic_delayed", "automatic", "manual"),
+        default="automatic_delayed",
+    )
+    parser.add_argument(
+        "--service-account-mode",
+        choices=("current_user", "local_system"),
+        default="current_user",
     )
     return parser
 

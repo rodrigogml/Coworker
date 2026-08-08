@@ -131,10 +131,10 @@ falhas de inicialização ficam em `<state_dir>/gateway.log`; quando o processo 
 prematuramente, o configurador apresenta a última linha desse log. Respostas HTTP 429
 incluem o tempo de espera informado pelo Telegram, sem revelar o token.
 
-As opções de instalar e remover como serviço já aparecem reservadas no menu,
-mas ainda não executam alterações no Windows. Um gateway iniciado antes desta
-versão não possui registro persistente e deve ser finalizado manualmente uma vez
-antes de passar ao novo gerenciador.
+O menu do instalador oferece a instalação e remoção como serviço no Windows.
+O host SCM mantém o gateway como processo filho, preserva a parada cooperativa e
+grava somente definições não secretas em `data/service/<nome>/`. Use o instalador;
+não registre o `gateway.py` diretamente com `sc.exe` ou `New-Service`.
 
 Em outro terminal, gere um PIN temporário:
 
@@ -468,3 +468,13 @@ gateway. O MVP executa somente scripts Python existentes em `data/`, `interfaces
 ou `skills/`, sem shell, código inline ou caminho externo. A retenção de mensagens,
 anexos, artefatos e resumos usa padrão mínimo de 180 dias, configurável para prazos
 maiores no TOML privado.
+### Serviço Windows e futuro Linux
+
+O instalador Windows oferece `-ServiceAction install|remove|status|start|stop` e
+registra um host compatível com o Service Control Manager. O nome padrão é o
+`instance_id`; o host inicia `gateway.py` como processo filho, encaminha a parada
+cooperativa e mantém metadados não secretos em `data/service/`.
+
+O `install.sh` não instala serviços neste MVP. A integração com systemd, incluindo
+backend de credenciais Linux, conta de execução, unidade de usuário/sistema e
+políticas de reinício, fica documentada como etapa futura.

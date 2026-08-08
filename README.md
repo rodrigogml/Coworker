@@ -800,3 +800,33 @@ python -m unittest discover -s tests -v
 
 O workflow público executa esses testes no GitHub Actions com Windows e Python 3.11 e
 3.12. Ele não recebe acesso ao conteúdo local de `data/`, ao cofre ou a credenciais.
+## Serviço Windows
+
+O gateway pode ser instalado como serviço do Windows, usando o próprio `instance_id`
+como nome padrão. O instalador cria um host compatível com o Service Control Manager;
+`gateway.py` continua sendo um processo filho e recebe parada cooperativa.
+
+```powershell
+.\install.ps1 -ServiceAction install
+.\install.ps1 -ServiceAction status
+.\install.ps1 -ServiceAction start
+.\install.ps1 -ServiceAction stop
+.\install.ps1 -ServiceAction remove
+```
+
+Por padrão, o serviço usa inicialização automática atrasada e a conta atual do
+Windows. A senha é solicitada somente de forma interativa e entregue ao Service
+Control Manager; ela não entra em argumentos, arquivos de configuração ou logs.
+`local_system` pode ser escolhido explicitamente, mas não é recomendado para
+instâncias que dependem do cofre ou do `CODEX_HOME` da conta atual.
+O Python da instância precisa ter `pywin32` instalado (incluído em
+`requirements.txt`) e a instalação/remoção normalmente exige um PowerShell elevado.
+
+> [!WARNING]
+> Não registre diretamente `python interfaces/telegram/gateway.py run` com `sc.exe` ou
+> `New-Service`: o gateway não é um entrypoint nativo do Service Control Manager.
+> Use o fluxo do instalador, que cria o host de serviço apropriado.
+
+O suporte a serviços Linux/systemd permanece planejado para um MVP futuro. O
+`install.sh` continua configurando e iniciando o gateway manualmente; ainda não cria
+unidades systemd nem resolve credenciais Linux automaticamente.
