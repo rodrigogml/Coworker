@@ -687,12 +687,13 @@ def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
     if resource == "projects":
         return pick(item, ("codigo", "codInt", "nome", "inativo"))
     if resource == "categories":
-        return pick(
+        summary = pick(
             item,
             (
                 "codigo",
                 "descricao",
                 "descricao_padrao",
+                "natureza",
                 "tipo_categoria",
                 "conta_inativa",
                 "conta_despesa",
@@ -702,6 +703,9 @@ def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
                 "nao_exibir",
             ),
         )
+        if "natureza" in summary:
+            summary["observacao"] = summary["natureza"]
+        return summary
     if resource == "departments":
         return pick(
             item,

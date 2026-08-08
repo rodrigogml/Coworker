@@ -58,7 +58,10 @@ python skills/omie/scripts/omie.py current-accounts show --integration-id BANCO-
 
 Esses recursos são somente de leitura e servem também para validar referências de
 títulos, baixas, lançamentos diretos e transferências. A saída de categorias inclui
-os marcadores de receita, despesa, transferência, totalização e disponibilidade.
+os marcadores de receita, despesa, transferência, totalização e disponibilidade. O
+campo oficial `natureza`, equivalente à “Observação” exibida na tela da Omie, também
+é retornado como `observacao` para deixar essa semântica explícita sem ocultar o nome
+original da API.
 
 ## Produtos
 

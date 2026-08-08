@@ -215,7 +215,9 @@ python skills/omie/scripts/omie.py --profile EMPRESA account-entries create `
 Campos obrigatórios na criação: `nature`, `account`, `date`, `amount`,
 `document_type` e exatamente um entre `category` e `categories`. O valor deve ser
 positivo. Rateios devem usar somente valores ou somente percentuais e fechar no valor
-do lançamento ou em 100%.
+do lançamento ou em 100%. `counterparty` é opcional: sua ausência cria o movimento
+direto sem cliente ou fornecedor e sem gerar um título em aberto. Para representar um
+fato já ocorrido, informar a data efetiva do movimento em `date`.
 
 Tipos de documento permitidos: `ADI`, `BOL`, `CRT`, `CHQ`, `CON`, `CRE`, `DRF`,
 `DAS`, `DEB`, `DIN`, `DOC`, `GUIA`, `PROT`, `REC`, `RPA`, `TED` e `99999`.

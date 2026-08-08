@@ -39,7 +39,7 @@ somente a referência dessa entrada.
 | Empresas | `/geral/empresas/` | `ListarEmpresas`, `ConsultarEmpresa` | — |
 | Clientes/fornecedores | `/geral/clientes/` | `ListarClientes`, `ConsultarCliente` | `IncluirCliente`, `AlterarCliente`, `ExcluirCliente` |
 | Projetos | `/geral/projetos/` | `ListarProjetos`, `ConsultarProjeto` | `IncluirProjeto`, `AlterarProjeto`, `ExcluirProjeto` |
-| Categorias | `/geral/categorias/` | `ListarCategorias`, `ConsultarCategoria` | — |
+| Categorias | `/geral/categorias/` | `ListarCategorias`, `ConsultarCategoria`; `natureza` também é exposto como `observacao` | — |
 | Departamentos | `/geral/departamentos/` | `ListarDepartamentos`, `ConsultarDepartamento` | — |
 | Contas correntes | `/geral/contacorrente/` | `ListarContasCorrentes`, `ConsultarContaCorrente` | — |
 | Produtos | `/geral/produtos/` | `ListarProdutos`, `ConsultarProduto` | — |

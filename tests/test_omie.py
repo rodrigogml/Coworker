@@ -304,6 +304,29 @@ class OmieTests(unittest.TestCase):
             {"codigo_empresa": 123, "razao_social": "Example Ltda"},
         )
 
+    def test_category_summary_exposes_omie_observation_semantics(self):
+        result = omie.summarize(
+            "categories",
+            {
+                "codigo": "2.01.01",
+                "descricao": "Despesas administrativas",
+                "natureza": "Gastos gerais da administração",
+                "conta_despesa": "S",
+                "internal_only": "hidden",
+            },
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "codigo": "2.01.01",
+                "descricao": "Despesas administrativas",
+                "natureza": "Gastos gerais da administração",
+                "conta_despesa": "S",
+                "observacao": "Gastos gerais da administração",
+            },
+        )
+
     def test_all_pages_stops_at_configured_limit(self):
         pages = {
             1: (
@@ -1407,6 +1430,9 @@ class OmieTests(unittest.TestCase):
         self.assertEqual(
             dry_run["calls"][0]["params"]["detalhes"]["cCodCateg"],
             "2.01.01",
+        )
+        self.assertNotIn(
+            "nCodCliente", dry_run["calls"][0]["params"]["detalhes"]
         )
         self.assertNotIn("aCodCateg", dry_run["calls"][0]["params"]["detalhes"])
 
