@@ -478,3 +478,11 @@ cooperativa e mantém metadados não secretos em `data/service/`.
 O `install.sh` não instala serviços neste MVP. A integração com systemd, incluindo
 backend de credenciais Linux, conta de execução, unidade de usuário/sistema e
 políticas de reinício, fica documentada como etapa futura.
+
+### Clonagem protegida sem janela local
+
+Trabalhos Telegram não devem executar `credential_vault.py add`, `open` ou `create`,
+porque esses comandos dependem de uma janela na máquina local. Quando o destino ainda
+não existe, use `python interfaces/telegram/scripts/clone_credential.py` no contexto
+do job, com `--source`, `--target`, `--field Username|Password` e `--confirm`.
+O broker cria o destino exclusivamente, preserva a origem e retorna apenas metadados.
