@@ -944,6 +944,7 @@ def windows_service_action(
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from scripts.windows_service import (
+        WindowsServiceError,
         build_definition,
         control_service,
         install_service,
@@ -952,23 +953,26 @@ def windows_service_action(
     )
 
     name = service_name or instance_id
-    if action == "status":
-        return service_status(name)
-    if action == "remove":
-        return remove_service(name)
-    if action in {"start", "stop"}:
-        return control_service(name, action)
-    if action != "install":
-        raise InstallError(f"Ação de serviço desconhecida: {action}.")
-    definition = build_definition(
-        PROJECT_ROOT,
-        instance_id=instance_id,
-        display_name=display_name or instance_id,
-        service_name=service_name,
-        startup=startup,
-        account_mode=account_mode,
-    )
-    return install_service(definition, non_interactive=non_interactive)
+    try:
+        if action == "status":
+            return service_status(name)
+        if action == "remove":
+            return remove_service(name)
+        if action in {"start", "stop"}:
+            return control_service(name, action)
+        if action != "install":
+            raise InstallError(f"Ação de serviço desconhecida: {action}.")
+        definition = build_definition(
+            PROJECT_ROOT,
+            instance_id=instance_id,
+            display_name=display_name or instance_id,
+            service_name=service_name,
+            startup=startup,
+            account_mode=account_mode,
+        )
+        return install_service(definition, non_interactive=non_interactive)
+    except WindowsServiceError as exc:
+        raise InstallError(str(exc)) from exc
 
 
 def configure_vault(*, non_interactive: bool) -> bool:
@@ -1619,7 +1623,11 @@ def manage_gateway(instance_id: str) -> None:
             continue
         if answer == "2":
             mode = _choose_gateway_mode("iniciar", service)
-            result = start_gateway(instance_id, mode=mode)
+            try:
+                result = start_gateway(instance_id, mode=mode)
+            except (InstallError, OSError) as exc:
+                print(f"Não foi possível iniciar o gateway: {exc}")
+                continue
             if result.get("already_running"):
                 print(f"O gateway já estava em execução (PID {result['pid']}).")
             elif mode == "service":
@@ -1638,13 +1646,21 @@ def manage_gateway(instance_id: str) -> None:
                 else f"o processo PID {status.get('pid')}"
             )
             if _yes_no(f"Finalizar {target}", default=False):
-                stop_gateway(instance_id, mode=mode)
+                try:
+                    stop_gateway(instance_id, mode=mode)
+                except (InstallError, OSError) as exc:
+                    print(f"Não foi possível finalizar o gateway: {exc}")
+                    continue
                 print("Serviço finalizado." if mode == "service" else "Gateway finalizado.")
             continue
         if answer == "4":
             mode = _choose_gateway_mode("reiniciar", service)
             if _yes_no("Reiniciar o gateway agora", default=False):
-                result = restart_gateway(instance_id, mode=mode)
+                try:
+                    result = restart_gateway(instance_id, mode=mode)
+                except (InstallError, OSError) as exc:
+                    print(f"Não foi possível reiniciar o gateway: {exc}")
+                    continue
                 if mode == "service":
                     print(f"Serviço reiniciado: {service.get('service_name', instance_id)}.")
                 else:
@@ -1661,13 +1677,17 @@ def manage_gateway(instance_id: str) -> None:
             ).casefold()
             account_mode = _ask("Conta (current_user ou local_system)", "current_user").casefold()
             if _yes_no("Instalar e iniciar o serviÃ§o agora", default=True):
-                result = windows_service_action(
-                    instance_id, "install", service_name=service_name,
-                    display_name=str(_load_identity_values()["display_name"]),
-                    startup=startup, account_mode=account_mode,
-                )
-                print(f"ServiÃ§o instalado: {result.get('name', service_name)}")
-                windows_service_action(instance_id, "start", service_name=service_name)
+                try:
+                    result = windows_service_action(
+                        instance_id, "install", service_name=service_name,
+                        display_name=str(_load_identity_values()["display_name"]),
+                        startup=startup, account_mode=account_mode,
+                    )
+                    print(f"ServiÃ§o instalado: {result.get('name', service_name)}")
+                    windows_service_action(instance_id, "start", service_name=service_name)
+                except (InstallError, OSError) as exc:
+                    print(f"NÃ£o foi possÃ­vel instalar/iniciar o serviÃ§o: {exc}")
+                    continue
                 print("ServiÃ§o iniciado.")
             continue
         if answer == "6":
@@ -1676,7 +1696,11 @@ def manage_gateway(instance_id: str) -> None:
                 continue
             service_name = _ask("Nome do serviÃ§o", instance_id)
             if _yes_no(f"Parar e remover o serviÃ§o '{service_name}'", default=False):
-                windows_service_action(instance_id, "remove", service_name=service_name)
+                try:
+                    windows_service_action(instance_id, "remove", service_name=service_name)
+                except (InstallError, OSError) as exc:
+                    print(f"NÃ£o foi possÃ­vel remover o serviÃ§o: {exc}")
+                    continue
                 print("ServiÃ§o removido. Os dados da instÃ¢ncia foram preservados.")
             continue
         print("Escolha uma opção válida.")

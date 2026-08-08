@@ -5,11 +5,28 @@ from pathlib import Path
 from scripts.windows_service import (
     WindowsServiceError,
     build_definition,
+    service_exception_message,
     validate_service_name,
 )
 
 
 class WindowsServiceContractTests(unittest.TestCase):
+    def test_scm_timeout_is_actionable(self) -> None:
+        class FakeScmError(Exception):
+            winerror = 1053
+
+        message = service_exception_message(FakeScmError(), action="iniciar", name="lavelinha")
+        self.assertIn("1053", message)
+        self.assertIn("reinstale", message)
+
+    def test_scm_access_denied_requests_elevated_shell(self) -> None:
+        class FakeScmError(Exception):
+            winerror = 5
+
+        message = service_exception_message(FakeScmError(), action="parar", name="bis")
+        self.assertIn("acesso negado", message)
+        self.assertIn("Administrador", message)
+
     def test_service_name_contract(self):
         self.assertEqual(validate_service_name("ExampleInstance"), "ExampleInstance")
         with self.assertRaises(WindowsServiceError):

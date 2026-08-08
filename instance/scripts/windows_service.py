@@ -30,6 +30,27 @@ class WindowsServiceError(RuntimeError):
     """Erro operacional seguro da integração com o SCM."""
 
 
+def service_exception_message(exc: BaseException, *, action: str = "operar", name: str = "") -> str:
+    """Traduz falhas do SCM em orientação curta e acionável."""
+    code = getattr(exc, "winerror", None)
+    if code is None and getattr(exc, "args", ()):
+        first = exc.args[0]
+        if isinstance(first, int):
+            code = first
+    target = f" o serviço '{name}'" if name else " o serviço"
+    if code == 5:
+        return f"Não foi possível {action}{target}: acesso negado pelo SCM. Abra o configurador em um PowerShell elevado (Administrador)."
+    if code == 1053:
+        return f"Não foi possível {action}{target}: o serviço não respondeu no prazo (erro 1053). Verifique o gateway e reinstale a definição do serviço se ela ainda apontar para o layout antigo."
+    if code == 1058:
+        return f"Não foi possível {action}{target}: o serviço está desabilitado (erro 1058)."
+    if code == 1060:
+        return f"Não foi possível {action}{target}: o serviço não está instalado (erro 1060)."
+    detail = str(exc).strip()
+    suffix = f" (erro {code})" if code is not None else ""
+    return f"Não foi possível {action}{target}{suffix}: {detail or 'falha desconhecida do SCM'}."
+
+
 @dataclass(frozen=True)
 class ServiceDefinition:
     project_root: Path
@@ -334,14 +355,30 @@ def remove_service(name: str, *, timeout_seconds: int = 60) -> dict[str, Any]:
 def control_service(name: str, action: str) -> dict[str, Any]:
     win32service, _util, _manager = _win32()
     name = validate_service_name(name)
-    manager, service = _service_handle(win32service, name, win32service.SERVICE_START | win32service.SERVICE_STOP | win32service.SERVICE_QUERY_STATUS)
     try:
-        if action == "start":
-            win32service.StartService(service, [])
-        elif action == "stop":
-            win32service.ControlService(service, win32service.SERVICE_CONTROL_STOP)
-        else:
-            raise WindowsServiceError(f"Ação de serviço inválida: {action}.")
+        manager, service = _service_handle(
+            win32service, name,
+            win32service.SERVICE_START | win32service.SERVICE_STOP | win32service.SERVICE_QUERY_STATUS,
+        )
+    except Exception as exc:
+        raise WindowsServiceError(
+            service_exception_message(exc, action="acessar", name=name)
+        ) from exc
+    try:
+        try:
+            if action == "start":
+                win32service.StartService(service, [])
+            elif action == "stop":
+                win32service.ControlService(service, win32service.SERVICE_CONTROL_STOP)
+            else:
+                raise WindowsServiceError(f"Ação de serviço inválida: {action}.")
+        except WindowsServiceError:
+            raise
+        except Exception as exc:
+            verb = "iniciar" if action == "start" else "parar"
+            raise WindowsServiceError(
+                service_exception_message(exc, action=verb, name=name)
+            ) from exc
     finally:
         win32service.CloseServiceHandle(service)
         win32service.CloseServiceHandle(manager)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 import tomllib
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -286,6 +288,40 @@ class InstallerTests(unittest.TestCase):
             "assistente-teste", "start", service_name="assistente-teste"
         )
         self.assertEqual("running", result["state_name"])
+
+    def test_gateway_service_error_is_converted_to_install_error(self) -> None:
+        from scripts.windows_service import WindowsServiceError
+
+        with patch(
+            "scripts.windows_service.control_service",
+            side_effect=WindowsServiceError("erro 1053"),
+        ):
+            with self.assertRaisesRegex(install_instance.InstallError, "1053"):
+                install_instance.windows_service_action(
+                    "assistente-teste", "start", service_name="assistente-teste"
+                )
+
+    def test_gateway_menu_keeps_running_after_service_failure(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(install_instance, "gateway_runtime_status", return_value={"running": False, "pid": None}),
+            patch.object(
+                install_instance,
+                "gateway_service_status",
+                return_value={"installed": True, "state_name": "stopped", "service_name": "lavelinha"},
+            ),
+            patch.object(
+                install_instance,
+                "start_gateway",
+                side_effect=install_instance.InstallError("erro 1053"),
+            ),
+            patch("builtins.input", side_effect=["2", "service", "0"]),
+            redirect_stdout(output),
+        ):
+            install_instance.manage_gateway("lavelinha")
+
+        self.assertIn("Não foi possível iniciar o gateway", output.getvalue())
+        self.assertIn("erro 1053", output.getvalue())
 
     def test_process_start_is_blocked_when_service_is_running(self) -> None:
         service = {"installed": True, "state_name": "running", "service_name": "assistente-teste"}
