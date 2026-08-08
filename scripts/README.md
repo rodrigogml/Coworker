@@ -146,6 +146,18 @@ python interfaces/telegram/scripts/clone_credential.py `
 Esse comando exige `COWORKER_JOB_OUTPUT` e `COWORKER_CHAT_ID`, cria a entrada de forma
 exclusiva e nunca abre janela interativa.
 
+Para adicionar perfis de integrações que possuem contrato tipado, usar o configurador
+privado, sem editar TOML livremente. No BIS2, por exemplo:
+
+```powershell
+python scripts/integration_config.py profile add bis2 `
+  --name local --host 127.0.0.1 --port 8080 `
+  --credential-ref BIS2/Local/BISCMD
+```
+
+O comando altera somente `data/config/bis2.toml`, recusa perfis duplicados e nunca
+grava credenciais; a senha permanece exclusivamente no KeePassXC.
+
 ## Entidades no cofre
 
 `vault_entities.py` lê e grava os atributos personalizados definidos em

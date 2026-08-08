@@ -19,6 +19,18 @@ python scripts/integration_config.py init bis2
 Ele seleciona host, porta e referência de credencial. Quando houver mais de um
 servidor, informar `--profile NOME`.
 
+Para criar um novo perfil privado sem editar TOML manualmente, usar o configurador
+tipado:
+
+```powershell
+python scripts/integration_config.py profile add bis2 `
+  --name local --host 127.0.0.1 --port 8080 `
+  --credential-ref BIS2/Local/BISCMD
+```
+
+O comando escreve somente em `data/config/bis2.toml`, não sobrescreve um perfil
+existente e não armazena credenciais. Depois valide com `bis2.py --profile local doctor`.
+
 Operações com efeito externo ou alteração no BIS2 exigem `--profile` explícito mesmo
 que exista `default_profile`.
 
