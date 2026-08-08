@@ -180,7 +180,10 @@ def service_status(name: str) -> dict[str, Any]:
     win32service, _util, _manager = _win32()
     name = validate_service_name(name)
     try:
-        manager, service = _service_handle(win32service, name, win32service.SERVICE_QUERY_STATUS)
+        manager, service = _service_handle(
+            win32service, name,
+            win32service.SERVICE_QUERY_STATUS | win32service.SERVICE_QUERY_CONFIG,
+        )
     except Exception as exc:
         if getattr(exc, "winerror", None) == 1060:
             return {"ok": True, "installed": False, "name": name}
@@ -424,7 +427,15 @@ def run_service_from_config(path: Path) -> None:
 
     servicemanager.Initialize(GatewayService._svc_name_, None)
     servicemanager.PrepareToHostSingle(GatewayService)
-    servicemanager.StartServiceCtrlDispatcher()
+    try:
+        servicemanager.StartServiceCtrlDispatcher()
+    except Exception as exc:
+        if getattr(exc, "winerror", None) == 1063:
+            raise WindowsServiceError(
+                "O host de serviço só pode ser executado pelo Service Control Manager. "
+                "Use o comando de início do serviço; não execute a ação 'run' diretamente no prompt."
+            ) from exc
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
