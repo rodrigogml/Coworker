@@ -1257,7 +1257,7 @@ class Gateway:
         if not stored:
             self._send(
                 chat_id,
-                "Não foi possível salvar o segredo no cofre. A mensagem não foi encaminhada ao RodriClone nem registrada localmente em texto aberto.",
+                "Não foi possível salvar o segredo no cofre. A mensagem não foi encaminhada ao Coworker nem registrada localmente em texto aberto.",
             )
             return
         deletion = (
@@ -1649,7 +1649,7 @@ class Gateway:
                     chat_id,
                     f"Destino reconhecido: {entry}. "
                     "Envie agora a senha ou o token em uma única mensagem de texto. "
-                    "Ela será salva diretamente no cofre, não será enviada ao RodriClone "
+                    "Ela será salva diretamente no cofre, não será enviada ao Coworker "
                     "e o gateway tentará removê-la do Telegram. Use /cancel para desistir.",
                     update_id=update_id,
                 )

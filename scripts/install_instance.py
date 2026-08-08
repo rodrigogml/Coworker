@@ -424,12 +424,12 @@ def _default_bis2_values() -> dict[str, Any]:
         "jar_path": "C:/opt/BISCMD/BISCMD-9.0.jar",
         "working_dir": "C:/opt/BISCMD",
         "timeout_seconds": 300,
-        "default_profile": "turing",
+        "default_profile": "example",
         "profiles": {
-            "turing": {
-                "host": "192.168.3.64",
+            "example": {
+                "host": "127.0.0.1",
                 "port": 8080,
-                "credential_ref": "BIS2/Turing/BISCMD",
+                "credential_ref": "BIS2/Example/BISCMD",
             }
         },
     }
@@ -505,11 +505,11 @@ def _configure_bis2_profile(values: dict[str, Any]) -> bool:
             f"  - {name}: {profile.get('host')}:{profile.get('port')} "
             f"({profile.get('credential_ref')})"
         )
-    name = _ask("Nome do perfil", str(values.get("default_profile", "turing")))
+    name = _ask("Nome do perfil", str(values.get("default_profile", "example")))
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
         raise InstallError("O perfil deve usar de 1 a 64 letras, números, '_' ou '-'.")
     current = profiles.get(name, {})
-    host = _ask("Host/IP do servidor BIS2", str(current.get("host", "192.168.3.64")))
+    host = _ask("Host/IP do servidor BIS2", str(current.get("host", "127.0.0.1")))
     port = _ask("Porta HTTP remoting do WildFly", str(current.get("port", 8080)))
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise InstallError("A porta BIS2 deve estar entre 1 e 65535.")
@@ -1105,7 +1105,7 @@ def _manage_directory_list(
     while True:
         print(f"\n{label}:")
         _print_directory_entries(values)
-        print("  Caminhos relativos usam a raiz do RodriClone como base.")
+        print("  Caminhos relativos usam a raiz do Coworker como base.")
         print("  Use '.' para a pr\u00f3pria raiz. Caminhos absolutos tamb\u00e9m s\u00e3o aceitos.")
         print("  1. Adicionar um ou mais diret\u00f3rios")
         print("  2. Excluir um diret\u00f3rio")

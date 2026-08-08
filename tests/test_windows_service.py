@@ -11,7 +11,7 @@ from scripts.windows_service import (
 
 class WindowsServiceContractTests(unittest.TestCase):
     def test_service_name_contract(self):
-        self.assertEqual(validate_service_name("RodriClone"), "RodriClone")
+        self.assertEqual(validate_service_name("ExampleInstance"), "ExampleInstance")
         with self.assertRaises(WindowsServiceError):
             validate_service_name("nome com espaço")
         with self.assertRaises(WindowsServiceError):
@@ -26,16 +26,16 @@ class WindowsServiceContractTests(unittest.TestCase):
             config = root / "data" / "config"
             config.mkdir(parents=True)
             (config / "telegram.toml").write_text(
-                '[codex]\nhome_dir = "C:/isolated/RodriClone/codex"\n',
+                '[codex]\nhome_dir = "C:/isolated/ExampleInstance/codex"\n',
                 encoding="utf-8",
             )
             definition = build_definition(
-                root, instance_id="rodriclone", display_name="RodriClone"
+                root, instance_id="exampleinstance", display_name="ExampleInstance"
             )
-            self.assertEqual(definition.name, "rodriclone")
-            self.assertEqual(definition.display_name, "RodriClone")
-            self.assertEqual(str(definition.codex_home), "C:\\isolated\\RodriClone\\codex")
-            self.assertIn("rodriclone", str(definition.gateway_state_dir).casefold())
+            self.assertEqual(definition.name, "exampleinstance")
+            self.assertEqual(definition.display_name, "ExampleInstance")
+            self.assertEqual(str(definition.codex_home), "C:\\isolated\\ExampleInstance\\codex")
+            self.assertIn("exampleinstance", str(definition.gateway_state_dir).casefold())
 
     def test_invalid_startup_and_timeout_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

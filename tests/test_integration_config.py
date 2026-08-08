@@ -85,11 +85,11 @@ class IntegrationConfigTests(unittest.TestCase):
         (root / "config").mkdir()
         (root / "config" / "bis2.example.toml").write_text(
             'jar_path = "C:/BISCMD.jar"\n'
-            'default_profile = "turing"\n\n'
-            '[profiles.turing]\n'
-            'host = "192.168.3.64"\n'
+            'default_profile = "example"\n\n'
+            '[profiles.example]\n'
+            'host = "127.0.0.1"\n'
             'port = 8080\n'
-            'credential_ref = "BIS2/Turing/BISCMD"\n',
+            'credential_ref = "BIS2/Example/BISCMD"\n',
             encoding="utf-8",
         )
         integration_config.initialize_integration("bis2", project_root=root)
@@ -103,7 +103,7 @@ class IntegrationConfigTests(unittest.TestCase):
             )
             self.assertTrue(result["created"])
             profiles = integration_config.list_profiles("bis2", project_root=root)["profiles"]
-            self.assertEqual({"turing", "local"}, {item["name"] for item in profiles})
+            self.assertEqual({"example", "local"}, {item["name"] for item in profiles})
             text = (root / "data" / "config" / "bis2.toml").read_text(encoding="utf-8")
             self.assertIn('[profiles.local]', text)
             self.assertIn('credential_ref = "BIS2/Local/BISCMD"', text)
@@ -113,7 +113,7 @@ class IntegrationConfigTests(unittest.TestCase):
             root = self.bis_root(temporary)
             with self.assertRaises(integration_config.IntegrationConfigError):
                 integration_config.add_profile(
-                    "bis2", "turing", "127.0.0.1", 8080, "BIS2/Local/BISCMD", project_root=root
+                    "bis2", "example", "127.0.0.1", 8080, "BIS2/Local/BISCMD", project_root=root
                 )
             with self.assertRaises(integration_config.IntegrationConfigError):
                 integration_config.add_profile(

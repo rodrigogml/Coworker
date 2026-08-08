@@ -407,8 +407,8 @@ python scripts/credential_vault.py check "APIs/Todoist"
 python skills/todoist/scripts/todoist.py doctor
 python scripts/credential_vault.py check "APIs/Notion"
 python skills/notion/scripts/notion.py doctor
-python scripts/credential_vault.py check "BIS2/Turing/BISCMD"
-python skills/bis2/scripts/bis2.py --profile turing doctor
+python scripts/credential_vault.py check "BIS2/Example/BISCMD"
+python skills/bis2/scripts/bis2.py --profile example doctor
 python scripts/credential_vault.py check "APIs/Google/OAuthClient"
 python scripts/google_accounts.py list
 python scripts/google_accounts.py doctor --profile default
