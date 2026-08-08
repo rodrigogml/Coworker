@@ -764,6 +764,92 @@ def copy_entry_field(
         value = ""
 
 
+def clone_entry_fields(
+    source: str,
+    target: str,
+    fields: tuple[str, ...] | list[str],
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Cria uma entrada nova copiando campos protegidos da origem.
+
+    A criação é exclusiva: um destino existente é recusado. A origem nunca é
+    alterada, e os valores trafegam somente pela memória do processo e pelo
+    KeePassXC; nenhum valor é aceito como argumento ou escrito em arquivo auxiliar.
+    """
+    normalized_source = validate_entry_path(source)
+    normalized_target = validate_entry_path(target)
+    if normalized_source == normalized_target:
+        raise VaultToolError("Origem e destino da clonagem são iguais.")
+    normalized_fields = tuple(dict.fromkeys(fields))
+    if not normalized_fields or any(field not in {"Username", "Password"} for field in normalized_fields):
+        raise VaultToolError("Os campos devem ser Username e/ou Password.")
+    if cli_path is None or vault_path is None or credential_target is None:
+        config = load_vault_config(config_path)
+        cli_path = cli_path or config.cli_path
+        vault_path = vault_path or config.vault_path
+        credential_target = credential_target or config.credential_target
+    require_file(cli_path, "KeePassXC CLI")
+    require_file(vault_path, "Cofre")
+    ensure_keepassxc_gui_closed()
+    if PyKeePass is None:
+        raise VaultToolError("A dependência PyKeePass não está instalada.")
+    master_password = read_windows_credential(credential_target)
+    try:
+        original_fingerprint = _file_fingerprint(vault_path)
+        database = PyKeePass(str(vault_path), password=master_password)
+
+        def find_entry(entry_path: str) -> Any:
+            parts = entry_path.split("/")
+            group = database.root_group
+            for group_name in parts[:-1]:
+                matches = [child for child in group.subgroups if child.name == group_name]
+                if len(matches) != 1:
+                    raise VaultToolError("O caminho da entrada é inexistente ou ambíguo.")
+                group = matches[0]
+            matches = [entry for entry in group.entries if entry.title == parts[-1]]
+            if len(matches) != 1:
+                raise VaultToolError("O título da entrada é inexistente ou ambíguo.")
+            return matches[0]
+
+        source_entry = find_entry(normalized_source)
+        parts = normalized_target.split("/")
+        group = database.root_group
+        for group_name in parts[:-1]:
+            matches = [child for child in group.subgroups if child.name == group_name]
+            if len(matches) > 1:
+                raise VaultToolError("O caminho do destino é ambíguo.")
+            if matches:
+                group = matches[0]
+            else:
+                group = database.add_group(group, group_name)
+        if any(entry.title == parts[-1] for entry in group.entries):
+            raise VaultToolError(f"A entrada de destino '{normalized_target}' já existe.")
+        values = {
+            "Username": str(getattr(source_entry, "username", "") or ""),
+            "Password": str(getattr(source_entry, "password", "") or ""),
+        }
+        if any(not values[field] for field in normalized_fields):
+            raise VaultToolError("Um dos campos selecionados da origem está vazio.")
+        database.add_entry(
+            group,
+            title=parts[-1],
+            username=values["Username"] if "Username" in normalized_fields else "",
+            password=values["Password"] if "Password" in normalized_fields else "",
+        )
+        if _file_fingerprint(vault_path) != original_fingerprint:
+            raise VaultToolError("O cofre mudou durante a operação; nenhuma gravação foi feita.")
+        try:
+            database.save()
+        except Exception as exc:
+            raise VaultToolError("Não foi possível salvar a nova entrada no cofre.") from exc
+    finally:
+        master_password = ""
+
+
 def launch_interactive(
     cli_path: Path,
     arguments: list[str],
@@ -1098,6 +1184,32 @@ def command_copy(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_clone(args: argparse.Namespace) -> dict[str, Any]:
+    """Cria uma entrada copiando campos internos sem expor seus valores."""
+    if not args.confirm:
+        raise VaultToolError("A clonagem exige a opção '--confirm'.")
+    source = validate_entry_path(args.source)
+    target = validate_entry_path(args.target)
+    fields = tuple(str(field) for field in args.field)
+    clone_entry_fields(
+        source,
+        target,
+        fields,
+        cli_path=resolved_path(args.cli),
+        vault_path=resolved_path(args.vault),
+        credential_target=args.credential_target,
+    )
+    return {
+        "ok": True,
+        "source": source,
+        "target": target,
+        "fields": list(fields),
+        "created": True,
+        "source_preserved": True,
+        "secret_exposed": False,
+    }
+
+
 def command_enroll(args: argparse.Namespace) -> dict[str, Any]:
     """Abre o cadastro local e seguro da senha mestra."""
     cli_path = resolved_path(args.cli)
@@ -1276,6 +1388,17 @@ def build_parser(config: VaultConfig | None = None) -> argparse.ArgumentParser:
     )
     copy_parser.add_argument("--confirm", action="store_true")
     copy_parser.set_defaults(handler=command_copy)
+
+    clone_parser = commands.add_parser(
+        "clone", help="Cria uma entrada copiando campos protegidos sem janela interativa."
+    )
+    clone_parser.add_argument("source")
+    clone_parser.add_argument("target")
+    clone_parser.add_argument(
+        "--field", action="append", choices=("Username", "Password"), required=True
+    )
+    clone_parser.add_argument("--confirm", action="store_true")
+    clone_parser.set_defaults(handler=command_clone)
 
     enroll_parser = commands.add_parser(
         "enroll", help="Cadastra a senha mestra nesta máquina."

@@ -18,6 +18,7 @@ prefix_rule(pattern=["python", "scripts/vault_entities.py"], decision="allow")
 prefix_rule(pattern=["python", "interfaces/telegram/scripts/publish_artifact.py"], decision="allow")
 prefix_rule(pattern=["python", "interfaces/telegram/scripts/extract_pdf_text.py"], decision="allow")
 prefix_rule(pattern=["python", "interfaces/telegram/scripts/request_credential.py"], decision="allow")
+prefix_rule(pattern=["python", "interfaces/telegram/scripts/clone_credential.py"], decision="allow")
 prefix_rule(pattern=["python", "interfaces/telegram/scripts/restart_gateway.py", "request"], decision="allow")
 
 prefix_rule(pattern=["python", "skills/bis2/scripts/bis2.py"], decision="allow")

@@ -349,6 +349,13 @@ pode entrar no prompt, no job, em argumentos ou no retorno da ferramenta. Caminh
 perfis distintos devem ser definidos pelo Codex conforme a configuração da integração;
 a pessoa usuária não deve precisar conhecer a estrutura interna do cofre.
 
+Trabalhos do gateway nunca devem chamar `credential_vault.py add`, `open` ou `create`,
+pois esses comandos podem abrir uma janela local. Para criar uma nova entrada a partir
+de uma credencial já protegida, usar somente
+`python interfaces/telegram/scripts/clone_credential.py` dentro do job, com
+`--source`, `--target`, um ou mais `--field Username|Password` e `--confirm`. A
+operação preserva a origem e não expõe os valores.
+
 Usar o backend configurado em `codex.backend`: `exec` permanece o fallback compatível
 e `app-server` usa somente a API estável por stdio. Enviar prompts sem shell, capturar
 `thread_id` e `turn_id` quando disponíveis, não retransmitir raciocínio, logs ou saída

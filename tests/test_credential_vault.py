@@ -468,6 +468,65 @@ class CredentialVaultTest(unittest.TestCase):
         self.assertEqual("segredo-nao-deve-retornar", target.password)
         self.assertNotIn("segredo-nao-deve-retornar", str(result))
 
+    def test_clone_creates_destination_and_preserves_source(self) -> None:
+        self.vault.touch()
+        arguments = self.arguments()
+        arguments.source = "APIs/Origem"
+        arguments.target = "APIs/Nova"
+        arguments.field = ["Username", "Password"]
+        arguments.confirm = True
+
+        class Group:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.subgroups = []
+                self.entries = []
+
+        class Entry:
+            def __init__(self, title: str, username: str, password: str) -> None:
+                self.title = title
+                self.username = username
+                self.password = password
+
+        root = Group("Root")
+        apis = Group("APIs")
+        root.subgroups = [apis]
+        source = Entry("Origem", "usuario", "segredo")
+        apis.entries = [source]
+
+        class Database:
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.root_group = root
+                self.saved = False
+
+            def add_group(self, parent: Group, name: str) -> Group:
+                group = Group(name)
+                parent.subgroups.append(group)
+                return group
+
+            def add_entry(self, group: Group, title: str, username: str, password: str) -> Entry:
+                entry = Entry(title, username, password)
+                group.entries.append(entry)
+                return entry
+
+            def save(self) -> None:
+                self.saved = True
+
+        with (
+            patch.object(CREDENTIAL_VAULT, "PyKeePass", Database),
+            patch.object(CREDENTIAL_VAULT, "read_windows_credential", return_value="mestra"),
+            patch.object(CREDENTIAL_VAULT, "ensure_keepassxc_gui_closed"),
+        ):
+            result = CREDENTIAL_VAULT.command_clone(arguments)
+
+        self.assertTrue(result["created"])
+        self.assertTrue(result["source_preserved"])
+        self.assertEqual(2, len(apis.entries))
+        self.assertEqual("Origem", source.title)
+        self.assertEqual("usuario", apis.entries[0].username)
+        self.assertEqual("segredo", apis.entries[0].password)
+        self.assertNotIn("segredo", str(result))
+
     def test_add_prepares_groups_and_updates_an_existing_entry(self) -> None:
         self.vault.touch()
         arguments = self.arguments()

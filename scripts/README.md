@@ -134,6 +134,18 @@ existente. O campo de destino é o mesmo por padrão e pode ser alterado com
 campo selecionado; valores passam pela API PyKeePass em memória e nunca aparecem em
 argumentos, saída ou logs.
 
+Para trabalhos Telegram, quando o destino ainda não existe, usar o ponto de entrada
+restrito do broker:
+
+```powershell
+python interfaces/telegram/scripts/clone_credential.py `
+  --source "APIs/Origem" --target "APIs/Destino" `
+  --field Username --field Password --confirm
+```
+
+Esse comando exige `COWORKER_JOB_OUTPUT` e `COWORKER_CHAT_ID`, cria a entrada de forma
+exclusiva e nunca abre janela interativa.
+
 ## Entidades no cofre
 
 `vault_entities.py` lê e grava os atributos personalizados definidos em
