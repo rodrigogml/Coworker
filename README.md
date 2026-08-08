@@ -601,7 +601,7 @@ python skills/forwardemail/scripts/forward_email.py aliases list `
   --domain exemplo.com
 python skills/forwardemail/scripts/forward_email.py aliases create `
   --domain exemplo.com --name contato `
-  --recipient recipient@example.com
+  --recipient destino@exemplo.net
 ```
 
 Consultas podem ser feitas dentro do escopo solicitado. Criações, alterações e
@@ -736,7 +736,7 @@ python skills/contacts/scripts/contacts.py --profile pessoal contacts search `
 python skills/contacts/scripts/contacts.py --profile pessoal contacts show `
   --resource-name people/ID
 python skills/contacts/scripts/contacts.py --profile pessoal contacts create `
-  --name "Example Person" --email "person@example.com" --dry-run
+  --name "Maria Silva" --email "maria@example.com" --dry-run
 ```
 
 Atualizações preservam os metadados de concorrência devolvidos pela People API. A

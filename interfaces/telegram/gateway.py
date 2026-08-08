@@ -1649,7 +1649,7 @@ class Gateway:
                     chat_id,
                     f"Destino reconhecido: {entry}. "
                     "Envie agora a senha ou o token em uma única mensagem de texto. "
-                "Ela será salva diretamente no cofre, não será enviada ao Coworker "
+                    "Ela será salva diretamente no cofre, não será enviada ao Coworker "
                     "e o gateway tentará removê-la do Telegram. Use /cancel para desistir.",
                     update_id=update_id,
                 )
