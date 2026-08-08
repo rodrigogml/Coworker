@@ -843,3 +843,8 @@ O Python da instância precisa ter `pywin32` instalado (incluído em
 O suporte a serviços Linux/systemd permanece planejado para um MVP futuro. O
 `install.sh` continua configurando e iniciando o gateway manualmente; ainda não cria
 unidades systemd nem resolve credenciais Linux automaticamente.
+
+No menu de gerenciamento do gateway, quando existe um serviço Windows associado, as
+ações de iniciar, parar e reiniciar perguntam se devem atuar sobre o serviço ou sobre
+um processo manual. O configurador exibe os dois estados e impede iniciar os dois
+runtimes simultaneamente.

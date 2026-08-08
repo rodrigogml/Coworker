@@ -1443,10 +1443,56 @@ def gateway_runtime_status(instance_id: str) -> dict[str, Any]:
     return runtime_status(state_dir)
 
 
-def start_gateway(instance_id: str) -> dict[str, Any]:
+def _service_name_for_instance(instance_id: str) -> str:
+    service_root = DATA_DIR / "service"
+    if service_root.is_dir():
+        for definition_path in service_root.glob("*/service.json"):
+            try:
+                definition = json.loads(definition_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(definition.get("instance_id")) == str(instance_id):
+                return str(definition.get("name") or definition_path.parent.name)
+    return str(instance_id)
+
+
+def gateway_service_status(instance_id: str) -> dict[str, Any]:
+    """Consulta o serviço Windows associado sem confundi-lo com o processo manual."""
+    if os.name != "nt":
+        return {"ok": True, "installed": False, "platform": "linux-future"}
+    service_name = _service_name_for_instance(instance_id)
+    try:
+        result = windows_service_action(instance_id, "status", service_name=service_name)
+    except (InstallError, OSError) as exc:
+        return {"ok": False, "installed": False, "service_name": service_name, "error": str(exc)}
+    return {**result, "service_name": service_name}
+
+
+def _require_runtime_mode(mode: str) -> str:
+    normalized = str(mode or "process").strip().casefold()
+    if normalized not in {"process", "service"}:
+        raise InstallError("Escolha de execução inválida; use process ou service.")
+    return normalized
+
+
+def start_gateway(instance_id: str, *, mode: str = "process") -> dict[str, Any]:
+    mode = _require_runtime_mode(mode)
+    if mode == "service":
+        service = gateway_service_status(instance_id)
+        if not service.get("installed"):
+            raise InstallError("Não há serviço Windows instalado para esta instância.")
+        process = gateway_runtime_status(instance_id)
+        if process.get("running"):
+            raise InstallError("O gateway já está em execução como processo; pare-o antes de iniciar o serviço.")
+        return windows_service_action(
+            instance_id, "start", service_name=str(service["service_name"])
+        )
     current = gateway_runtime_status(instance_id)
     if current["running"]:
         return {**current, "started": False, "already_running": True}
+    service = gateway_service_status(instance_id)
+    if service.get("installed") and service.get("state_name") == "running":
+        raise InstallError("O gateway já está em execução como serviço; pare-o antes de iniciar um processo.")
     process = _gateway_process(instance_id)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
@@ -1469,7 +1515,17 @@ def start_gateway(instance_id: str) -> dict[str, Any]:
     raise InstallError("O gateway não confirmou a inicialização em 10 segundos.")
 
 
-def stop_gateway(instance_id: str, *, timeout_seconds: int = 60) -> dict[str, Any]:
+def stop_gateway(
+    instance_id: str, *, timeout_seconds: int = 60, mode: str = "process"
+) -> dict[str, Any]:
+    mode = _require_runtime_mode(mode)
+    if mode == "service":
+        service = gateway_service_status(instance_id)
+        if not service.get("installed"):
+            raise InstallError("Não há serviço Windows instalado para esta instância.")
+        return windows_service_action(
+            instance_id, "stop", service_name=str(service["service_name"])
+        )
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from interfaces.telegram.runtime import request_stop, runtime_status
@@ -1490,20 +1546,42 @@ def stop_gateway(instance_id: str, *, timeout_seconds: int = 60) -> dict[str, An
     )
 
 
-def restart_gateway(instance_id: str) -> dict[str, Any]:
-    stop_gateway(instance_id)
-    return start_gateway(instance_id)
+def restart_gateway(instance_id: str, *, mode: str = "process") -> dict[str, Any]:
+    mode = _require_runtime_mode(mode)
+    stop_gateway(instance_id, mode=mode)
+    return start_gateway(instance_id, mode=mode)
+
+
+def _choose_gateway_mode(action: str, service: dict[str, Any]) -> str:
+    if not service.get("installed"):
+        return "process"
+    while True:
+        answer = _ask(
+            f"Executar {action} pelo serviço ou processo (service/process)",
+            "service",
+        ).casefold()
+        if answer in {"service", "serviço", "s"}:
+            return "service"
+        if answer in {"process", "processo", "p"}:
+            return "process"
+        print("Escolha service ou process.")
 
 
 def manage_gateway(instance_id: str) -> None:
     while True:
         status = gateway_runtime_status(instance_id)
+        service = gateway_service_status(instance_id)
         state = (
             f"EM EXECUÇÃO (PID {status['pid']})"
             if status["running"]
             else "PARADO"
         )
-        print(f"\nGateway Telegram: {state}")
+        service_state = (
+            f"{service.get('service_name', instance_id)}: {service.get('state_name', 'indisponível')}"
+            if service.get("installed")
+            else "não instalado"
+        )
+        print(f"\nGateway Telegram: processo={state}; serviço={service_state}")
         print("  1. Atualizar status")
         print("  2. Iniciar")
         print("  3. Finalizar")
@@ -1517,24 +1595,37 @@ def manage_gateway(instance_id: str) -> None:
         if answer == "1":
             continue
         if answer == "2":
-            result = start_gateway(instance_id)
-            if result["already_running"]:
+            mode = _choose_gateway_mode("iniciar", service)
+            result = start_gateway(instance_id, mode=mode)
+            if result.get("already_running"):
                 print(f"O gateway já estava em execução (PID {result['pid']}).")
+            elif mode == "service":
+                print(f"Serviço iniciado: {service.get('service_name', instance_id)}.")
             else:
                 print(f"Gateway iniciado (PID {result['pid']}).")
             continue
         if answer == "3":
-            if not status["running"]:
+            if not status["running"] and not service.get("installed"):
                 print("O gateway já está parado.")
                 continue
-            if _yes_no(f"Finalizar o gateway PID {status['pid']}", default=False):
-                stop_gateway(instance_id)
-                print("Gateway finalizado.")
+            mode = _choose_gateway_mode("parar", service)
+            target = (
+                f"o serviço {service.get('service_name', instance_id)}"
+                if mode == "service"
+                else f"o processo PID {status.get('pid')}"
+            )
+            if _yes_no(f"Finalizar {target}", default=False):
+                stop_gateway(instance_id, mode=mode)
+                print("Serviço finalizado." if mode == "service" else "Gateway finalizado.")
             continue
         if answer == "4":
+            mode = _choose_gateway_mode("reiniciar", service)
             if _yes_no("Reiniciar o gateway agora", default=False):
-                result = restart_gateway(instance_id)
-                print(f"Gateway reiniciado (PID {result['pid']}).")
+                result = restart_gateway(instance_id, mode=mode)
+                if mode == "service":
+                    print(f"Serviço reiniciado: {service.get('service_name', instance_id)}.")
+                else:
+                    print(f"Gateway reiniciado (PID {result['pid']}).")
             continue
         if answer == "5":
             if os.name != "nt":

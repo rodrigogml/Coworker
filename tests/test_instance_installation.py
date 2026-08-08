@@ -269,6 +269,50 @@ class InstallerTests(unittest.TestCase):
             ):
                 install_instance.start_gateway("assistente-teste")
 
+    def test_gateway_service_start_uses_service_without_spawning_process(self) -> None:
+        service = {"installed": True, "state_name": "stopped", "service_name": "assistente-teste"}
+        with (
+            patch.object(install_instance, "gateway_service_status", return_value=service),
+            patch.object(install_instance, "gateway_runtime_status", return_value={"running": False}),
+            patch.object(
+                install_instance,
+                "windows_service_action",
+                return_value={"ok": True, "state_name": "running"},
+            ) as action,
+        ):
+            result = install_instance.start_gateway("assistente-teste", mode="service")
+
+        action.assert_called_once_with(
+            "assistente-teste", "start", service_name="assistente-teste"
+        )
+        self.assertEqual("running", result["state_name"])
+
+    def test_process_start_is_blocked_when_service_is_running(self) -> None:
+        service = {"installed": True, "state_name": "running", "service_name": "assistente-teste"}
+        with (
+            patch.object(install_instance, "gateway_service_status", return_value=service),
+            patch.object(install_instance, "gateway_runtime_status", return_value={"running": False}),
+            self.assertRaisesRegex(install_instance.InstallError, "serviço"),
+        ):
+            install_instance.start_gateway("assistente-teste", mode="process")
+
+    def test_gateway_service_stop_uses_service_control(self) -> None:
+        service = {"installed": True, "state_name": "running", "service_name": "assistente-teste"}
+        with (
+            patch.object(install_instance, "gateway_service_status", return_value=service),
+            patch.object(
+                install_instance,
+                "windows_service_action",
+                return_value={"ok": True, "state_name": "stopped"},
+            ) as action,
+        ):
+            result = install_instance.stop_gateway("assistente-teste", mode="service")
+
+        action.assert_called_once_with(
+            "assistente-teste", "stop", service_name="assistente-teste"
+        )
+        self.assertEqual("stopped", result["state_name"])
+
     def test_managed_gateway_stop_uses_cooperative_request(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,
