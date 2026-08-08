@@ -2,6 +2,10 @@
 /instance/data/**
 !/instance/data/.gitkeep
 
+# Compatibilidade durante a migração de instâncias antigas
+/data/**
+!/data/.gitkeep
+
 # Bancos SQLite e arquivos auxiliares
 *.sqlite
 *.sqlite3
