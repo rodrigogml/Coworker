@@ -642,6 +642,7 @@ class CodexIsolationTests(unittest.TestCase):
             self.assertIn("--config", command)
             self.assertIn('approval_policy="never"', command)
             self.assertIn('default_permissions="coworker_gateway"', command)
+            self.assertIn("project_root_markers=[]", command)
             self.assertIn("permissions.coworker_gateway.network.enabled=true", command)
             filesystem = next(
                 item

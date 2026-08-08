@@ -163,7 +163,7 @@ class StructuredStateTests(unittest.TestCase):
 
         self.assertEqual("exec", config.codex.backend)
         self.assertEqual(
-            Path(__file__).resolve().parents[1] / "data" / "telegram" / "jobs",
+            Path(__file__).resolve().parents[1] / "instance" / "data" / "telegram" / "jobs",
             config.media.jobs_dir,
         )
         self.assertEqual(20 * 1024 * 1024, config.media.max_upload_bytes)
@@ -417,7 +417,7 @@ class WorkspaceTests(unittest.TestCase):
             output.mkdir()
             source = root / "image.png"
             source.write_bytes(b"image")
-            script = Path(__file__).resolve().parents[1] / "interfaces" / "telegram" / "scripts" / "publish_artifact.py"
+            script = Path(__file__).resolve().parents[1] / "instance" / "interfaces" / "telegram" / "scripts" / "publish_artifact.py"
             environment = {**__import__("os").environ, "COWORKER_JOB_OUTPUT": str(output)}
             first = subprocess.run(
                 [sys.executable, str(script), str(source)], capture_output=True,

@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 MODULE_PATH = PROJECT_ROOT / "skills" / "omie" / "scripts" / "omie.py"
 SPEC = importlib.util.spec_from_file_location("omie_skill", MODULE_PATH)
 omie = importlib.util.module_from_spec(SPEC)

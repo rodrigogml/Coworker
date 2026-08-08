@@ -34,7 +34,7 @@ Recebem prioridade vulnerabilidades que possam:
 - permitir leitura ou escrita fora dos caminhos autorizados;
 - executar comandos diferentes dos parâmetros apresentados;
 - modificar sistemas externos sem autorização;
-- incluir arquivos de `data/` ou outras informações privadas no Git;
+- incluir arquivos de `instance/data/` ou outras informações privadas no Git;
 - contornar confirmações exigidas para ações destrutivas.
 
 Relatos sem impacto de segurança reproduzível podem ser tratados como bugs comuns.

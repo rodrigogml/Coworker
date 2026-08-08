@@ -374,6 +374,12 @@ Cada processo recebe `CODEX_HOME` exclusivamente pelo ambiente filho. Assim, log
 configuração, sessões, logs e estado do gateway permanecem separados do Codex Desktop
 sem alterar variáveis globais do Windows.
 
+O workspace do Codex é a raiz `instance/`, não a raiz de desenvolvimento do
+repositório. O gateway envia `project_root_markers=[]` para impedir que o Codex suba
+até o Git raiz e carregue o `AGENTS.md` de desenvolvimento. As instruções públicas
+de runtime ficam em `instance/AGENTS.md`; preferências privadas opcionais ficam em
+`data/config/INSTRUCTIONS.md` e são injetadas pelo gateway em cada prompt.
+
 ## Dados e segurança
 
 Por padrão, o SQLite operacional fica em

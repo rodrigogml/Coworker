@@ -14,7 +14,7 @@ from unittest.mock import patch
 from pykeepass import PyKeePass, create_database
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 MODULE_PATH = PROJECT_ROOT / "scripts" / "vault_entities.py"
 SPEC = importlib.util.spec_from_file_location("vault_entities", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:

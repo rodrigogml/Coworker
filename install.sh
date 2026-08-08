@@ -14,4 +14,4 @@ if [ -z "$PYTHON_BIN" ]; then
     fi
 fi
 
-exec "$PYTHON_BIN" "$PROJECT_ROOT/scripts/install_instance.py" "$@"
+exec "$PYTHON_BIN" "$PROJECT_ROOT/instance/scripts/install_instance.py" "$@"

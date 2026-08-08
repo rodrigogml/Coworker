@@ -10,7 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 MODULE_PATH = (
     PROJECT_ROOT
     / "skills"

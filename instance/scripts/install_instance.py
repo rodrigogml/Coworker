@@ -24,6 +24,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 IDENTITY_CONFIG = DATA_DIR / "config" / "identity.toml"
 TELEGRAM_CONFIG = DATA_DIR / "config" / "telegram.toml"
 SECRETS_CONFIG = DATA_DIR / "config" / "secrets.toml"
+INSTRUCTIONS_CONFIG = DATA_DIR / "config" / "INSTRUCTIONS.md"
+INSTRUCTIONS_EXAMPLE = PROJECT_ROOT / "config" / "INSTRUCTIONS.example.md"
 GATEWAY = PROJECT_ROOT / "interfaces" / "telegram" / "gateway.py"
 VAULT_TOOL = PROJECT_ROOT / "scripts" / "credential_vault.py"
 MEMORY_TOOL = PROJECT_ROOT / "scripts" / "memory.py"
@@ -87,6 +89,27 @@ def _write_new(path: Path, content: str) -> bool:
     except FileExistsError:
         return False
     return True
+
+
+def _migrate_legacy_data() -> list[str]:
+    """Copia dados do layout antigo sem sobrescrever a nova instância."""
+    legacy_root = PROJECT_ROOT.parent / "data"
+    if legacy_root.resolve() == DATA_DIR.resolve() or not legacy_root.is_dir():
+        return []
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    migrated: list[str] = []
+    for source in legacy_root.iterdir():
+        if source.name == ".gitkeep" or source.is_symlink():
+            continue
+        destination = DATA_DIR / source.name
+        if destination.exists():
+            continue
+        if source.is_dir():
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+        migrated.append(source.name)
+    return migrated
 
 
 def _replace_config(path: Path, content: str) -> None:
@@ -2149,6 +2172,7 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
 
 
 def install(args: argparse.Namespace) -> dict[str, Any]:
+    _migrate_legacy_data()
     for relative in (
         "config",
         "memory",
@@ -2157,6 +2181,8 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         "telegram/jobs",
     ):
         (DATA_DIR / relative).mkdir(parents=True, exist_ok=True)
+    if not INSTRUCTIONS_CONFIG.exists():
+        _write_new(INSTRUCTIONS_CONFIG, INSTRUCTIONS_EXAMPLE.read_text(encoding="utf-8"))
     identity_created = False
     previous_instance_id: str | None = None
     if IDENTITY_CONFIG.exists():

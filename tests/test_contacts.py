@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 MODULE_PATH = PROJECT_ROOT / "skills" / "contacts" / "scripts" / "contacts.py"
 SPEC = importlib.util.spec_from_file_location("contacts_skill", MODULE_PATH)
 contacts = importlib.util.module_from_spec(SPEC)

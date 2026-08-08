@@ -55,6 +55,10 @@ from interfaces.telegram.config import (  # noqa: E402
 )
 from interfaces.telegram.automation import diagnose_group, topic_title_for_run  # noqa: E402
 from interfaces.telegram.identity import IdentityConfigError, InstanceIdentity  # noqa: E402
+from interfaces.telegram.instructions import (  # noqa: E402
+    InstanceInstructionsError,
+    instruction_block,
+)
 from interfaces.telegram.feedback import choose_message  # noqa: E402
 from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
     RestartError,
@@ -313,6 +317,10 @@ class Gateway:
         self.state_lock = threading.RLock()
         self.registry = ProcessRegistry()
         self.codex = CodexAdapter(config.codex, config.project_root, self.registry)
+        try:
+            self.instance_instructions = instruction_block(config.project_root)
+        except InstanceInstructionsError as exc:
+            raise TelegramConfigError(str(exc)) from exc
         self.processors = ProcessorRegistry(config.processors)
         self.processors.start()
         self.work: queue.Queue[WorkItem | None] = queue.Queue()
@@ -382,6 +390,13 @@ class Gateway:
             prompt = str((event.get("agent_request") or {}).get("prompt") or task.prompt or "Analise o evento estruturado.")
         else:
             prompt = task.prompt or "Execute a tarefa agendada conforme as instruções aprovadas."
+        prompt = "\n\n".join(
+            part for part in (
+                self.config.identity.instruction_block(),
+                self.instance_instructions,
+                "\nPedido agendado:\n" + prompt,
+            ) if part
+        )
         try:
             result = self.codex.run(
                 task.telegram_chat_id, prompt, None, [],
@@ -1964,7 +1979,8 @@ class Gateway:
                     )
                 )
             prompt = build_structured_prompt(
-                inbound, files, prepared, workspace, self.config.identity
+                inbound, files, prepared, workspace, self.config.identity,
+                self.instance_instructions,
             )
             images = [file.path for file in files if (file.mime_type or "").startswith("image/")]
             result = self.codex.run(
@@ -2194,6 +2210,7 @@ def build_structured_prompt(
     prepared: list[Any],
     workspace: JobWorkspace,
     identity: InstanceIdentity,
+    instance_instructions: str = "",
 ) -> str:
     written_request = inbound.text.strip()
     voice_requests = [
@@ -2217,6 +2234,7 @@ def build_structured_prompt(
     current_request = "\n".join(request_parts) or "Analise os arquivos enviados e informe o resultado."
     parts = [
         identity.instruction_block(),
+        instance_instructions,
         "\nPedido atual:",
         current_request,
     ]

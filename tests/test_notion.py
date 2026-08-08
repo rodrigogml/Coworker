@@ -11,7 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 MODULE_PATH = PROJECT_ROOT / "skills" / "notion" / "scripts" / "notion.py"
 SPEC = importlib.util.spec_from_file_location("notion_skill", MODULE_PATH)
 notion = importlib.util.module_from_spec(SPEC)

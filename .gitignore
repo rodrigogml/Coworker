@@ -1,6 +1,6 @@
 # Dados pessoais, configurações locais e dados operacionais
-/data/**
-!/data/.gitkeep
+/instance/data/**
+!/instance/data/.gitkeep
 
 # Bancos SQLite e arquivos auxiliares
 *.sqlite

@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))

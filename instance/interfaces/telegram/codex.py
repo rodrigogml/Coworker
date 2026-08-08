@@ -471,6 +471,7 @@ class CodexAdapter:
             generated = self.config.generated_images_dir.as_posix().replace('"', '\\"')
             direct_paths += f', "{generated}" = "read"'
         return (
+            "project_root_markers=[]",
             'default_permissions="coworker_gateway"',
             "permissions.coworker_gateway.filesystem="
             f'{{ ":minimal" = "read", ":workspace_roots" = {{ "." = "read" }}{direct_paths} }}',

@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1] / "instance"
 MODULE_PATH = PROJECT_ROOT / "scripts" / "integration_config.py"
 SPEC = importlib.util.spec_from_file_location("integration_config_tested", MODULE_PATH)
 integration_config = importlib.util.module_from_spec(SPEC)
