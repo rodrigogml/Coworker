@@ -132,6 +132,18 @@ class TelegramApi:
             )
         )
 
+    def set_message_reaction(
+        self, chat_id: int, message_id: int, emoji: str | None = None
+    ) -> bool:
+        """Define ou remove a reação do bot em uma mensagem."""
+        reaction = [] if emoji is None else [{"type": "emoji", "emoji": emoji}]
+        return bool(
+            self.call(
+                "setMessageReaction",
+                {"chat_id": chat_id, "message_id": message_id, "reaction": reaction},
+            )
+        )
+
     def get_updates(self, offset: int | None, poll_timeout: int) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
             "timeout": poll_timeout,

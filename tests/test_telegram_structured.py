@@ -869,6 +869,7 @@ class _FakeTelegramApi:
         self.edited: list[tuple[int, int, str, dict | None]] = []
         self.callbacks: list[tuple[str, str | None, bool]] = []
         self.drafts: list[tuple[int, int, str]] = []
+        self.reactions: list[tuple[int, int, str | None]] = []
 
     def send_text(
         self, chat_id: int, text: str, *, reply_to_message_id: int | None = None,
@@ -880,6 +881,10 @@ class _FakeTelegramApi:
     def edit_text(self, chat_id: int, message_id: int, text: str, *, reply_markup=None):
         self.edited.append((chat_id, message_id, text, reply_markup))
         return TelegramReceipt(message_id)
+
+    def set_message_reaction(self, chat_id: int, message_id: int, emoji: str | None = None):
+        self.reactions.append((chat_id, message_id, emoji))
+        return True
 
     def answer_callback_query(self, callback_id: str, text=None, *, show_alert=False):
         self.callbacks.append((callback_id, text, show_alert))
@@ -917,13 +922,9 @@ class GatewayContextTests(unittest.TestCase):
         )
         return Gateway(config, _FakeTelegramApi())
 
-    def test_acknowledgement_distinguishes_immediate_work_from_queue(self) -> None:
+    def test_reaction_distinguishes_immediate_work_from_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             gateway = self._gateway(Path(temporary))
-            gateway.config = replace(
-                gateway.config,
-                feedback=FeedbackConfig(("Agora",), ("Fila",), 0.01),
-            )
             with gateway.state.connection:
                 gateway.state.connection.execute(
                     """INSERT INTO authorized_users
@@ -949,11 +950,13 @@ class GatewayContextTests(unittest.TestCase):
 
             gateway._handle_update(1, first)
             gateway._handle_update(2, second)
-            sent = list(gateway.api.sent)
+            reactions = list(gateway.api.reactions)
             gateway.close()
 
-        self.assertEqual((10, "Agora", 20), sent[0])
-        self.assertEqual((10, "Fila", 21), sent[1])
+        self.assertEqual(10, reactions[0][0])
+        self.assertEqual(20, reactions[0][1])
+        self.assertIn(reactions[0][2], {"🫡", "👀", "🧠", "🤔", "💭", "⏳", "🔎", "🧐", "🤓", "🤖"})
+        self.assertEqual((10, 21, "📥"), reactions[1])
 
     def test_progress_mode_is_snapshotted_when_request_enters_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

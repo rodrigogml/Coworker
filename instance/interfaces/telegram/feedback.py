@@ -71,7 +71,16 @@ QUEUED_MESSAGES = (
     "Na fila, mas não esquecida.",
 )
 
+PROCESSING_REACTIONS = ("🫡", "👀", "🧠", "🤔", "💭", "⏳", "🔎", "🧐", "🤓", "🤖")
+QUEUE_REACTION = "📥"
+COMPLETED_REACTION = "✅"
+
 
 def choose_message(messages: tuple[str, ...]) -> str:
     """Escolhe uma variação sem manter estado ou previsibilidade desnecessária."""
     return secrets.choice(messages)
+
+
+def choose_processing_reaction() -> str:
+    """Escolhe uma reação de processamento sem manter estado entre mensagens."""
+    return secrets.choice(PROCESSING_REACTIONS)
