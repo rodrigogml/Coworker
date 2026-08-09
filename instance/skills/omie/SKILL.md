@@ -138,3 +138,11 @@ Ler [references/operations.md](references/operations.md) para envelopes, campos 
 exemplos de escrita. Ler [references/resources.md](references/resources.md) para
 seletores e consultas, e [references/api-contracts.md](references/api-contracts.md)
 para endpoints, allowlist, limites e erros.
+
+## Atualizar conta de lançamento direto
+
+Use `account-entries prepare-update` com `--request-id`, `--entry-id`, `--nature`
+e `--account-id`. Consuma o caminho devolvido com `account-entries update --dry-run
+--input-file` e, após validar, repita sem `--dry-run`; os demais campos são
+preservados. O preparador não acessa credenciais nem a API e grava somente no
+trabalho derivado atual.

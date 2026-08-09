@@ -279,3 +279,15 @@ transferência ativa e gera um único
 
 Origem e destino devem ser contas ativas e diferentes. `update` é parcial;
 `delete` exige confirmação explícita no envelope.
+
+### Atualizar a conta de um lançamento direto
+
+```powershell
+python skills/omie/scripts/omie.py account-entries prepare-update `
+  --request-id telegram:omie:atualizacao-estavel `
+  --entry-id 123 --nature expense --account-id 456
+```
+
+Use o caminho devolvido primeiro com `account-entries update --dry-run
+--input-file` e depois sem `--dry-run`. O envelope altera somente `nCodCC` e
+preserva os demais campos do lançamento.

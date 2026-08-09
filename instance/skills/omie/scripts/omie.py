@@ -2352,6 +2352,43 @@ def execute_prepare_account_entry(args: argparse.Namespace) -> dict[str, Any]:
     return prepare_account_entry_envelope(args)
 
 
+def prepare_account_entry_update_envelope(
+    args: argparse.Namespace,
+    *,
+    project_root: Path = PROJECT_ROOT,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Cria envelope tipado para alterar somente a conta de um lançamento direto."""
+    request_id = request_identifier(args.request_id)
+    document = {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": request_id,
+        "selector": {"id": positive_identifier(args.entry_id, "--entry-id")},
+        "data": {
+            "nature": account_entry_nature(args.nature, "--nature"),
+            "account": {
+                "id": positive_identifier(args.account_id, "--account-id")
+            },
+        },
+    }
+    try:
+        stored = write_job_json(
+            "omie-account-entry-update",
+            request_id,
+            document,
+            project_root=project_root,
+            environment=environment,
+        )
+    except JobContextError as exc:
+        raise OmieToolError(str(exc)) from exc
+    return {"ok": True, "created": stored.created, "path": str(stored.path)}
+
+
+def execute_prepare_account_entry_update(args: argparse.Namespace) -> dict[str, Any]:
+    """Executa o preparador de atualização sem autenticar ou acessar a API Omie."""
+    return prepare_account_entry_update_envelope(args)
+
+
 def prepare_transfer_envelope(
     args: argparse.Namespace,
     *,
@@ -3418,6 +3455,21 @@ def add_account_entry_prepare(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(handler=execute_prepare_account_entry)
 
 
+def add_account_entry_update_prepare(parser: argparse.ArgumentParser) -> None:
+    """Expõe somente campos tipados para atualizar a conta financeira."""
+    parser.add_argument("--request-id", required=True)
+    parser.add_argument(
+        "--entry-id", required=True, type=int,
+        help="Código interno positivo do lançamento direto.",
+    )
+    parser.add_argument(
+        "--nature", required=True, choices=tuple(ACCOUNT_ENTRY_NATURES),
+        help="Natureza do lançamento: expense ou revenue.",
+    )
+    parser.add_argument("--account-id", required=True, type=int)
+    parser.set_defaults(handler=execute_prepare_account_entry_update)
+
+
 def add_transfer_prepare(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--request-id", required=True)
     parser.add_argument("--source-account-id", required=True, type=int)
@@ -3479,6 +3531,11 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Prepara um envelope de criação no trabalho Telegram.",
             )
             add_account_entry_prepare(prepare)
+            prepare_update = operations.add_parser(
+                "prepare-update",
+                help="Prepara envelope tipado para atualizar a conta de um lançamento.",
+            )
+            add_account_entry_update_prepare(prepare_update)
         if name == "transfers":
             prepare = operations.add_parser("prepare", help="Prepara envelope tipado de transferência.")
             add_transfer_prepare(prepare)
@@ -3531,7 +3588,12 @@ def main() -> int:
         return 2
     client: OmieClient | None = None
     try:
-        if args.handler in (execute_prepare_account_entry, execute_prepare_transfer, execute_prepare_customer):
+        if args.handler in (
+            execute_prepare_account_entry,
+            execute_prepare_account_entry_update,
+            execute_prepare_transfer,
+            execute_prepare_customer,
+        ):
             result = args.handler(args)
         else:
             config = load_config(Path(args.config).expanduser().resolve(), args.profile)

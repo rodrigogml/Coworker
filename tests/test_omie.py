@@ -1239,6 +1239,31 @@ class OmieTests(unittest.TestCase):
                 "entry-update-reconcile",
             )
 
+    def test_account_entry_update_changes_only_financial_account(self):
+        current = {
+            "nCodLanc": 44,
+            "cabecalho": {"nCodCC": 5, "dDtLanc": "04/08/2026", "nValorLanc": 100},
+            "detalhes": {"cCodCateg": "2.01.01", "cTipo": "DIN", "cObs": "Preservar"},
+            "diversos": {"cOrigem": "EXTP", "cNatureza": "P"},
+        }
+        client = FakeOperationClient({
+            "ConsultaLancCC": current,
+            "ConsultarContaCorrente": {"nCodCC": 9, "inativo": "N"},
+            "ConsultarCategoria": {
+                "codigo": "2.01.01", "conta_inativa": "N", "conta_despesa": "S",
+                "conta_receita": "N", "transferencia": "N", "totalizadora": "N",
+                "nao_exibir": "N",
+            },
+        })
+        call = omie.prepare_account_entry_call(
+            client, "update",
+            {"selector": {"id": 44}, "data": {"nature": "expense", "account": {"id": 9}}},
+            "entry-update-account-only",
+        )[0]
+        self.assertEqual(call.params["cabecalho"], {"nCodCC": 9, "dDtLanc": "04/08/2026", "nValorLanc": 100})
+        self.assertEqual(call.params["detalhes"], current["detalhes"])
+        self.assertNotIn("diversos", call.params)
+
     def test_account_entry_blocks_nature_change_and_non_manual_origins(self):
         expense = {
             "nCodLanc": 44,
@@ -1538,6 +1563,49 @@ class OmieTests(unittest.TestCase):
             "nCodCliente", dry_run["calls"][0]["params"]["detalhes"]
         )
         self.assertNotIn("aCodCateg", dry_run["calls"][0]["params"]["detalhes"])
+
+    def test_account_entry_update_prepare_writes_typed_job_envelope(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            derived = root / "data" / "telegram" / "jobs" / "7" / "derived"
+            derived.mkdir(parents=True)
+            args = argparse.Namespace(
+                request_id="telegram:omie:entry-update-7",
+                entry_id=44,
+                nature="expense",
+                account_id=9,
+            )
+            result = omie.prepare_account_entry_update_envelope(
+                args,
+                project_root=root,
+                environment={"COWORKER_JOB_DERIVED": str(derived)},
+            )
+            document = omie.parse_input_document(
+                Path(result["path"]).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(document["selector"], {"id": 44})
+        self.assertEqual(document["data"], {"nature": "expense", "account": {"id": 9}})
+        self.assertTrue(Path(result["path"]).is_relative_to(derived))
+
+    def test_account_entry_update_prepare_rejects_invalid_typed_fields(self):
+        for field, value in (("entry_id", 0), ("account_id", -1), ("nature", "transfer")):
+            args = argparse.Namespace(
+                request_id="telegram:omie:entry-update-invalid",
+                entry_id=44,
+                nature="expense",
+                account_id=9,
+            )
+            setattr(args, field, value)
+            with self.subTest(field=field), self.assertRaises(omie.OmieToolError):
+                omie.prepare_account_entry_update_envelope(args)
+
+    def test_account_entry_update_prepare_parser_is_typed(self):
+        args = omie.build_parser().parse_args(
+            ["account-entries", "prepare-update", "--request-id", "entry-update",
+             "--entry-id", "44", "--nature", "expense", "--account-id", "9"]
+        )
+        self.assertIs(args.handler, omie.execute_prepare_account_entry_update)
 
     def test_account_entry_prepare_refuses_overwrite_and_external_directory(self):
         with TemporaryDirectory() as temporary:
