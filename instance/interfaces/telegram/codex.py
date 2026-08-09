@@ -410,7 +410,11 @@ class CodexAdapter:
             if message.get("id") != request_id:
                 continue
             if isinstance(message.get("error"), dict):
-                raise CodexExecutionError("O Codex recusou a solicitação ao App Server.")
+                detail = CodexAdapter._safe_app_server_error(message["error"])
+                suffix = f": {detail}" if detail else "."
+                raise CodexExecutionError(
+                    f"O Codex recusou a solicitação ao App Server{suffix}"
+                )
             result = message.get("result")
             if not isinstance(result, dict):
                 raise CodexExecutionError("O Codex devolveu uma resposta em formato inválido.")

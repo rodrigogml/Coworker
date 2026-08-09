@@ -543,6 +543,15 @@ class ProcessorTests(unittest.TestCase):
 
 
 class AppServerBackendTests(unittest.TestCase):
+    def test_app_server_error_keeps_sanitized_reason(self) -> None:
+        responses: queue.Queue[str | None] = queue.Queue()
+        responses.put(json.dumps({
+            "id": 3,
+            "error": {"code": "invalid_params", "message": "sandbox policy inválida"},
+        }))
+        with self.assertRaisesRegex(CodexExecutionError, "invalid_params: sandbox policy inválida"):
+            CodexAdapter._wait_app_server_response(responses, 3, time.monotonic() + 1)
+
     def _adapter(self, root: Path) -> CodexAdapter:
         executable = root / "codex.exe"
         executable.touch()
