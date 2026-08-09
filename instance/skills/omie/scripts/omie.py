@@ -2477,13 +2477,17 @@ def validate_account_entry_category(
 
 
 def validate_transfer_category(item: Mapping[str, Any]) -> None:
-    """Garante que a categoria pertence ao plano ativo de transferencias."""
+    """Garante que a categoria pertence ao plano ativo de transferencias.
+
+    A Omie pode ocultar categorias tecnicas de transferencia (`nao_exibir=S`)
+    na interface. Isso nao as torna invalidas para lancamentos TRA; a
+    elegibilidade e determinada por atividade, ausencia de totalizacao e pelo
+    marcador explicito de transferencia.
+    """
     if is_inactive(item):
         raise OmieToolError("A categoria da transferencia esta inativa.")
     if item.get("totalizadora") == "S":
         raise OmieToolError("A categoria da transferencia nao pode ser totalizadora.")
-    if item.get("nao_exibir") == "S":
-        raise OmieToolError("A categoria da transferencia nao esta disponivel para uso.")
     if item.get("transferencia") != "S":
         raise OmieToolError(
             "A categoria informada nao esta marcada pela Omie como transferencia."

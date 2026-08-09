@@ -861,6 +861,33 @@ class OmieTests(unittest.TestCase):
                 integration_id="cw-test",
             )
 
+    def test_transfer_accepts_hidden_active_non_totalizing_category(self):
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": lambda params: {"nCodCC": params["nCodCC"], "inativo": "N"},
+                "ConsultarCategoria": {
+                    "codigo": "technical-transfer",
+                    "conta_inativa": "N",
+                    "transferencia": "S",
+                    "totalizadora": "N",
+                    "nao_exibir": "S",
+                },
+            }
+        )
+        payload = omie.transfer_payload(
+            client,
+            {},
+            {
+                "source_account": {"id": 1},
+                "destination_account": {"id": 2},
+                "date": "02/08/2026",
+                "amount": "50.00",
+                "category": {"code": "technical-transfer"},
+            },
+            integration_id="cw-test",
+        )
+        self.assertEqual(payload["detalhes"]["cCodCateg"], "technical-transfer")
+
     def test_transfer_prepare_persists_category(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

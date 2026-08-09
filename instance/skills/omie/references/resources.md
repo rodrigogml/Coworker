@@ -21,7 +21,9 @@ fechada de `--filter-json`, com `and`, `or` e operadores allowlisted. Quando fil
 são usados, a skill consulta todas as páginas até o limite configurado e informa
 `total_consulted`, `total_returned` e `truncated`.
 
-Transferências exigem uma categoria ativa marcada pela Omie como transferência. Use
+Transferências exigem uma categoria ativa, não totalizadora e marcada pela Omie
+como transferência. O marcador `nao_exibir=S` não invalida categorias técnicas de
+transferência. Use
 `--category-code` em `transfers prepare` para gerar o envelope idempotente em
 `COWORKER_JOB_DERIVED` e siga `prepare -> create --dry-run -> create -> show`.
 
@@ -126,7 +128,8 @@ python skills/omie/scripts/omie.py transfers prepare `
 ```
 
 As mutações disponíveis são `create`, `update` e `delete`. A inclusão exige
-`category` com uma categoria ativa marcada pela Omie como transferência. O
+`category` com uma categoria ativa, não totalizadora e marcada pela Omie como
+transferência; `nao_exibir=S` não invalida categorias técnicas desse tipo. O
 preparador `transfers prepare` exige `--category-code`, grava `data.category` no
 envelope tipado e não acessa a API; siga `prepare -> create --dry-run -> create ->
 show`. A listagem usa a paginação própria de `ListarLancCC`, traduzida para o mesmo
