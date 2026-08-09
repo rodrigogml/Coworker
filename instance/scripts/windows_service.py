@@ -140,8 +140,7 @@ def build_definition(
                 # The gateway defaults to the per-instance local state path
                 # even when the private TOML is not complete yet.
                 try:
-                    from interfaces.telegram.config import default_state_dir
-                    gateway_state_dir = default_state_dir(str(instance_id))
+                    gateway_state_dir = root / "data" / "telegram" / "state"
                 except Exception:
                     # The service definition can still be inspected/removed
                     # while an incomplete private config is being repaired.
