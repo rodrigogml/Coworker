@@ -670,6 +670,14 @@ Get-Content data/work/instructions-update.md -Raw |
   python scripts/instructions_config.py replace
 ```
 
-Não use `apply_patch` nem escrita genérica de shell diretamente em
-`data/config/INSTRUCTIONS.md`. Valide o resultado lendo o arquivo depois e só
-então remova ou migre qualquer conteúdo equivalente da memória.
+Quando o executor bloquear pipelines, use o fluxo sem composição:
+
+```powershell
+python scripts/workspace.py write --path data/work/instructions-update.md --content "..."
+python scripts/instructions_config.py replace-file --source data/work/instructions-update.md
+```
+
+Para arquivos privados ignorados pelo Git, prefira `workspace.py write` em vez de
+`apply_patch`. Não use escrita genérica diretamente em `data/config/INSTRUCTIONS.md`.
+Valide o resultado lendo o arquivo depois e só então remova ou migre qualquer
+conteúdo equivalente da memória.

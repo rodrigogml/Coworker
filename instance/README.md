@@ -878,5 +878,6 @@ clone; para elas, o mesmo destino deve ser escrito como
 `<clone>/data/` fora do runtime.
 
 `data/config/INSTRUCTIONS.md` não é editado diretamente. Use
-`python scripts/instructions_config.py replace` com o conteúdo fornecido por
-stdin, sempre a partir de `instance/`.
+`python scripts/instructions_config.py replace-file --source data/work/arquivo.md`
+depois de criar o arquivo com `python scripts/workspace.py write`. Isso evita
+pipelines bloqueados e mantém a escrita privada confinada a `data/work/`.
