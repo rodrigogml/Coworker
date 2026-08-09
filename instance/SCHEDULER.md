@@ -11,10 +11,10 @@ de notificação e de contexto conversacional.
 Consulta e configuração local, sem credenciais Telegram:
 
 ```powershell
-python scripts/scheduler.py status
-python scripts/scheduler.py list
-python scripts/scheduler.py enable TASK_UID
-python scripts/scheduler.py disable TASK_UID
+python scripts/scheduler_cli.py status
+python scripts/scheduler_cli.py list
+python scripts/scheduler_cli.py enable TASK_UID
+python scripts/scheduler_cli.py disable TASK_UID
 ```
 
 Jobs, execuções, scripts autorizados e arquivos de suporte do scheduler devem ficar

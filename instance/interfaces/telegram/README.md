@@ -475,10 +475,10 @@ núcleo é independente, usa `data/scheduler/scheduler.sqlite3`, é controlado p
 gateway/orquestrador e pode ser consultado/configurado sem Bot API:
 
 ```powershell
-python scripts/scheduler.py status
-python scripts/scheduler.py list
-python scripts/scheduler.py enable TASK_UID
-python scripts/scheduler.py disable TASK_UID
+python scripts/scheduler_cli.py status
+python scripts/scheduler_cli.py list
+python scripts/scheduler_cli.py enable TASK_UID
+python scripts/scheduler_cli.py disable TASK_UID
 ```
 
 O MVP executa somente scripts Python existentes em `data/`, `interfaces/` ou `skills/`,

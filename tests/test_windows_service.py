@@ -74,7 +74,7 @@ class WindowsServiceContractTests(unittest.TestCase):
             config = root / "data" / "config"
             config.mkdir(parents=True)
             (config / "telegram.toml").write_text(
-                '[codex]\nhome_dir = "C:/isolated/ExampleInstance/codex"\n',
+                '[codex]\nhome_dir = "data/codex"\n',
                 encoding="utf-8",
             )
             definition = build_definition(
@@ -82,8 +82,8 @@ class WindowsServiceContractTests(unittest.TestCase):
             )
             self.assertEqual(definition.name, "exampleinstance")
             self.assertEqual(definition.display_name, "ExampleInstance")
-            self.assertEqual(str(definition.codex_home), "C:\\isolated\\ExampleInstance\\codex")
-            self.assertIn("exampleinstance", str(definition.gateway_state_dir).casefold())
+            self.assertEqual(definition.codex_home, (root / "data" / "codex").resolve())
+            self.assertEqual(definition.gateway_state_dir, (root / "data" / "telegram" / "state").resolve())
 
     def test_invalid_startup_and_timeout_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
