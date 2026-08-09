@@ -1,0 +1,10 @@
+version = 1
+group = "TOTP"
+secret_field = "Password"
+protected_attributes = [
+  "TOTP_ISSUER",
+  "TOTP_ACCOUNT",
+  "TOTP_ALGORITHM",
+  "TOTP_DIGITS",
+  "TOTP_PERIOD",
+]

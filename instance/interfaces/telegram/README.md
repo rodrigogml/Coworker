@@ -180,7 +180,13 @@ raiz de confiança da instalação.
 - `/cancel`: solicita o encerramento da execução ativa;
 - `/thread`: mostra o identificador da sessão;
 - `/secret NomeDoServico`: prepara a captura protegida da próxima mensagem de texto;
+- `/totp [issuer conta|add]`: consulta uma chave TOTP ou inicia seu cadastro protegido;
 - `/help`: lista os comandos.
+
+`/totp` mostra o código atual e o próximo com seus horários de expiração. A mensagem
+contém issuer e conta e é editada para `Código expirado` ao término do TTL do segundo
+código. `/totp add` captura uma URI ou chave Base32; para chave sem metadados, pergunta
+issuer e conta. Uma imagem anexada ao comando é interpretada localmente como QR Code.
 
 Os painéis usam teclados inline e editam a mesma mensagem durante a navegação. Todo
 `callback_query` é interceptado antes do SQLite de mensagens, da fila e do Codex,
