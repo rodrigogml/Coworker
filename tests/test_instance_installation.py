@@ -61,7 +61,7 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('access_mode = "restricted"', content)
         self.assertIn('approval_policy = "never"', content)
         self.assertIn("network_access = false", content)
-        self.assertIn('writable_directories = ["data"]', content)
+        self.assertIn('writable_directories = ["data/work"]', content)
         parsed = tomllib.loads(content)
         self.assertTrue(parsed["codex"]["home_dir"])
 
@@ -84,19 +84,12 @@ class InstallerTests(unittest.TestCase):
             result = install_instance._manage_read_directories("Leitura", [])
         self.assertEqual(["beta"], result)
 
-    def test_writable_directory_manager_can_enable_repository_access(self) -> None:
-        with patch("builtins.input", side_effect=["3", "0"]):
+    def test_writable_directory_manager_can_restore_workspace_profile(self) -> None:
+        with patch("builtins.input", side_effect=["3", "s", "0"]):
             result = install_instance._manage_writable_directories(
-                "Escrita", ["data"]
+                "Escrita", ["data", "."]
             )
-        self.assertEqual(["data", "."], result)
-
-    def test_writable_directory_manager_can_restore_data_only_profile(self) -> None:
-        with patch("builtins.input", side_effect=["4", "s", "0"]):
-            result = install_instance._manage_writable_directories(
-                "Escrita", [".", "C:\\repo"]
-            )
-        self.assertEqual(["data"], result)
+        self.assertEqual(["data/work"], result)
 
     def test_codex_update_preserves_unrelated_telegram_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

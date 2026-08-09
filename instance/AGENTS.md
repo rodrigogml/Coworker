@@ -636,3 +636,15 @@ proprietário; não permitir edição arbitrária pelo Telegram.
 O `AGENTS.md` da raiz do repositório é documentação de desenvolvimento e não faz
 parte do contrato operacional desta instância. O runtime deve usar este arquivo como
 contrato público imutável, com `data/config/INSTRUCTIONS.md` como camada privada.
+# Política operacional do workspace da instância
+
+No perfil restrito, o Codex pode criar e alterar livremente arquivos somente em
+`data/work/`. Use `data/work/scripts/`, `data/work/documents/`,
+`data/work/artifacts/` e `data/work/projects/`.
+
+Não use `/data/...`; no Windows esse caminho não representa `instance/data/`.
+Use caminhos relativos à raiz da instância, como `data/work/arquivo.md`.
+`data/config/`, `data/secrets/`, `data/codex/`, `data/telegram/`,
+`data/scheduler/` e os bancos locais são protegidos e só devem ser alterados pelos
+componentes tipados do projeto. Nenhum estado, cache, runtime, log ou cópia de código
+deve ser criado no perfil do usuário ou em diretórios do sistema operacional.

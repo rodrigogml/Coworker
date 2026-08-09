@@ -45,7 +45,7 @@ speed = "standard"
 verbosity = ""
 timeout_seconds = 1800
 additional_directories = []
-writable_directories = ["data"]
+writable_directories = ["data/work"]
 
 [media]
 inbox_dir = "data/telegram/inbox"

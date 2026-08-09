@@ -154,7 +154,7 @@ class StructuredStateTests(unittest.TestCase):
                 f'''transport = "polling"\ncredential_ref = "entry"\nproject_root = "{normalized}"\nstate_dir = "data/telegram/state"\n'''
                 "poll_timeout_seconds = 10\nrequest_timeout_seconds = 10\n"
                 "[pairing]\nttl_seconds = 600\nmax_attempts = 5\n"
-                "[codex]\nexecutable = \"\"\nhome_dir = \"\"\nsandbox = \"workspace-write\"\nnetwork_access = false\napproval_policy = \"never\"\ntimeout_seconds = 60\nadditional_directories = []\n"
+                "[codex]\nexecutable = \"\"\nhome_dir = \"\"\nsandbox = \"workspace-write\"\nnetwork_access = false\napproval_policy = \"never\"\ntimeout_seconds = 60\nadditional_directories = []\nwritable_directories = [\"data/work\"]\n"
                 f'''[media]\ninbox_dir = "data/telegram/inbox"\nmax_download_bytes = 1000\n'''
                 "[webhook]\npublic_url = \"\"\nsecret_credential_ref = \"\"\nlisten_host = \"127.0.0.1\"\nlisten_port = 8787\n",
                 encoding="utf-8",
@@ -190,6 +190,38 @@ class StructuredStateTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(TelegramConfigError, "dentro de"):
                 load_config(config_path, require_codex=False)
+
+
+class WorkspacePermissionTests(unittest.TestCase):
+    def test_restricted_writable_directories_must_be_inside_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._minimal_config(root, 'writable_directories = ["data"]')
+            with self.assertRaisesRegex(TelegramConfigError, "area de trabalho"):
+                load_config(config, require_codex=False)
+
+    @staticmethod
+    def _minimal_config(root: Path, writable: str) -> Path:
+        (root / "identity.toml").write_text(
+            '[identity]\ninstance_id = "teste"\ndisplay_name = "Teste"\n'
+            'language = "pt-BR"\ngrammatical_gender = "neutral"\n'
+            'summary = "Teste"\ntone = "direto"\nhumor = "nenhum"\n'
+            'enthusiasm = "moderada"\nwriting_style = "conciso"\n'
+            'bio = "Teste"\n',
+            encoding="utf-8",
+        )
+        config = root / "telegram.toml"
+        config.write_text(
+            'transport = "polling"\ncredential_ref = "entry"\n'
+            f'project_root = "{root.as_posix()}"\n'
+            'state_dir = "data/telegram/state"\n'
+            '[pairing]\nttl_seconds = 600\nmax_attempts = 5\n'
+            '[codex]\n' + writable + '\n'
+            '[media]\ninbox_dir = "data/telegram/inbox"\n'
+            '[webhook]\npublic_url = ""\n',
+            encoding="utf-8",
+        )
+        return config
 
 
 class WorkspaceTests(unittest.TestCase):

@@ -858,3 +858,14 @@ No menu de gerenciamento do gateway, quando existe um serviço Windows associado
 ações de iniciar, parar e reiniciar perguntam se devem atuar sobre o serviço ou sobre
 um processo manual. O configurador exibe os dois estados e impede iniciar os dois
 runtimes simultaneamente.
+# Workspace livre da instância
+
+`instance/data/work/` é a área livre para scripts, documentos, artefatos e arquivos
+importantes da instância. O sandbox restrito concede escrita somente nessa área.
+Configuração, segredos, CODEX_HOME, Telegram, scheduler e bancos permanecem em suas
+pastas próprias e não devem ser alterados por shell genérico.
+## Regra vigente de escrita
+
+Apesar de referências históricas a `data/`, a raiz gravável do perfil restrito é
+exclusivamente `data/work/`. Use essa pasta para scripts, documentos, artefatos e
+arquivos importantes; as demais subpastas de `data/` são protegidas.

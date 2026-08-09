@@ -603,8 +603,8 @@ class CodexIsolationTests(unittest.TestCase):
     def _config(self, root: Path) -> CodexConfig:
         executable = root / "codex.exe"
         executable.touch()
-        data = root / "data"
-        data.mkdir(exist_ok=True)
+        data = root / "data" / "work"
+        data.mkdir(parents=True, exist_ok=True)
         return CodexConfig(
             executable=executable,
             home_dir=root / "isolated-home",
@@ -650,7 +650,7 @@ class CodexIsolationTests(unittest.TestCase):
                 if item.startswith("permissions.coworker_gateway.filesystem=")
             )
             self.assertIn('":workspace_roots" = { "." = "read" }', filesystem)
-            self.assertIn(f'"{(root / "data").as_posix()}" = "write"', filesystem)
+            self.assertIn(f'"{(root / "data" / "work").as_posix()}" = "write"', filesystem)
 
     def test_exec_applies_only_typed_codex_options(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -711,7 +711,7 @@ class CodexIsolationTests(unittest.TestCase):
             self.assertIn(":danger-full-access", adapter.permission_overrides()[0])
             self.assertEqual({"type": "dangerFullAccess"}, adapter._app_server_sandbox())
 
-    def test_app_server_writes_only_to_configured_data_directory(self) -> None:
+    def test_app_server_writes_only_to_configured_workspace_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             adapter = CodexAdapter(self._config(root), root, ProcessRegistry())
@@ -719,7 +719,7 @@ class CodexIsolationTests(unittest.TestCase):
             policy = adapter._app_server_sandbox()
 
             self.assertEqual("workspaceWrite", policy["type"])
-            self.assertEqual([str(root / "data")], policy["writableRoots"])
+            self.assertEqual([str(root / "data" / "work")], policy["writableRoots"])
             self.assertNotIn(str(root), policy["writableRoots"])
 
     def test_rules_cover_every_public_integration_entry_point(self) -> None:

@@ -258,7 +258,7 @@ def _default_telegram_values(instance_id: str) -> dict[str, Any]:
         "verbosity": "",
         "timeout_seconds": 1800,
         "additional_directories": [],
-        "writable_directories": ["data"],
+        "writable_directories": ["data/work"],
     }
 
 
@@ -1137,8 +1137,7 @@ def _manage_directory_list(
         print("  1. Adicionar um ou mais diret\u00f3rios")
         print("  2. Excluir um diret\u00f3rio")
         if writable:
-            print("  3. Permitir escrita no pr\u00f3prio reposit\u00f3rio (.)")
-            print("  4. Restringir escrita somente a data/")
+            print("  3. Restaurar escrita somente ao workspace data/work/")
         print("  0. Voltar")
         answer = input("Escolha uma op\u00e7\u00e3o: ").strip()
         if answer in {"", "0"}:
@@ -1178,17 +1177,9 @@ def _manage_directory_list(
             print(f"Diret\u00f3rio removido: {removed}")
             continue
         if writable and answer == "3":
-            root_key = _directory_key(".")
-            if root_key in {_directory_key(value) for value in values}:
-                print("O pr\u00f3prio reposit\u00f3rio j\u00e1 possui escrita.")
-            else:
-                values.append(".")
-                print("Escrita no pr\u00f3prio reposit\u00f3rio adicionada.")
-            continue
-        if writable and answer == "4":
-            if _yes_no("Substituir as ra\u00edzes de escrita por data/", default=False):
-                values = ["data"]
-                print("Escrita restrita a data/.")
+            if _yes_no("Substituir as ra\u00edzes de escrita por data/work/", default=False):
+                values = ["data/work"]
+                print("Escrita restrita a data/work/.")
             continue
         print("Escolha uma op\u00e7\u00e3o v\u00e1lida.")
 
@@ -1352,7 +1343,7 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
                     values["sandbox"] = "workspace-write"
                     values["network_access"] = False
                     values["additional_directories"] = []
-                    values["writable_directories"] = ["data"]
+                    values["writable_directories"] = ["data/work"]
                     changed = True
             else:
                 print(

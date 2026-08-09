@@ -71,8 +71,13 @@ def validate_task(task: ScheduledTask, project_root: Path) -> Path | None:
     root = project_root.resolve()
     if root not in candidate.parents or candidate.suffix.lower() != ".py" or not candidate.is_file():
         raise SchedulerError("script_path deve apontar para um .py existente dentro do projeto.")
-    if "data" not in candidate.parts and "interfaces" not in candidate.parts and "skills" not in candidate.parts:
-        raise SchedulerError("script_path deve estar em data/, interfaces/ ou skills/.")
+    relative = candidate.relative_to(root).as_posix()
+    if not (
+        relative == "data/work" or relative.startswith("data/work/")
+        or relative == "interfaces" or relative.startswith("interfaces/")
+        or relative == "skills" or relative.startswith("skills/")
+    ):
+        raise SchedulerError("script_path deve estar em data/work/, interfaces/ ou skills/.")
     return candidate
 
 

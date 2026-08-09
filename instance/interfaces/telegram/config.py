@@ -16,6 +16,7 @@ from interfaces.telegram.feedback import IMMEDIATE_MESSAGES, QUEUED_MESSAGES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
+WORK_DIR = DATA_DIR / "work"
 DEFAULT_CONFIG = PROJECT_ROOT / "data" / "config" / "telegram.toml"
 EXAMPLE_CONFIG = PROJECT_ROOT / "config" / "telegram.example.toml"
 
@@ -174,6 +175,20 @@ def _require_data_path(path: Path, label: str) -> Path:
         raise TelegramConfigError(
             f"'{label}' deve ficar dentro de '{data_root}'. "
             "Migre a instância para instance/data antes de iniciar o gateway."
+        ) from exc
+    return resolved
+
+
+def _require_workspace_path(path: Path, label: str) -> Path:
+    """Garante que a escrita manual fique na area livre da instancia."""
+    resolved = path.resolve()
+    work_root = WORK_DIR.resolve()
+    try:
+        resolved.relative_to(work_root)
+    except ValueError as exc:
+        raise TelegramConfigError(
+            f"'{label}' deve ficar dentro da area de trabalho '{work_root}'. "
+            "Use caminhos relativos como 'data/work/scripts'."
         ) from exc
     return resolved
 
@@ -468,11 +483,10 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         if (path := _resolve(item, PROJECT_ROOT)) is not None
     )
     writable = tuple(
-        path
-        for item in codex_values.get("writable_directories", ["data"])
+        _require_workspace_path(path, "codex.writable_directories")
+        for item in codex_values.get("writable_directories", ["data/work"])
         if (path := _resolve(item, PROJECT_ROOT)) is not None
     )
-    writable = tuple(_require_data_path(path, "codex.writable_directories") for path in writable)
     raw_access_mode = codex_values.get("access_mode")
     access_mode = str(raw_access_mode or "restricted").strip().casefold()
     if access_mode not in {"restricted", "super"}:

@@ -509,3 +509,13 @@ porque esses comandos dependem de uma janela na máquina local. Quando o destino
 não existe, use `python interfaces/telegram/scripts/clone_credential.py` no contexto
 do job, com `--source`, `--target`, `--field Username|Password` e `--confirm`.
 O broker cria o destino exclusivamente, preserva a origem e retorna apenas metadados.
+# Workspace gravável
+
+O perfil `workspace-write` concede escrita manual somente em `data/work/`.
+Não habilite escrita no repositório, em `data/config/`, em `data/secrets/` ou em
+diretórios externos. Use sempre caminhos relativos à raiz `instance`.
+## Regra vigente de escrita
+
+Apesar de referências históricas a `data/`, o perfil restrito concede escrita manual
+exclusivamente em `data/work/`. O repositório, `data/config/`, `data/secrets/` e
+diretórios externos permanecem fora da escrita.
