@@ -56,3 +56,17 @@ copiar ou persistir usuário/senha fora do cofre.
 
 Ler [references/commands.md](references/commands.md) para comandos suportados,
 exemplos e classificação de risco.
+## Recuperar NFC-e com problema de envio
+
+Após corrigir os dados persistidos de uma NFC-e, o reparo do envio e a transmissão
+são passos separados:
+
+```powershell
+python skills/bis2/scripts/bis2.py --profile example nfce-fix-envi-xml --doc-id 123 --confirm
+python skills/bis2/scripts/bis2.py --profile example nfce-send-offline --doc-id 123 --confirm
+```
+
+`nfce-fix-envi-xml` chama `DocFiscalCrud.fixNFCeEnviXML(id)`, reconstrói o XML e
+prepara o status `SEFAZOFFLINE`. `nfce-send-offline` chama o envio para a SEFAZ e
+espera encontrar esse XML pronto nesse status. Não tratar os dois comandos como uma
+única operação nem executar o envio antes da reconstrução.

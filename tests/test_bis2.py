@@ -70,6 +70,26 @@ class Bis2ToolTests(unittest.TestCase):
             "PAYMENT", "789", "CLEAR", "changeValue", "confirm",
         ])
 
+    def test_nfce_fix_envi_xml_maps_to_xml_rebuild_facade(self):
+        args = bis2.build_parser().parse_args([
+            "--profile", "example", "nfce-fix-envi-xml", "--doc-id", "123", "--confirm",
+        ])
+        command, mutating = bis2.build_biscmd_arguments(args)
+        self.assertTrue(mutating)
+        self.assertEqual(command, [
+            "-facade", "-fixNFCeEnviXML", "docId", "123", "confirm",
+        ])
+
+    def test_nfce_send_offline_remains_separate_from_xml_rebuild(self):
+        args = bis2.build_parser().parse_args([
+            "--profile", "example", "nfce-send-offline", "--doc-id", "123", "--confirm",
+        ])
+        command, mutating = bis2.build_biscmd_arguments(args)
+        self.assertTrue(mutating)
+        self.assertEqual(command, [
+            "-facade", "-nfceSendOffline", "docId", "123", "confirm",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
