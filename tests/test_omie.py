@@ -1264,6 +1264,36 @@ class OmieTests(unittest.TestCase):
         self.assertEqual(call.params["detalhes"], current["detalhes"])
         self.assertNotIn("diversos", call.params)
 
+    def test_account_entry_update_allows_apep_for_account_only(self):
+        current = {
+            "nCodLanc": 44,
+            "cabecalho": {"nCodCC": 5, "dDtLanc": "04/08/2026", "nValorLanc": 100},
+            "detalhes": {"cCodCateg": "2.01.01", "cTipo": "DIN", "cObs": "Preservar"},
+            "diversos": {"cOrigem": "APEP", "cNatureza": "P"},
+        }
+        client = FakeOperationClient({
+            "ConsultaLancCC": current,
+            "ConsultarContaCorrente": {"nCodCC": 9, "inativo": "N"},
+            "ConsultarCategoria": {
+                "codigo": "2.01.01", "conta_inativa": "N", "conta_despesa": "S",
+                "conta_receita": "N", "transferencia": "N", "totalizadora": "N",
+                "nao_exibir": "N",
+            },
+        })
+        call = omie.prepare_account_entry_call(
+            client, "update",
+            {"selector": {"id": 44}, "data": {"nature": "expense", "account": {"id": 9}}},
+            "entry-update-apep",
+        )[0]
+        self.assertEqual(call.params["cabecalho"]["nCodCC"], 9)
+        self.assertEqual(call.params["detalhes"], current["detalhes"])
+        with self.assertRaisesRegex(omie.OmieToolError, "APEP"):
+            omie.prepare_account_entry_call(
+                client, "update",
+                {"selector": {"id": 44}, "data": {"nature": "expense", "amount": 101}},
+                "entry-update-apep-amount",
+            )
+
     def test_account_entry_blocks_nature_change_and_non_manual_origins(self):
         expense = {
             "nCodLanc": 44,

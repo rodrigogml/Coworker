@@ -244,9 +244,11 @@ Uma alteração é parcial, mas sempre exige `nature` como declaração de segur
 preservados continuem fechando no novo total. Não é permitido converter despesa em
 receita ou vice-versa: excluir e criar um novo lançamento exige autorizações próprias.
 
-Alteração e exclusão aceitam somente lançamentos manuais diretos `EXTP` e `EXTR`,
-inclusive os criados na interface Omie. Registros sem código de integração devem ser
-selecionados por `id`. A exclusão exige `confirm_delete: true`.
+Alteração e exclusão aceitam lançamentos manuais diretos `EXTP` e `EXTR`, inclusive
+os criados na interface Omie. Lançamentos `APEP` podem ter somente a conta financeira
+atualizada pelo preparador tipado; os demais campos são preservados. Registros sem
+código de integração devem ser selecionados por `id`. A exclusão exige
+`confirm_delete: true`.
 
 `IncluirLancCC` não recebe campo de conciliação. Depois de uma criação real autorizada,
 usar `show` e confirmar que `diversos.dDtConc` permanece vazio; essa verificação não

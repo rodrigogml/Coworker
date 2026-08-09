@@ -45,7 +45,7 @@ somente a referência dessa entrada.
 | Produtos | `/geral/produtos/` | `ListarProdutos`, `ConsultarProduto` | — |
 | Contas a pagar | `/financas/contapagar/` | `ListarContasPagar`, `ConsultarContaPagar` | incluir, alterar, excluir, lançar e cancelar pagamento |
 | Contas a receber | `/financas/contareceber/` | `ListarContasReceber`, `ConsultarContaReceber` | incluir, alterar, excluir, lançar/cancelar recebimento, conciliar e desconciliar |
-| Lançamentos diretos | `/financas/contacorrentelancamentos/` | `ListarLancCC`, `ConsultaLancCC` | `IncluirLancCC`, `AlterarLancCC`, `ExcluirLancCC` para origens `EXTP`/`EXTR` |
+| Lançamentos diretos | `/financas/contacorrentelancamentos/` | `ListarLancCC`, `ConsultaLancCC` | `IncluirLancCC`, `AlterarLancCC`, `ExcluirLancCC` para origens `EXTP`/`EXTR`; alteração de conta em `APEP` |
 | Transferências | `/financas/contacorrentelancamentos/` | `ListarLancCC`, `ConsultaLancCC` | `IncluirLancCC`, `AlterarLancCC`, `ExcluirLancCC` com tipo `TRA` |
 | Pedidos de venda | `/produtos/pedido/` | `ListarPedidos`, `ConsultarPedido` | — |
 | Ordens de serviço | `/servicos/os/` | `ListarOS`, `ConsultarOS` | — |

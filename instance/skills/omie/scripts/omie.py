@@ -2656,12 +2656,24 @@ def validate_current_entry_categories(
     )
 
 
-def current_account_entry_nature(current: Mapping[str, Any]) -> str:
-    """Obtém a natureza apenas de origens manuais diretas permitidas."""
+def current_account_entry_nature(
+    current: Mapping[str, Any], *, allow_apep: bool = False
+) -> str:
+    """Obtém a natureza da origem, com APEP opcional somente para atualização."""
     diverse = current.get("diversos", {})
     if not isinstance(diverse, dict):
         raise OmieToolError("A Omie não devolveu a origem do lançamento.")
     origin = diverse.get("cOrigem")
+    if origin == "APEP":
+        if not allow_apep:
+            raise OmieToolError(
+                "Somente lançamentos manuais diretos EXTP ou EXTR podem ser alterados ou excluídos."
+            )
+        returned_nature = diverse.get("cNatureza")
+        for nature, (api_nature, _, _) in ACCOUNT_ENTRY_NATURES.items():
+            if returned_nature == api_nature:
+                return nature
+        raise OmieToolError("A origem APEP não devolveu uma natureza válida.")
     for nature, (api_nature, api_origin, _) in ACCOUNT_ENTRY_NATURES.items():
         if origin == api_origin:
             returned_nature = diverse.get("cNatureza")
@@ -2669,7 +2681,8 @@ def current_account_entry_nature(current: Mapping[str, Any]) -> str:
                 raise OmieToolError("A origem e a natureza do lançamento são incompatíveis.")
             return nature
     raise OmieToolError(
-        "Somente lançamentos manuais diretos EXTP ou EXTR podem ser alterados ou excluídos."
+        "Somente lançamentos manuais diretos EXTP ou EXTR podem ser alterados ou excluídos; "
+        "APEP só pode ter a conta financeira atualizada."
     )
 
 
@@ -2840,7 +2853,7 @@ def prepare_account_entry_call(
                 )
             ]
         raise OmieToolError("Lançamento direto não encontrado.")
-    current_nature = current_account_entry_nature(current)
+    current_nature = current_account_entry_nature(current, allow_apep=operation == "update")
     if operation == "delete":
         if item.get("confirm_delete") is not True:
             raise OmieToolError("A exclusão exige 'confirm_delete': true.")
@@ -2859,6 +2872,13 @@ def prepare_account_entry_call(
     data = require_data(item)
     if set(data) <= {"nature"}:
         raise OmieToolError("'data' deve conter ao menos uma alteração além de 'nature'.")
+    diverse = current.get("diversos", {})
+    if (
+        isinstance(diverse, dict)
+        and diverse.get("cOrigem") == "APEP"
+        and set(data) - {"nature", "account"}
+    ):
+        raise OmieToolError("Lançamentos APEP só permitem atualização da conta financeira.")
     requested_nature = account_entry_nature(data.get("nature"))
     if requested_nature != current_nature:
         raise OmieToolError("Não é permitido converter despesa em receita ou vice-versa.")
