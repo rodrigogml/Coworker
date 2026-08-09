@@ -60,7 +60,11 @@ from interfaces.telegram.instructions import (  # noqa: E402
     InstanceInstructionsError,
     instruction_block,
 )
-from interfaces.telegram.feedback import choose_message  # noqa: E402
+from interfaces.telegram.feedback import (  # noqa: E402
+    COMPLETED_REACTION,
+    QUEUE_REACTION,
+    choose_processing_reaction,
+)
 from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
     RestartError,
     spawn_relauncher,
@@ -672,6 +676,19 @@ class Gateway:
                 self.state.set_job_response(job_id, records[0])
         return records
 
+    def _set_reaction(
+        self, chat_id: int, message_ids: tuple[int, ...], emoji: str | None
+    ) -> None:
+        """Atualiza a reação das mensagens sem interromper o trabalho se falhar."""
+        setter = getattr(self.api, "set_message_reaction", None)
+        if setter is None:
+            return
+        for message_id in dict.fromkeys(message_ids):
+            try:
+                setter(chat_id, message_id, emoji)
+            except TelegramApiError:
+                pass
+
     @staticmethod
     def _inline_keyboard(rows: list[list[tuple[str, str]]]) -> dict[str, Any]:
         return {
@@ -1275,15 +1292,10 @@ class Gateway:
                 self._progress_mode(chat_id),
             )
         )
-        self._send(
+        self._set_reaction(
             chat_id,
-            choose_message(
-                self.config.feedback.queued_messages
-                if already_busy
-                else self.config.feedback.immediate_messages
-            ),
-            reply_to_message_id=message_id,
-            telegram_message_thread_id=telegram_message_thread_id,
+            (message_id,),
+            QUEUE_REACTION if already_busy else choose_processing_reaction(),
         )
 
     def _capture_secret(
@@ -1751,14 +1763,10 @@ class Gateway:
                     )
                 buffer = AlbumBuffer(job_id)
                 self.albums[key] = buffer
-                self._send(
+                self._set_reaction(
                     inbound.chat_id,
-                    choose_message(
-                        self.config.feedback.queued_messages
-                        if already_busy
-                        else self.config.feedback.immediate_messages
-                    ),
-                    reply_to_message_id=inbound.message_ids[0],
+                    inbound.message_ids,
+                    QUEUE_REACTION if already_busy else choose_processing_reaction(),
                 )
             else:
                 with self.state_lock:
@@ -2178,6 +2186,7 @@ class Gateway:
                 return
             with self.state_lock:
                 if self.state.job_status(item.job_id) == "cancelled":
+                    self._set_reaction(item.inbound.chat_id, item.inbound.message_ids, None)
                     continue
             self._execute(item)
 
@@ -2198,6 +2207,12 @@ class Gateway:
             workspace = JobWorkspace.create(self.config.media.jobs_dir, item.job_id)
             with self.state_lock:
                 self.state.update_job(item.job_id, "running")
+            self._set_reaction(
+                inbound.chat_id,
+                inbound.message_ids,
+                choose_processing_reaction(),
+            )
+            with self.state_lock:
                 self.state.set_job_workspace(item.job_id, workspace.root)
                 if inbound.codex_thread_id:
                     thread_id = inbound.codex_thread_id
@@ -2339,12 +2354,18 @@ class Gateway:
             self._deliver_artifacts(item, delivery)
             with self.state_lock:
                 self.state.update_job(item.job_id, "completed")
+            self._set_reaction(
+                inbound.chat_id,
+                inbound.message_ids,
+                COMPLETED_REACTION,
+            )
         except CodexCancelledError as exc:
             if progress and not progress_finished:
                 progress.finish("cancelled")
                 progress_finished = True
             with self.state_lock:
                 self.state.update_job(item.job_id, "cancelled", error=str(exc))
+            self._set_reaction(inbound.chat_id, inbound.message_ids, None)
             try:
                 self._send(inbound.chat_id, "A execução foi cancelada.", update_id=inbound.update_ids[0])
             except TelegramApiError:
@@ -2355,6 +2376,7 @@ class Gateway:
                 progress_finished = True
             with self.state_lock:
                 self.state.update_job(item.job_id, "failed", error=str(exc))
+            self._set_reaction(inbound.chat_id, inbound.message_ids, None)
             try:
                 self._send(inbound.chat_id, f"Não foi possível concluir: {exc}", update_id=inbound.update_ids[0])
             except TelegramApiError:

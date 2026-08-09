@@ -350,6 +350,20 @@ class TelegramContentTests(unittest.TestCase):
             "deleteMessage", {"chat_id": 10, "message_id": 20}
         )
 
+    def test_set_message_reaction_can_set_and_remove_reaction(self) -> None:
+        api = TelegramApi("test-token", 10)
+        with patch.object(api, "call", return_value=True) as call:
+            self.assertTrue(api.set_message_reaction(10, 20, "📥"))
+            self.assertTrue(api.set_message_reaction(10, 20))
+
+        self.assertEqual(
+            [
+                ("setMessageReaction", {"chat_id": 10, "message_id": 20, "reaction": [{"type": "emoji", "emoji": "📥"}]}),
+                ("setMessageReaction", {"chat_id": 10, "message_id": 20, "reaction": []}),
+            ],
+            [(item.args[0], item.args[1]) for item in call.call_args_list],
+        )
+
     def test_filename_is_sanitized(self) -> None:
         self.assertEqual("conta_.pdf", sanitize_filename("../conta?.pdf"))
         self.assertEqual("arquivo", sanitize_filename("..."))

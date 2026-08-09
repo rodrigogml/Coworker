@@ -365,9 +365,12 @@ gateway inicia um servidor EccoVox oculto quando o endpoint ainda não estiver p
 mantém o modelo aquecido e encerra somente o processo que ele próprio iniciou.
 
 Os limites ficam em `[processors]` e `[media]` no TOML privado. A seção opcional
-`[feedback]` controla `typing_interval_seconds` e permite substituir as listas
-`immediate_messages` e `queued_messages`; sem substituição, cada estado usa 30
-variações internas. O gateway renova `typing` enquanto um trabalho estiver em execução.
+`[feedback]` controla `typing_interval_seconds`. O feedback de recebimento agora é
+feito por reações na mensagem original: uma das reações de processamento (`🫡`, `👀`,
+`🧠`, `🤔`, `💭`, `⏳`, `🔎`, `🧐`, `🤓`, `🤖`), `📥` enquanto aguarda na fila e `✅`
+quando concluído. As listas antigas `immediate_messages` e `queued_messages` continuam
+aceitas somente para compatibilidade. O gateway renova `typing` enquanto um trabalho
+estiver em execução.
 A retenção dos jobs é
 manual nesta versão: remova caixas antigas somente com o gateway parado e depois de
 confirmar que seus artefatos não são mais necessários.
