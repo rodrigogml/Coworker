@@ -397,6 +397,13 @@ Por padrão, o SQLite operacional fica em
 jobs, entradas e derivados, fica dentro de `instance/data/`. Entradas, derivados e saídas ficam em
 `data/telegram/jobs/`, com metadados, tamanho e SHA-256, e permanecem ignorados pelo Git.
 
+O logging da aplicação é configurado na seção `[logging]` de
+`data/config/telegram.toml`. O padrão grava em `data/log/coworker.log`, usa nível
+`INFO` e mantém 15 dias de arquivos rotacionados. Os níveis aceitos são `DEBUG`,
+`INFO`, `WARNING`, `ERROR` e `CRITICAL`; `enabled = false` desativa o arquivo de
+log. Eventos de reação registram somente IDs técnicos, emoji, transição e resultado
+da API, nunca o texto da mensagem ou credenciais.
+
 A autorização usa os IDs numéricos do usuário e da conversa, nunca o `@username`.
 Mensagens de grupos, usuários não autorizados e tipos desconhecidos não chegam ao
 Codex. Arquivos recebidos são tratados como conteúdo não confiável e nunca são
