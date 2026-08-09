@@ -11,8 +11,8 @@ perfil por comando tipado:
 
 ```powershell
 python scripts/integration_config.py profile set ssh `
-  --name turing --host SERVIDOR --port 22 `
-  --credential-ref Infraestrutura/Turing/SSH `
+  --name perfil_exemplo --host SERVIDOR --port 22 `
+  --credential-ref APIs/SSH `
   --attachment-name id_ed25519
 ```
 

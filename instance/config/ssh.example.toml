@@ -1,6 +1,6 @@
-default_profile = "turing"
+default_profile = "perfil_exemplo"
 
-[profiles.turing]
+[profiles.perfil_exemplo]
 host = ""
 port = 22
 credential_ref = ""

@@ -4,15 +4,15 @@ O perfil privado fica em `data/config/ssh.toml` e não deve ser versionado.
 Use `profile set`, nunca edição livre do TOML.
 
 ```powershell
-python skills/ssh/scripts/ssh.py --profile turing doctor
-python skills/ssh/scripts/ssh.py --profile turing check
+python skills/ssh/scripts/ssh.py --profile PERFIL doctor
+python skills/ssh/scripts/ssh.py --profile PERFIL check
 ```
 
 Para cadastrar uma entrada ausente, use o broker protegido do gateway Telegram:
 
 ```powershell
 python interfaces/telegram/scripts/request_credential.py `
-  --entry Infraestrutura/Turing/SSH `
+  --entry APIs/SSH `
   --prompt "Cadastrar credencial SSH" `
   --field username:"Usuário SSH" `
   --field password:Passphrase `

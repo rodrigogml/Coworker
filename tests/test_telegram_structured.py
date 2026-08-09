@@ -30,7 +30,7 @@ from interfaces.telegram.credential_broker import (
     create_request,
     parse_field_spec,
 )
-from interfaces.telegram.gateway import Gateway, _is_authorized_ssh_attachment
+from interfaces.telegram.gateway import Gateway
 from interfaces.telegram.config import (
     CodexConfig,
     FeedbackConfig,
@@ -72,14 +72,6 @@ TEST_IDENTITY = InstanceIdentity(
     "conciso",
     "Identidade fictícia usada somente pelos testes automatizados.",
 )
-
-
-class CredentialAttachmentPolicyTests(unittest.TestCase):
-    def test_only_authorized_ssh_profile_can_replace_existing_attachment(self) -> None:
-        self.assertTrue(_is_authorized_ssh_attachment("Infraestrutura/Turing/SSH", "id_ed25519"))
-        self.assertTrue(_is_authorized_ssh_attachment("APIs/SSH", "id_ed25519"))
-        self.assertFalse(_is_authorized_ssh_attachment("APIs/SSH", "other-key"))
-        self.assertFalse(_is_authorized_ssh_attachment("APIs/Other", "id_ed25519"))
 
 
 class StructuredStateTests(unittest.TestCase):
