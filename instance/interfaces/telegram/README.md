@@ -522,3 +522,12 @@ diretórios externos. Use sempre caminhos relativos à raiz `instance`.
 Apesar de referências históricas a `data/`, o perfil restrito concede escrita manual
 exclusivamente em `data/work/`. O repositório, `data/config/`, `data/secrets/` e
 diretórios externos permanecem fora da escrita.
+## Edição de arquivos e instruções privadas
+
+O sandbox do Codex autoriza `instance/data/work/`. Em comandos do runtime, o
+caminho equivalente é `data/work/`; em ferramentas de edição que usam a raiz
+Git do clone, use `instance/data/work/`. Não use `data/work/` diretamente
+nessa segunda base.
+
+Para alterar `data/config/INSTRUCTIONS.md`, use apenas
+`python scripts/instructions_config.py replace` a partir de `instance/`.

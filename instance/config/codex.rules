@@ -24,6 +24,7 @@ prefix_rule(pattern=["python", "interfaces/telegram/scripts/restart_gateway.py",
 prefix_rule(pattern=["python", "skills/bis2/scripts/bis2.py"], decision="allow")
 prefix_rule(pattern=["python", "skills/ssh/scripts/ssh.py"], decision="allow")
 prefix_rule(pattern=["python", "scripts/instructions_config.py"], decision="allow")
+prefix_rule(pattern=["python", "scripts/workspace.py", "write"], decision="allow")
 prefix_rule(pattern=["python", "skills/calendar/scripts/calendar.py"], decision="allow")
 prefix_rule(pattern=["python", "skills/cloudflare/scripts/cloudflare.py"], decision="allow")
 prefix_rule(pattern=["python", "skills/contacts/scripts/contacts.py"], decision="allow")

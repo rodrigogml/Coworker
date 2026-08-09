@@ -869,3 +869,15 @@ pastas próprias e não devem ser alterados por shell genérico.
 Apesar de referências históricas a `data/`, a raiz gravável do perfil restrito é
 exclusivamente `data/work/`. Use essa pasta para scripts, documentos, artefatos e
 arquivos importantes; as demais subpastas de `data/` são protegidas.
+## Caminhos usados pelas instâncias
+
+Comandos executados pelo runtime usam `instance/` como raiz: escreva em
+`data/work/`. Algumas ferramentas de edição do ambiente usam a raiz Git do
+clone; para elas, o mesmo destino deve ser escrito como
+`instance/data/work/`. Essa diferença evita criar acidentalmente
+`<clone>/data/` fora do runtime.
+
+`data/config/INSTRUCTIONS.md` não é editado diretamente. Use
+`python scripts/instructions_config.py replace-file --source data/work/arquivo.md`
+depois de criar o arquivo com `python scripts/workspace.py write`. Isso evita
+pipelines bloqueados e mantém a escrita privada confinada a `data/work/`.
