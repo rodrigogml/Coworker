@@ -119,6 +119,17 @@ BOT_COMMANDS = (
 REDACTED_SECRET = "[Censurado por segurança]"
 SETTINGS_PANEL_TTL_SECONDS = 15 * 60
 MAX_SSH_KEY_SIZE = 128 * 1024
+SSH_ATTACHMENT_ENTRIES = frozenset({
+    "infraestrutura/turing/ssh",
+    "apis/ssh",
+})
+
+
+def _is_authorized_ssh_attachment(entry: str, attachment_name: str | None) -> bool:
+    return (
+        str(entry or "").strip().casefold() in SSH_ATTACHMENT_ENTRIES
+        and str(attachment_name or "").strip().casefold() == "id_ed25519"
+    )
 
 SECRET_SERVICE_ENTRIES = {
     "cloudflare": "APIs/Cloudflare",
@@ -1479,7 +1490,9 @@ class Gateway:
                     capture.attachment_data,
                     username=capture.values.get("username", ""),
                     password=capture.values.get("password", ""),
-                    replace_existing=bool(capture.request.attachment_name),
+                    replace_existing=_is_authorized_ssh_attachment(
+                        capture.request.entry, capture.request.attachment_name
+                    ),
                 )
             elif set(capture.values) == {"username", "password"}:
                 write_entry_credentials(
@@ -1535,7 +1548,9 @@ class Gateway:
             )
             capture.attachment_name = downloaded.original_name or downloaded.path.name
             capture.attachment_data = downloaded.path.read_bytes()
-            if capture.request.attachment_name == "id_ed25519":
+            if _is_authorized_ssh_attachment(
+                capture.request.entry, capture.request.attachment_name
+            ):
                 validate_ssh_attachment(capture.attachment_name, capture.attachment_data)
             capture.received.add("attachment")
             deleted = self.api.delete_message(chat_id, message_id)
@@ -1552,7 +1567,9 @@ class Gateway:
                 capture.attachment_data,
                 username=capture.values.get("username", ""),
                 password=capture.values.get("password", ""),
-                replace_existing=bool(capture.request.attachment_name),
+                replace_existing=_is_authorized_ssh_attachment(
+                    capture.request.entry, capture.request.attachment_name
+                ),
             )
             self._finish_credential_capture(capture, ok=True)
             self._send(chat_id, "Credencial armazenada com segurança. A execução continuará.")
