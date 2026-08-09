@@ -955,8 +955,8 @@ class GatewayContextTests(unittest.TestCase):
 
         self.assertEqual(10, reactions[0][0])
         self.assertEqual(20, reactions[0][1])
-        self.assertIn(reactions[0][2], {"🫡", "👀", "🧠", "🤔", "💭", "⏳", "🔎", "🧐", "🤓", "🤖"})
-        self.assertEqual((10, 21, "📥"), reactions[1])
+        self.assertIn(reactions[0][2], {"🫡", "👀", "🤔", "🤓"})
+        self.assertEqual((10, 21, "🆒"), reactions[1])
 
     def test_progress_mode_is_snapshotted_when_request_enters_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

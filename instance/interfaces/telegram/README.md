@@ -367,7 +367,7 @@ mantém o modelo aquecido e encerra somente o processo que ele próprio iniciou.
 Os limites ficam em `[processors]` e `[media]` no TOML privado. A seção opcional
 `[feedback]` controla `typing_interval_seconds`. O feedback de recebimento agora é
 feito por reações na mensagem original: uma das reações de processamento (`🫡`, `👀`,
-`🧠`, `🤔`, `💭`, `⏳`, `🔎`, `🧐`, `🤓`, `🤖`), `📥` enquanto aguarda na fila e `✅`
+`🤔`, `🤓`), `🆒` enquanto aguarda na fila e `💯`
 quando concluído. As listas antigas `immediate_messages` e `queued_messages` continuam
 aceitas somente para compatibilidade. O gateway renova `typing` enquanto um trabalho
 estiver em execução.

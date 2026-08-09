@@ -86,8 +86,8 @@ terms = []
 aliases = []
 minimum_confidence = 0.55
 
-# O andamento é indicado por reações na mensagem original: processamento, 📥 na fila
-# e ✅ ao concluir. As listas de mensagens antigas continuam aceitas para compatibilidade.
+# O andamento é indicado por reações na mensagem original: processamento, 🆒 na fila
+# e 💯 ao concluir. As listas de mensagens antigas continuam aceitas para compatibilidade.
 # Para personalizá-las, defina aqui `immediate_messages = [...]` e/ou
 # `queued_messages = [...]`.
 [feedback]

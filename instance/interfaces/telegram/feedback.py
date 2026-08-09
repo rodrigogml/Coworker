@@ -71,9 +71,11 @@ QUEUED_MESSAGES = (
     "Na fila, mas não esquecida.",
 )
 
-PROCESSING_REACTIONS = ("🫡", "👀", "🧠", "🤔", "💭", "⏳", "🔎", "🧐", "🤓", "🤖")
-QUEUE_REACTION = "📥"
-COMPLETED_REACTION = "✅"
+# O Bot API aceita somente um conjunto específico de reações para bots.
+# Mantenha esta coleção restrita às reações normais documentadas pelo Telegram.
+PROCESSING_REACTIONS = ("🫡", "👀", "🤔", "🤓")
+QUEUE_REACTION = "🆒"
+COMPLETED_REACTION = "💯"
 
 
 def choose_message(messages: tuple[str, ...]) -> str:
