@@ -25,10 +25,11 @@ INTEGRATIONS = {
     "google": "google",
     "notion": "notion",
     "omie": "omie",
+    "mysql": "mysql",
     "ssh": "ssh",
     "todoist": "todoist",
 }
-PROFILE_INTEGRATIONS = {"bis2", "ssh"}
+PROFILE_INTEGRATIONS = {"bis2", "ssh", "mysql"}
 PROFILE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
 
@@ -176,6 +177,58 @@ def _private_config(integration: str, project_root: Path) -> Path:
     return destination
 
 
+def configure_mysql(
+    *, enabled: bool, executable: str, project_root: Path = PROJECT_ROOT
+) -> dict[str, Any]:
+    """Atualiza somente o estado da skill e o executável mysql.exe."""
+    destination = _private_config("mysql", project_root)
+    value = str(executable or "").strip()
+    if enabled and not value:
+        raise IntegrationConfigError("Informe o caminho do mysql.exe ao habilitar a skill MySQL.")
+    if value and any(char in value for char in "\r\n\0"):
+        raise IntegrationConfigError("O caminho do mysql.exe é inválido.")
+    if value and Path(value).name.lower() != "mysql.exe":
+        raise IntegrationConfigError("O executável informado deve ser mysql.exe.")
+    try:
+        original = destination.read_bytes()
+        values = tomllib.loads(original.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise IntegrationConfigError("A configuração privada do MySQL é inválida.") from exc
+    values["enabled"] = bool(enabled)
+    values["mysql_executable"] = value
+    lines = original.decode("utf-8").splitlines()
+    lines = [line for line in lines if not line.startswith("enabled =") and not line.startswith("mysql_executable =")]
+    header = [f"enabled = {'true' if enabled else 'false'}", f"mysql_executable = {json.dumps(value)}"]
+    updated = "\n".join(header + lines).rstrip() + "\n"
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(updated, encoding="utf-8", newline="\n")
+        if destination.read_bytes() != original:
+            raise IntegrationConfigError("A configuração mudou durante a operação; tente novamente.")
+        temporary.replace(destination)
+    except IntegrationConfigError:
+        temporary.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise IntegrationConfigError("Não foi possível salvar a configuração MySQL.") from exc
+    return {"ok": True, "integration": "mysql", "enabled": bool(enabled), "mysql_executable": value,
+            "path": "data/config/mysql.toml"}
+
+
+def _ensure_mysql_ready(project_root: Path) -> None:
+    destination = _private_config("mysql", project_root)
+    try:
+        values = tomllib.loads(destination.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise IntegrationConfigError("A configuração privada do MySQL é inválida.") from exc
+    if values.get("enabled") is not True:
+        raise IntegrationConfigError("Habilite a skill MySQL antes de configurar perfis.")
+    executable = str(values.get("mysql_executable", "")).strip()
+    if not executable:
+        raise IntegrationConfigError("Informe o executável mysql.exe antes de configurar perfis.")
+
+
 def list_profiles(integration: str, *, project_root: Path = PROJECT_ROOT) -> dict[str, Any]:
     """Lista perfis não confidenciais da integração privada."""
     if integration not in PROFILE_INTEGRATIONS:
@@ -199,6 +252,12 @@ def list_profiles(integration: str, *, project_root: Path = PROJECT_ROOT) -> dic
                 "credential_ref": str(profile.get("credential_ref", "")),
                 **({"attachment_name": str(profile.get("attachment_name", ""))}
                    if integration == "ssh" else {}),
+                **({"database": str(profile.get("database", "")),
+                    "credential_mode": str(profile.get("credential_mode", "password")),
+                    "ssl_mode": str(profile.get("ssl_mode", "preferred")),
+                    "connect_timeout": int(profile.get("connect_timeout", 15)),
+                    "attachment_name": str(profile.get("attachment_name", ""))}
+                   if integration == "mysql" else {}),
             }
             for name, profile in profiles.items()
             if isinstance(profile, dict)
@@ -214,12 +273,18 @@ def add_profile(
     port: int,
     credential_ref: str,
     attachment_name: str | None = None,
+    database: str | None = None,
+    credential_mode: str = "password",
+    ssl_mode: str = "preferred",
+    connect_timeout: int = 15,
     *,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Any]:
     """Adiciona um perfil tipado sem aceitar TOML ou JSON arbitrário."""
     if integration not in PROFILE_INTEGRATIONS:
         raise IntegrationConfigError(f"Gerenciamento de perfis ainda não está disponível para {integration}.")
+    if integration == "mysql":
+        _ensure_mysql_ready(project_root)
     profile_name = _validate_profile_name(name)
     profile_host = _validate_profile_host(host)
     profile_port = _validate_profile_port(port)
@@ -227,6 +292,11 @@ def add_profile(
     attachment = str(attachment_name or "").strip()
     if integration == "ssh" and attachment and any(char in attachment for char in "\\/\r\n\0"):
         raise IntegrationConfigError("O nome do anexo SSH é inválido.")
+    if integration == "mysql":
+        if credential_mode not in {"password", "certificate"}:
+            raise IntegrationConfigError("credential_mode MySQL deve ser password ou certificate.")
+        if int(connect_timeout) <= 0:
+            raise IntegrationConfigError("connect_timeout deve ser positivo.")
     destination = _private_config(integration, project_root)
     try:
         original = destination.read_bytes()
@@ -246,6 +316,8 @@ def add_profile(
     )
     if integration == "ssh":
         section += f"attachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
+    if integration == "mysql":
+        section += f"database = {json.dumps(str(database or '').strip(), ensure_ascii=False)}\ncredential_mode = {json.dumps(credential_mode)}\nssl_mode = {json.dumps(ssl_mode)}\nconnect_timeout = {int(connect_timeout)}\nattachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
     updated = original.decode("utf-8")
     if not updated.endswith("\n"):
         updated += "\n"
@@ -278,6 +350,10 @@ def set_profile(
     port: int,
     credential_ref: str,
     attachment_name: str | None = None,
+    database: str | None = None,
+    credential_mode: str = "password",
+    ssl_mode: str = "preferred",
+    connect_timeout: int = 15,
     *,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Any]:
@@ -286,6 +362,8 @@ def set_profile(
         raise IntegrationConfigError(
             f"Gerenciamento de perfis ainda não está disponível para {integration}."
         )
+    if integration == "mysql":
+        _ensure_mysql_ready(project_root)
     profile_name = _validate_profile_name(name)
     profile_host = _validate_profile_host(host)
     profile_port = _validate_profile_port(port)
@@ -293,6 +371,11 @@ def set_profile(
     attachment = str(attachment_name or "").strip()
     if integration == "ssh" and attachment and any(char in attachment for char in "\\/\r\n\0"):
         raise IntegrationConfigError("O nome do anexo SSH é inválido.")
+    if integration == "mysql":
+        if credential_mode not in {"password", "certificate"}:
+            raise IntegrationConfigError("credential_mode MySQL deve ser password ou certificate.")
+        if int(connect_timeout) <= 0:
+            raise IntegrationConfigError("connect_timeout deve ser positivo.")
     destination = _private_config(integration, project_root)
     try:
         original = destination.read_bytes()
@@ -310,6 +393,8 @@ def set_profile(
     )
     if integration == "ssh":
         section += f"attachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
+    if integration == "mysql":
+        section += f"database = {json.dumps(str(database or '').strip(), ensure_ascii=False)}\ncredential_mode = {json.dumps(credential_mode)}\nssl_mode = {json.dumps(ssl_mode)}\nconnect_timeout = {int(connect_timeout)}\nattachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
     pattern = re.compile(
         rf"(?ms)^\[profiles\.{re.escape(profile_name)}\]\r?\n.*?(?=^\[|\Z)"
     )
@@ -379,6 +464,10 @@ def build_parser() -> argparse.ArgumentParser:
     profile_add.add_argument("--port", required=True, type=int)
     profile_add.add_argument("--credential-ref", required=True)
     profile_add.add_argument("--attachment-name", default="")
+    profile_add.add_argument("--database", default="")
+    profile_add.add_argument("--credential-mode", choices=("password", "certificate"), default="password")
+    profile_add.add_argument("--ssl-mode", default="preferred")
+    profile_add.add_argument("--connect-timeout", type=int, default=15)
     profile_set = profile_commands.add_parser("set", help="Cria ou atualiza um perfil tipado.")
     profile_set.add_argument("integration", choices=tuple(sorted(PROFILE_INTEGRATIONS)))
     profile_set.add_argument("--name", required=True)
@@ -386,6 +475,14 @@ def build_parser() -> argparse.ArgumentParser:
     profile_set.add_argument("--port", required=True, type=int)
     profile_set.add_argument("--credential-ref", required=True)
     profile_set.add_argument("--attachment-name", default="")
+    profile_set.add_argument("--database", default="")
+    profile_set.add_argument("--credential-mode", choices=("password", "certificate"), default="password")
+    profile_set.add_argument("--ssl-mode", default="preferred")
+    profile_set.add_argument("--connect-timeout", type=int, default=15)
+    configure = commands.add_parser("configure", help="Configura o executável e habilitação do MySQL.")
+    configure.add_argument("integration", choices=("mysql",))
+    configure.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None, required=True)
+    configure.add_argument("--executable", required=True)
     return parser
 
 
@@ -404,6 +501,8 @@ def main() -> int:
             result = list_integrations()
         elif args.command == "init":
             result = initialize_integration(args.integration)
+        elif args.command == "configure":
+            result = configure_mysql(enabled=args.enabled, executable=args.executable)
         elif args.profile_command == "list":
             result = list_profiles(args.integration)
         elif args.profile_command == "add":
@@ -414,6 +513,7 @@ def main() -> int:
                 args.port,
                 args.credential_ref,
                 args.attachment_name,
+                args.database, args.credential_mode, args.ssl_mode, args.connect_timeout,
             )
         else:
             result = set_profile(
@@ -423,6 +523,7 @@ def main() -> int:
                 args.port,
                 args.credential_ref,
                 args.attachment_name,
+                args.database, args.credential_mode, args.ssl_mode, args.connect_timeout,
             )
     except (IntegrationConfigError, OSError) as exc:
         print_json(
