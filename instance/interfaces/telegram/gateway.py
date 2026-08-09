@@ -679,15 +679,29 @@ class Gateway:
     def _set_reaction(
         self, chat_id: int, message_ids: tuple[int, ...], emoji: str | None
     ) -> None:
-        """Atualiza a reação das mensagens sem interromper o trabalho se falhar."""
+        """Atualiza a reação de referência sem interromper o trabalho se falhar."""
         setter = getattr(self.api, "set_message_reaction", None)
         if setter is None:
             return
-        for message_id in dict.fromkeys(message_ids):
-            try:
-                setter(chat_id, message_id, emoji)
-            except TelegramApiError:
-                pass
+        if not message_ids:
+            return
+        # O Bot API aplica a reação de um media group à primeira mensagem não
+        # excluída. Usar uma única referência também evita chamadas concorrentes.
+        message_id = message_ids[0]
+        try:
+            setter(chat_id, message_id, emoji)
+        except TelegramApiError as exc:
+            print_json(
+                {
+                    "ok": False,
+                    "warning": "Falha ao atualizar reação Telegram",
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reaction": emoji,
+                    "error": str(exc)[:300],
+                },
+                stream=sys.stderr,
+            )
 
     @staticmethod
     def _inline_keyboard(rows: list[list[tuple[str, str]]]) -> dict[str, Any]:
@@ -1282,6 +1296,11 @@ class Gateway:
                 update_id, chat_id, request_message_id=message_record_id
             )
             self.state.finish_update(update_id, "queued")
+        self._set_reaction(
+            chat_id,
+            (message_id,),
+            QUEUE_REACTION if already_busy else choose_processing_reaction(),
+        )
         self.work.put(
             WorkItem(
                 job_id,
@@ -1291,11 +1310,6 @@ class Gateway:
                 self._codex_options(chat_id),
                 self._progress_mode(chat_id),
             )
-        )
-        self._set_reaction(
-            chat_id,
-            (message_id,),
-            QUEUE_REACTION if already_busy else choose_processing_reaction(),
         )
 
     def _capture_secret(
@@ -2185,9 +2199,10 @@ class Gateway:
             if item is None:
                 return
             with self.state_lock:
-                if self.state.job_status(item.job_id) == "cancelled":
-                    self._set_reaction(item.inbound.chat_id, item.inbound.message_ids, None)
-                    continue
+                cancelled = self.state.job_status(item.job_id) == "cancelled"
+            if cancelled:
+                self._set_reaction(item.inbound.chat_id, item.inbound.message_ids, None)
+                continue
             self._execute(item)
 
     def _execute(self, item: WorkItem) -> None:
