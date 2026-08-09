@@ -93,6 +93,7 @@ from scripts.credential_vault import (  # noqa: E402
     VaultToolError,
     read_entry_secret,
     validate_entry_path,
+    write_entry_attachment,
     write_entry_credentials,
     write_entry_secret,
 )
@@ -117,6 +118,7 @@ BOT_COMMANDS = (
 
 REDACTED_SECRET = "[Censurado por segurança]"
 SETTINGS_PANEL_TTL_SECONDS = 15 * 60
+MAX_SSH_KEY_SIZE = 128 * 1024
 
 SECRET_SERVICE_ENTRIES = {
     "cloudflare": "APIs/Cloudflare",
@@ -154,6 +156,24 @@ class AlbumBuffer:
 class CredentialCapture:
     request: CredentialRequest
     values: dict[str, str] = field(default_factory=dict)
+    received: set[str] = field(default_factory=set)
+    attachment_name: str | None = None
+    attachment_data: bytes = b""
+
+
+def validate_ssh_attachment(filename: str, data: bytes) -> None:
+    """Valida a forma básica da chave sem materializar ou devolver seu conteúdo."""
+    if not filename or filename.casefold().endswith(".pub"):
+        raise VaultToolError("Envie a chave privada SSH, não o arquivo .pub.")
+    if not data or len(data) > MAX_SSH_KEY_SIZE or b"\0" in data:
+        raise VaultToolError("A chave SSH está vazia, excede o limite ou é inválida.")
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise VaultToolError("A chave SSH deve estar em formato textual suportado.") from exc
+    headers = ("OPENSSH PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "DSA PRIVATE KEY")
+    if not any(f"-----BEGIN {header}-----" in text for header in headers):
+        raise VaultToolError("O arquivo não contém uma chave privada SSH.")
 
 
 def print_json(value: Any, *, stream: Any = sys.stdout) -> None:
@@ -338,6 +358,10 @@ class Gateway:
         self.credential_lock = threading.RLock()
         self.credential_captures: dict[int, CredentialCapture] = {}
         self.credential_requests_seen: set[str] = set()
+        # The request JSON is durable; these sets coordinate delivery and
+        # retries only for the current gateway process.
+        self.credential_requests_inflight: set[str] = set()
+        self.credential_request_retry_at: dict[str, float] = {}
         self.bot_username: str | None = None
         self.scheduler = TaskScheduler(self.scheduler_store, config.project_root, self._run_scheduled_task)
 
@@ -521,11 +545,15 @@ class Gateway:
         self.credential_broker.start()
         self.scheduler.start()
         offset: int | None = None
+        # Mantém a parada cooperativa abaixo do timeout típico do SCM. O
+        # long-polling normal continua configurável, mas não pode segurar o
+        # processo por quase um minuto depois de um pedido de parada.
+        poll_timeout = min(self.config.poll_timeout_seconds, 15)
         while (
             not self.stop_event.is_set() and not self.restart_event.is_set()
         ):
             try:
-                updates = self.api.get_updates(offset, self.config.poll_timeout_seconds)
+                updates = self.api.get_updates(offset, poll_timeout)
                 for update in updates:
                     update_id = int(update.get("update_id", -1))
                     if update_id < 0:
@@ -1289,8 +1317,15 @@ class Gateway:
         while not self.stop_event.wait(0.25):
             try:
                 self._scan_credential_requests()
-            except (OSError, CredentialBrokerError, TelegramApiError):
-                continue
+            except (OSError, CredentialBrokerError, TelegramApiError) as exc:
+                print_json(
+                    {
+                        "ok": False,
+                        "warning": "broker de credenciais aguardará nova tentativa",
+                        "error_type": type(exc).__name__,
+                    },
+                    stream=sys.stderr,
+                )
 
     def _scan_credential_requests(self) -> None:
         for path in self.config.media.jobs_dir.glob(f"*/{REQUEST_FILENAME}"):
@@ -1301,7 +1336,13 @@ class Gateway:
             with self.credential_lock:
                 if request.request_id in self.credential_requests_seen:
                     continue
-                self.credential_requests_seen.add(request.request_id)
+                if request.request_id in self.credential_requests_inflight:
+                    continue
+                if time.monotonic() < self.credential_request_retry_at.get(
+                    request.request_id, 0
+                ):
+                    continue
+                self.credential_requests_inflight.add(request.request_id)
             with self.state_lock:
                 accepted = self.state.job_accepts_credential_request(
                     request.job_id, request.chat_id
@@ -1312,9 +1353,11 @@ class Gateway:
                     ok=False,
                     error="O trabalho não está ativo ou autorizado.",
                 )
+                self._mark_credential_request_done(request.request_id)
                 continue
             if time.time() >= request.expires_at:
                 write_response(request, ok=False, error="A captura protegida expirou.")
+                self._mark_credential_request_done(request.request_id)
                 continue
             with self.credential_lock:
                 if request.chat_id in self.credential_captures:
@@ -1323,6 +1366,7 @@ class Gateway:
                         ok=False,
                         error="Já existe uma captura protegida ativa nesta conversa.",
                     )
+                    self._mark_credential_request_done(request.request_id)
                     continue
                 capture = CredentialCapture(request)
                 self.credential_captures[request.chat_id] = capture
@@ -1334,12 +1378,31 @@ class Gateway:
                     f"Envie agora: {first.label}. A resposta não será repassada ao "
                     f"{self.config.identity.display_name}. Use /cancel para desistir.",
                 )
-            except TelegramApiError:
-                self._finish_credential_capture(
-                    capture,
-                    ok=False,
-                    error="Não foi possível solicitar o campo protegido pelo Telegram.",
+            except TelegramApiError as exc:
+                # Keep the request pending. A transient Telegram failure must
+                # never become a terminal response before the user sees it.
+                with self.credential_lock:
+                    self.credential_captures.pop(request.chat_id, None)
+                    self.credential_requests_inflight.discard(request.request_id)
+                    self.credential_request_retry_at[request.request_id] = (
+                        time.monotonic() + 2.0
+                    )
+                print_json(
+                    {
+                        "ok": False,
+                        "warning": "solicitação de credencial não entregue; nova tentativa agendada",
+                        "error_type": type(exc).__name__,
+                    },
+                    stream=sys.stderr,
                 )
+                continue
+            self._mark_credential_request_done(request.request_id)
+
+    def _mark_credential_request_done(self, request_id: str) -> None:
+        with self.credential_lock:
+            self.credential_requests_inflight.discard(request_id)
+            self.credential_request_retry_at.pop(request_id, None)
+            self.credential_requests_seen.add(request_id)
 
     def _capture_credential_value(
         self,
@@ -1350,21 +1413,32 @@ class Gateway:
         attachments: list[Attachment],
         capture: CredentialCapture,
     ) -> None:
-        if not value or attachments:
+        field_index = len(capture.received)
+        field = capture.request.fields[field_index]
+        if field.name == "attachment":
+            self._capture_credential_attachment(
+                update_id, chat_id, message_id, attachments, capture
+            )
+            return
+        if field.name == "password" and value.casefold() == "/skip" and not attachments:
+            value = ""
+        if (not value and field.name != "password") or attachments:
             self._send(
                 chat_id,
-                "A captura aceita somente uma mensagem de texto. Use /cancel para desistir.",
+                "A captura aceita uma mensagem de texto. Para passphrase vazia, use /skip. Use /cancel para desistir.",
                 update_id=update_id,
             )
             with self.state_lock:
                 self.state.finish_update(update_id, "invalid")
             return
-        field_index = len(capture.values)
-        field = capture.request.fields[field_index]
         capture.values[field.name] = value
+        capture.received.add(field.name)
         deleted = False
         try:
-            deleted = self.api.delete_message(chat_id, message_id)
+            try:
+                deleted = self.api.delete_message(chat_id, message_id)
+            except TelegramApiError:
+                deleted = False
         except TelegramApiError:
             deleted = False
         with self.state_lock:
@@ -1378,15 +1452,24 @@ class Gateway:
                 content_type="credential",
             )
             self.state.finish_update(update_id, "secured")
-        if len(capture.values) < len(capture.request.fields):
-            next_field = capture.request.fields[len(capture.values)]
+        if len(capture.received) < len(capture.request.fields):
+            next_field = capture.request.fields[len(capture.received)]
             deletion = " A mensagem anterior foi removida." if deleted else (
                 " Não consegui apagar a mensagem anterior; remova-a manualmente."
             )
             self._send(chat_id, f"Agora envie: {next_field.label}.{deletion}")
             return
         try:
-            if set(capture.values) == {"username", "password"}:
+            if "attachment" in capture.received:
+                write_entry_attachment(
+                    capture.request.entry,
+                    capture.request.attachment_name or capture.attachment_name or "attachment",
+                    capture.attachment_data,
+                    username=capture.values.get("username", ""),
+                    password=capture.values.get("password", ""),
+                    replace_existing=bool(capture.request.attachment_name),
+                )
+            elif set(capture.values) == {"username", "password"}:
                 write_entry_credentials(
                     capture.request.entry,
                     capture.values["username"],
@@ -1397,11 +1480,11 @@ class Gateway:
                     capture.request.entry,
                     capture.values["password"],
                 )
-        except VaultToolError:
+        except VaultToolError as exc:
             self._finish_credential_capture(
                 capture,
                 ok=False,
-                error="Não foi possível salvar a credencial no cofre.",
+                error=str(exc),
             )
             self._send(
                 chat_id,
@@ -1416,6 +1499,60 @@ class Gateway:
             chat_id,
             f"Credencial armazenada com segurança. {deletion} A execução continuará.",
         )
+
+    def _capture_credential_attachment(
+        self,
+        update_id: int,
+        chat_id: int,
+        message_id: int,
+        attachments: list[Attachment],
+        capture: CredentialCapture,
+    ) -> None:
+        if len(attachments) != 1 or attachments[0].logical_type != "document":
+            self._send(chat_id, "Envie exatamente um arquivo como documento. Use /cancel para desistir.", update_id=update_id)
+            with self.state_lock:
+                self.state.finish_update(update_id, "invalid")
+            return
+        downloaded: DownloadedFile | None = None
+        try:
+            attachment = attachments[0]
+            downloaded = self.api.download(
+                attachment.file_id, attachment.original_name, attachment.declared_mime,
+                self.config.media.jobs_dir / ".credential-captures", update_id,
+                self.config.media.max_download_bytes, attachment.file_unique_id,
+            )
+            capture.attachment_name = downloaded.original_name or downloaded.path.name
+            capture.attachment_data = downloaded.path.read_bytes()
+            if capture.request.attachment_name == "id_ed25519":
+                validate_ssh_attachment(capture.attachment_name, capture.attachment_data)
+            capture.received.add("attachment")
+            deleted = self.api.delete_message(chat_id, message_id)
+            with self.state_lock:
+                self.state.record_message(update_id, chat_id, message_id, "in", REDACTED_SECRET, "secured", content_type="credential-attachment")
+                self.state.finish_update(update_id, "secured")
+            if len(capture.received) < len(capture.request.fields):
+                next_field = capture.request.fields[len(capture.received)]
+                self._send(chat_id, f"Agora envie: {next_field.label}." + (" A mensagem anterior foi removida." if deleted else ""))
+                return
+            write_entry_attachment(
+                capture.request.entry,
+                capture.request.attachment_name or capture.attachment_name,
+                capture.attachment_data,
+                username=capture.values.get("username", ""),
+                password=capture.values.get("password", ""),
+                replace_existing=bool(capture.request.attachment_name),
+            )
+            self._finish_credential_capture(capture, ok=True)
+            self._send(chat_id, "Credencial armazenada com segurança. A execução continuará.")
+        except VaultToolError as exc:
+            self._finish_credential_capture(capture, ok=False, error=str(exc))
+            self._send(chat_id, "Não foi possível salvar o anexo. Nenhum valor foi enviado ao Codex.")
+        except (TelegramApiError, OSError):
+            self._finish_credential_capture(capture, ok=False, error="Falha ao receber ou validar o anexo.")
+        finally:
+            if downloaded is not None:
+                downloaded.path.unlink(missing_ok=True)
+            capture.attachment_data = b""
 
     def _finish_credential_capture(
         self,
@@ -1440,6 +1577,9 @@ class Gateway:
             for name in list(capture.values):
                 capture.values[name] = ""
             capture.values.clear()
+            capture.received.clear()
+            capture.attachment_name = None
+            capture.attachment_data = b""
 
     def _cancel_all_credential_requests(self, reason: str) -> None:
         with self.credential_lock:

@@ -15,7 +15,7 @@ from scripts.credential_vault import VaultToolError, validate_entry_path
 
 REQUEST_FILENAME = "credential-request.json"
 RESPONSE_FILENAME = "credential-response.json"
-ALLOWED_FIELDS = frozenset({"username", "password"})
+ALLOWED_FIELDS = frozenset({"username", "password", "attachment"})
 
 
 class CredentialBrokerError(RuntimeError):
@@ -36,6 +36,7 @@ class CredentialRequest:
     entry: str
     prompt: str
     fields: tuple[CredentialField, ...]
+    attachment_name: str | None
     request_path: Path
     response_path: Path
     expires_at: float
@@ -45,7 +46,7 @@ def parse_field_spec(value: str) -> CredentialField:
     name, separator, raw_label = value.partition(":")
     normalized = name.strip().lower()
     if normalized not in ALLOWED_FIELDS:
-        raise CredentialBrokerError("Campo deve ser username ou password.")
+        raise CredentialBrokerError("Campo deve ser username, password ou attachment.")
     label = raw_label.strip() if separator else normalized.title()
     if not label or len(label) > 80 or any(char in label for char in "\r\n\0"):
         raise CredentialBrokerError("Rótulo de campo inválido.")
@@ -53,8 +54,8 @@ def parse_field_spec(value: str) -> CredentialField:
 
 
 def validate_fields(fields: list[CredentialField]) -> tuple[CredentialField, ...]:
-    if not 1 <= len(fields) <= 2:
-        raise CredentialBrokerError("Informe um ou dois campos protegidos.")
+    if not 1 <= len(fields) <= 3:
+        raise CredentialBrokerError("Informe de um a três campos protegidos.")
     names = [field.name for field in fields]
     if any(
         not field.label
@@ -65,10 +66,12 @@ def validate_fields(fields: list[CredentialField]) -> tuple[CredentialField, ...
         raise CredentialBrokerError("Rótulo de campo inválido.")
     if len(set(names)) != len(names):
         raise CredentialBrokerError("Campos protegidos não podem ser repetidos.")
-    if len(fields) == 2 and set(names) != ALLOWED_FIELDS:
-        raise CredentialBrokerError("A captura dupla exige username e password.")
-    if len(fields) == 1 and names[0] != "password":
-        raise CredentialBrokerError("A captura simples exige o campo password.")
+    if "attachment" in names and names.count("attachment") != 1:
+        raise CredentialBrokerError("A captura aceita somente um anexo.")
+    if set(names) - {"username", "password", "attachment"}:
+        raise CredentialBrokerError("Há um campo protegido desconhecido.")
+    if "username" in names and "password" not in names and "attachment" not in names:
+        raise CredentialBrokerError("username exige password ou attachment.")
     return tuple(fields)
 
 
@@ -104,6 +107,7 @@ def create_request(
     prompt: str,
     fields: list[CredentialField],
     timeout_seconds: int,
+    attachment_name: str | None = None,
 ) -> CredentialRequest:
     job_root, job_id, chat_id = job_context_from_environment()
     try:
@@ -114,6 +118,14 @@ def create_request(
     if not normalized_prompt or len(normalized_prompt) > 500:
         raise CredentialBrokerError("A explicação da credencial é inválida.")
     normalized_fields = validate_fields(fields)
+    normalized_attachment_name = str(attachment_name or "").strip() or None
+    if normalized_attachment_name and (
+        len(normalized_attachment_name) > 255
+        or any(char in normalized_attachment_name for char in "\\/\r\n\0")
+    ):
+        raise CredentialBrokerError("Nome de anexo invalido.")
+    if normalized_attachment_name and "attachment" not in {field.name for field in normalized_fields}:
+        raise CredentialBrokerError("Nome de anexo exige o campo attachment.")
     request_path = job_root / REQUEST_FILENAME
     response_path = job_root / RESPONSE_FILENAME
     if request_path.exists() or response_path.exists():
@@ -127,6 +139,7 @@ def create_request(
         normalized_entry,
         normalized_prompt,
         normalized_fields,
+        normalized_attachment_name,
         request_path,
         response_path,
         expires_at,
@@ -141,6 +154,7 @@ def create_request(
             "entry": normalized_entry,
             "prompt": normalized_prompt,
             "fields": [field.__dict__ for field in normalized_fields],
+            "attachment_name": normalized_attachment_name,
             "expires_at": expires_at,
         },
     )
@@ -172,11 +186,14 @@ def load_request(path: Path, jobs_dir: Path) -> CredentialRequest:
             entry,
             str(value["prompt"]).strip(),
             fields,
+            str(value.get("attachment_name") or "").strip() or None,
             resolved,
             job_root / RESPONSE_FILENAME,
             float(value["expires_at"]),
         )
         if request.job_id != int(job_root.name) or not request.prompt:
+            raise ValueError
+        if request.attachment_name and "attachment" not in {field.name for field in request.fields}:
             raise ValueError
         return request
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError, VaultToolError) as exc:

@@ -254,7 +254,8 @@ pode ser substituída pelo `dry-run`.
 
 ## Transferências entre contas
 
-Usar `transfers list|show|create|update|delete`. A inclusão gera um único
+Usar `transfers list|show|create|update|delete`. A inclusão exige uma categoria de
+transferência ativa e gera um único
 `IncluirLancCC` de tipo `TRA`:
 
 ```json

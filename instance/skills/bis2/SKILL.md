@@ -1,6 +1,6 @@
 ---
 name: bis2
-description: Acessar servidores BIS2 por meio do executável BISCMD configurado localmente, incluindo validação de fachada EJB, consultas fiscais NFC-e, download de XML, revalidação de documento fiscal, envio de contingência offline, inutilização de numeração e atualização de status operacional. Use quando a tarefa mencionar BIS2, BISCMD, WildFly remoto do BIS, NFC-e no BIS ou operações fiscais disponíveis no BISCMD.
+description: Acessar servidores BIS2 por meio do executável BISCMD configurado localmente, incluindo validação de fachada EJB, consultas fiscais NFC-e, catálogo de itens, download de XML, revalidação de documento fiscal, envio de contingência offline, inutilização de numeração e atualização de status operacional. Use quando a tarefa mencionar BIS2, BISCMD, WildFly remoto do BIS, NFC-e, itens do cadastro ou operações fiscais disponíveis no BISCMD.
 ---
 
 # Operar BIS2 via BISCMD
@@ -45,6 +45,11 @@ python skills/bis2/scripts/bis2.py --profile example doctor
 Consultas podem ser executadas dentro do escopo solicitado. Escritas exigem
 autorização explícita e atual da pessoa usuária, incluindo confirmação dos alvos
 operacionais.
+
+As consultas NFC-e aceitam exatamente todos os valores de
+`DocFiscalVO.DocFiscalStatus` do BIS2: `SELLING`, `STORED`, `SOLD`, `CANCELLING`,
+`CANCELED`, `ERROR`, `ERROR_SYNC`, `VOID`, `SEFAZVALIDATING`, `SEFAZPROBLEM` e
+`SEFAZOFFLINE`. `SEFAZERROR` não existe nessa enumeração.
 
 Nunca chamar o JAR diretamente quando houver credenciais envolvidas. Não imprimir,
 copiar ou persistir usuário/senha fora do cofre.

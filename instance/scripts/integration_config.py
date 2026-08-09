@@ -25,9 +25,10 @@ INTEGRATIONS = {
     "google": "google",
     "notion": "notion",
     "omie": "omie",
+    "ssh": "ssh",
     "todoist": "todoist",
 }
-PROFILE_INTEGRATIONS = {"bis2"}
+PROFILE_INTEGRATIONS = {"bis2", "ssh"}
 PROFILE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
 
@@ -196,6 +197,8 @@ def list_profiles(integration: str, *, project_root: Path = PROJECT_ROOT) -> dic
                 "host": str(profile.get("host", "")),
                 "port": int(profile.get("port", 0)),
                 "credential_ref": str(profile.get("credential_ref", "")),
+                **({"attachment_name": str(profile.get("attachment_name", ""))}
+                   if integration == "ssh" else {}),
             }
             for name, profile in profiles.items()
             if isinstance(profile, dict)
@@ -210,6 +213,7 @@ def add_profile(
     host: str,
     port: int,
     credential_ref: str,
+    attachment_name: str | None = None,
     *,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Any]:
@@ -220,6 +224,9 @@ def add_profile(
     profile_host = _validate_profile_host(host)
     profile_port = _validate_profile_port(port)
     profile_credential = _validate_credential_ref(credential_ref)
+    attachment = str(attachment_name or "").strip()
+    if integration == "ssh" and attachment and any(char in attachment for char in "\\/\r\n\0"):
+        raise IntegrationConfigError("O nome do anexo SSH é inválido.")
     destination = _private_config(integration, project_root)
     try:
         original = destination.read_bytes()
@@ -237,6 +244,8 @@ def add_profile(
         f"port = {profile_port}\n"
         f"credential_ref = {json.dumps(profile_credential, ensure_ascii=False)}\n"
     )
+    if integration == "ssh":
+        section += f"attachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
     updated = original.decode("utf-8")
     if not updated.endswith("\n"):
         updated += "\n"
@@ -258,6 +267,77 @@ def add_profile(
         "integration": integration,
         "profile": profile_name,
         "created": True,
+        "path": f"data/config/{INTEGRATIONS[integration]}.toml",
+    }
+
+
+def set_profile(
+    integration: str,
+    name: str,
+    host: str,
+    port: int,
+    credential_ref: str,
+    attachment_name: str | None = None,
+    *,
+    project_root: Path = PROJECT_ROOT,
+) -> dict[str, Any]:
+    """Cria ou atualiza um perfil tipado, preservando os demais perfis."""
+    if integration not in PROFILE_INTEGRATIONS:
+        raise IntegrationConfigError(
+            f"Gerenciamento de perfis ainda não está disponível para {integration}."
+        )
+    profile_name = _validate_profile_name(name)
+    profile_host = _validate_profile_host(host)
+    profile_port = _validate_profile_port(port)
+    profile_credential = _validate_credential_ref(credential_ref)
+    attachment = str(attachment_name or "").strip()
+    if integration == "ssh" and attachment and any(char in attachment for char in "\\/\r\n\0"):
+        raise IntegrationConfigError("O nome do anexo SSH é inválido.")
+    destination = _private_config(integration, project_root)
+    try:
+        original = destination.read_bytes()
+        values = tomllib.loads(original.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise IntegrationConfigError("A configuração privada da integração é inválida.") from exc
+    profiles = values.get("profiles", {})
+    if not isinstance(profiles, dict):
+        raise IntegrationConfigError("A seção de perfis da integração é inválida.")
+    section = (
+        f"[profiles.{profile_name}]\n"
+        f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
+        f"port = {profile_port}\n"
+        f"credential_ref = {json.dumps(profile_credential, ensure_ascii=False)}\n"
+    )
+    if integration == "ssh":
+        section += f"attachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
+    pattern = re.compile(
+        rf"(?ms)^\[profiles\.{re.escape(profile_name)}\]\r?\n.*?(?=^\[|\Z)"
+    )
+    updated = original.decode("utf-8")
+    if pattern.search(updated):
+        updated = pattern.sub(section, updated, count=1)
+    else:
+        if updated and not updated.endswith("\n"):
+            updated += "\n"
+        updated += "\n" + section
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(updated, encoding="utf-8", newline="\n")
+        if destination.read_bytes() != original:
+            raise IntegrationConfigError("A configuração mudou durante a operação; tente novamente.")
+        temporary.replace(destination)
+    except IntegrationConfigError:
+        temporary.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise IntegrationConfigError("Não foi possível salvar o perfil.") from exc
+    return {
+        "ok": True,
+        "integration": integration,
+        "profile": profile_name,
+        "created": profile_name not in profiles,
+        "updated": profile_name in profiles,
         "path": f"data/config/{INTEGRATIONS[integration]}.toml",
     }
 
@@ -298,6 +378,14 @@ def build_parser() -> argparse.ArgumentParser:
     profile_add.add_argument("--host", required=True)
     profile_add.add_argument("--port", required=True, type=int)
     profile_add.add_argument("--credential-ref", required=True)
+    profile_add.add_argument("--attachment-name", default="")
+    profile_set = profile_commands.add_parser("set", help="Cria ou atualiza um perfil tipado.")
+    profile_set.add_argument("integration", choices=tuple(sorted(PROFILE_INTEGRATIONS)))
+    profile_set.add_argument("--name", required=True)
+    profile_set.add_argument("--host", required=True)
+    profile_set.add_argument("--port", required=True, type=int)
+    profile_set.add_argument("--credential-ref", required=True)
+    profile_set.add_argument("--attachment-name", default="")
     return parser
 
 
@@ -318,13 +406,23 @@ def main() -> int:
             result = initialize_integration(args.integration)
         elif args.profile_command == "list":
             result = list_profiles(args.integration)
-        else:
+        elif args.profile_command == "add":
             result = add_profile(
                 args.integration,
                 args.name,
                 args.host,
                 args.port,
                 args.credential_ref,
+                args.attachment_name,
+            )
+        else:
+            result = set_profile(
+                args.integration,
+                args.name,
+                args.host,
+                args.port,
+                args.credential_ref,
+                args.attachment_name,
             )
     except (IntegrationConfigError, OSError) as exc:
         print_json(

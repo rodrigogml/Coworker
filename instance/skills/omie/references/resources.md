@@ -13,6 +13,18 @@ A maioria das listagens aceita:
 `transfers` e `account-entries` usam os filtros próprios de `ListarLancCC`, descritos
 nas seções correspondentes.
 
+As listagens de `transfers` e `account-entries` aceitam filtros tipados por data,
+conta, categoria, valor, natureza, origem, tipo de documento, contraparte, projeto,
+departamento, observação e número de documento. Filtros repetidos de categoria formam
+um grupo OR; os demais são combinados com AND. Grupos aninhados usam somente a AST
+fechada de `--filter-json`, com `and`, `or` e operadores allowlisted. Quando filtros
+são usados, a skill consulta todas as páginas até o limite configurado e informa
+`total_consulted`, `total_returned` e `truncated`.
+
+Transferências exigem uma categoria ativa marcada pela Omie como transferência. Use
+`--category-code` em `transfers prepare` para gerar o envelope idempotente em
+`COWORKER_JOB_DERIVED` e siga `prepare -> create --dry-run -> create -> show`.
+
 ## Empresas
 
 ```powershell

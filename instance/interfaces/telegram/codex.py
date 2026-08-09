@@ -130,6 +130,23 @@ class CodexAdapter:
         environment["CODEX_HOME"] = str(self.config.home_dir)
         return environment
 
+    @staticmethod
+    def _safe_app_server_error(value: Any) -> str | None:
+        """Extrai uma descrição curta do erro sem retransmitir o payload bruto."""
+        if isinstance(value, dict):
+            parts: list[str] = []
+            for key in ("code", "type", "message", "detail"):
+                item = value.get(key)
+                if isinstance(item, (str, int, float)) and str(item).strip():
+                    parts.append(str(item).strip())
+            value = ": ".join(parts)
+        if not isinstance(value, str):
+            return None
+        compact = " ".join(value.replace("\r", " ").replace("\n", " ").split())
+        if not compact:
+            return None
+        return compact[:400]
+
     @property
     def rules_destination(self) -> Path:
         return self.config.home_dir / "rules" / "gateway.rules"
@@ -747,6 +764,7 @@ class CodexAdapter:
         agent_phases: dict[str, str] = {}
         agent_buffers: dict[str, str] = {}
         status = "failed"
+        turn_error: str | None = None
         try:
             if on_started:
                 on_started(process.pid)
@@ -875,7 +893,11 @@ class CodexAdapter:
                     )
                 if method_name == "turn/completed" and isinstance(params_value, dict):
                     completed = params_value.get("turn")
-                    status = str(completed.get("status", "failed")) if isinstance(completed, dict) else "failed"
+                    if isinstance(completed, dict):
+                        status = str(completed.get("status", "failed"))
+                        turn_error = self._safe_app_server_error(completed.get("error"))
+                    else:
+                        status = "failed"
                     break
         finally:
             self.registry.unregister(chat_id, process)
@@ -883,6 +905,14 @@ class CodexAdapter:
         if status == "interrupted" or self.registry.consume_cancelled(chat_id):
             raise CodexCancelledError("A execução foi cancelada pelo usuário.")
         if status != "completed" or not final_messages:
+            if turn_error:
+                raise CodexExecutionError(
+                    f"O App Server concluiu o turno com status '{status}': {turn_error}"
+                )
+            if status != "completed":
+                raise CodexExecutionError(
+                    f"O App Server concluiu o turno com status '{status}', sem resposta final."
+                )
             raise CodexExecutionError("O App Server não concluiu com uma resposta final.")
         return CodexResult(discovered_thread, final_messages[-1], turn_id, status)
 

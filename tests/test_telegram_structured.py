@@ -20,6 +20,7 @@ from unittest.mock import patch
 from interfaces.telegram.codex import (
     CodexAdapter,
     CodexCancelledError,
+    CodexExecutionError,
     CodexModel,
     CodexOptions,
     CodexProgress,
@@ -48,7 +49,7 @@ from interfaces.telegram.job_context import (
 )
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry
 from interfaces.telegram.state import StateStore
-from interfaces.telegram.telegram_api import TelegramApi
+from interfaces.telegram.telegram_api import TelegramApi, TelegramApiError
 from interfaces.telegram.workspace import (
     JobWorkspace,
     WorkspaceError,
@@ -733,6 +734,70 @@ class AppServerBackendTests(unittest.TestCase):
                 with self.assertRaises(CodexCancelledError):
                     adapter.run(10, "pedido", None, [])
 
+    def test_app_server_turn_error_is_reported_without_raw_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = self._adapter(root)
+            process = SimpleNamespace(pid=123)
+            events: queue.Queue[str | None] = queue.Queue()
+            events.put(json.dumps({
+                "method": "turn/completed",
+                "params": {"turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {
+                        "code": "model_error",
+                        "message": "Falha\nsem detalhes do prompt",
+                        "debugPayload": "NAO-DEVOLVER-ISTO",
+                    },
+                }},
+            }))
+            with (
+                patch.object(adapter, "_start_app_server", return_value=(process, events)),
+                patch.object(adapter, "_initialize_app_server"),
+                patch.object(
+                    adapter,
+                    "_wait_app_server_response",
+                    side_effect=[{"thread": {"id": "thread-1"}}, {"turn": {"id": "turn-1"}}],
+                ),
+                patch.object(adapter, "_send_app_server_message"),
+                patch.object(adapter, "_stop_process"),
+            ):
+                with self.assertRaisesRegex(
+                    CodexExecutionError,
+                    r"status 'failed': model_error: Falha sem detalhes do prompt",
+                ) as raised:
+                    adapter.run(10, "pedido", None, [])
+
+        self.assertNotIn("NAO-DEVOLVER-ISTO", str(raised.exception))
+
+    def test_app_server_failed_turn_without_error_keeps_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = self._adapter(root)
+            process = SimpleNamespace(pid=123)
+            events: queue.Queue[str | None] = queue.Queue()
+            events.put(json.dumps({
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-1", "status": "failed"}},
+            }))
+            with (
+                patch.object(adapter, "_start_app_server", return_value=(process, events)),
+                patch.object(adapter, "_initialize_app_server"),
+                patch.object(
+                    adapter,
+                    "_wait_app_server_response",
+                    side_effect=[{"thread": {"id": "thread-1"}}, {"turn": {"id": "turn-1"}}],
+                ),
+                patch.object(adapter, "_send_app_server_message"),
+                patch.object(adapter, "_stop_process"),
+            ):
+                with self.assertRaisesRegex(
+                    CodexExecutionError,
+                    r"status 'failed', sem resposta final",
+                ):
+                    adapter.run(10, "pedido", None, [])
+
 
 class _FakeTelegramApi:
     def __init__(self) -> None:
@@ -1138,6 +1203,64 @@ class GatewayContextTests(unittest.TestCase):
         self.assertNotIn("app-key-protegida", sent)
         self.assertNotIn("app-secret-protegido", sent)
         self.assertEqual([(10, 21), (10, 22)], deleted)
+
+    def test_credential_prompt_retries_after_transient_telegram_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            gateway = self._gateway(root)
+            with gateway.state.connection:
+                gateway.state.connection.execute(
+                    """INSERT INTO authorized_users
+                       (user_id,chat_id,role,display_name,paired_at)
+                       VALUES (10,10,'owner','Pessoa Teste','2026-01-01T00:00:00Z')"""
+                )
+            gateway.state.update_seen(1)
+            job_id = gateway.state.create_job(1, 10)
+            gateway.state.update_job(job_id, "running", pid=123)
+            workspace = JobWorkspace.create(root / "jobs", job_id)
+            with patch.dict(
+                os.environ,
+                {
+                    "COWORKER_JOB_OUTPUT": str(workspace.output_dir),
+                    "COWORKER_CHAT_ID": "10",
+                },
+                clear=False,
+            ):
+                request = create_request(
+                    "APIs/SSH",
+                    "Configure o acesso protegido.",
+                    [
+                        parse_field_spec("username:Usuário"),
+                        parse_field_spec("attachment:Chave privada"),
+                    ],
+                    600,
+                )
+
+            original_send = gateway.api.send_text
+            attempts = 0
+
+            def send_with_one_transient_failure(*args, **kwargs):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise TelegramApiError("falha transitória")
+                return original_send(*args, **kwargs)
+
+            with patch.object(gateway.api, "send_text", side_effect=send_with_one_transient_failure):
+                # The first attempt must not create a terminal response.
+                gateway._scan_credential_requests()
+                self.assertFalse(request.response_path.exists())
+                self.assertNotIn(request.request_id, gateway.credential_requests_seen)
+                self.assertNotIn(10, gateway.credential_captures)
+
+                # Simulate the retry interval having elapsed.
+                gateway.credential_request_retry_at[request.request_id] = 0
+                gateway._scan_credential_requests()
+
+            self.assertIn(request.request_id, gateway.credential_requests_seen)
+            self.assertIn(10, gateway.credential_captures)
+            self.assertTrue(any("Envie agora: Usuário" in item[1] for item in gateway.api.sent))
+            gateway.close()
 
     def test_reference_without_persisted_content_uses_update_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

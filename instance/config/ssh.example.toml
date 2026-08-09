@@ -1,0 +1,7 @@
+default_profile = "turing"
+
+[profiles.turing]
+host = ""
+port = 22
+credential_ref = ""
+attachment_name = ""

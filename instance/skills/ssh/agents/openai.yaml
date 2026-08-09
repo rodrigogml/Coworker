@@ -1,0 +1,3 @@
+display_name: "SSH seguro"
+short_description: "Diagnostique servidores por SSH com chaves protegidas no KeePassXC."
+default_prompt: "Use a skill SSH para validar a configuração ou executar o diagnóstico remoto somente leitura autorizado."

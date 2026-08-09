@@ -349,6 +349,11 @@ pode entrar no prompt, no job, em argumentos ou no retorno da ferramenta. Caminh
 perfis distintos devem ser definidos pelo Codex conforme a configuração da integração;
 a pessoa usuária não deve precisar conhecer a estrutura interna do cofre.
 
+O broker somente considera a captura iniciada depois que o envio do prompt e confirmado
+pela Bot API. Se o Telegram estiver indisponivel, o arquivo de solicitacao permanece
+pendente e e tentado novamente com intervalo controlado; a falha nao deve encerrar
+prematuramente o processo nem deixar a pessoa usuaria aguardando sem uma mensagem.
+
 Trabalhos do gateway nunca devem chamar `credential_vault.py add`, `open` ou `create`,
 pois esses comandos podem abrir uma janela local. Para criar uma nova entrada a partir
 de uma credencial já protegida, usar somente

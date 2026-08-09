@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 from dataclasses import dataclass
@@ -431,11 +432,27 @@ def run_service_from_config(path: Path) -> None:
             super().__init__(args)
             self.stop_event = win32event.CreateEvent(None, 0, 0, None)
             self.child: subprocess.Popen[bytes] | None = None
+            self.stop_thread: threading.Thread | None = None
+            self.stop_lock = threading.Lock()
 
         def SvcStop(self) -> None:  # noqa: N802
-            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+            # O callback do SCM precisa retornar rapidamente. Aguardar o
+            # gateway aqui faz o SCM concluir que o serviço parou de responder
+            # (erro 1053), mesmo quando o filho está encerrando corretamente.
+            self.ReportServiceStatus(
+                win32service.SERVICE_STOP_PENDING,
+                waitHint=max(1000, stop_timeout * 1000),
+                checkPoint=1,
+            )
             win32event.SetEvent(self.stop_event)
-            self._stop_child()
+            with self.stop_lock:
+                if self.stop_thread is None or not self.stop_thread.is_alive():
+                    self.stop_thread = threading.Thread(
+                        target=self._stop_child,
+                        name=f"{self._svc_name_}-stop",
+                        daemon=True,
+                    )
+                    self.stop_thread.start()
 
         def SvcDoRun(self) -> None:  # noqa: N802
             servicemanager.LogInfoMsg(f"{self._svc_name_} iniciando o gateway")
@@ -467,9 +484,23 @@ def run_service_from_config(path: Path) -> None:
                 request_stop(gateway_state_dir)
             except Exception:
                 pass
-            try:
-                self.child.wait(timeout=stop_timeout)
-            except subprocess.TimeoutExpired:
+            deadline = time.monotonic() + stop_timeout
+            checkpoint = 1
+            while self.child.poll() is None and time.monotonic() < deadline:
+                try:
+                    self.child.wait(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    checkpoint += 1
+                    try:
+                        self.ReportServiceStatus(
+                            win32service.SERVICE_STOP_PENDING,
+                            waitHint=2000,
+                            checkPoint=checkpoint,
+                        )
+                    except Exception:
+                        pass
+            if self.child.poll() is None:
                 self.child.terminate()
                 try:
                     self.child.wait(timeout=10)

@@ -773,9 +773,11 @@ class OmieTests(unittest.TestCase):
             {
                 "ConsultarContaCorrente": account_show,
                 "ConsultarCategoria": {
-                    "codigo": "2.99.01",
-                    "descricao": "Transferência",
+                    "codigo": "0.01.02",
                     "conta_inativa": "N",
+                    "transferencia": "S",
+                    "totalizadora": "N",
+                    "nao_exibir": "N",
                 },
                 "ConsultaLancCC": transfer_show,
             }
@@ -789,7 +791,7 @@ class OmieTests(unittest.TestCase):
                     "destination_account": {"id": 2},
                     "date": "02/08/2026",
                     "amount": "50.00",
-                    "category": {"code": "2.99.01"},
+                    "category": {"code": "0.01.02"},
                 }
             },
             "transfer-1",
@@ -799,6 +801,7 @@ class OmieTests(unittest.TestCase):
         self.assertEqual(call.params["detalhes"]["cTipo"], "TRA")
         self.assertEqual(call.params["cabecalho"]["nCodCC"], 1)
         self.assertEqual(call.params["transferencia"]["nCodCCDestino"], 2)
+        self.assertEqual(call.params["detalhes"]["cCodCateg"], "0.01.02")
 
         with self.assertRaises(omie.OmieToolError):
             omie.transfer_payload(
@@ -809,10 +812,83 @@ class OmieTests(unittest.TestCase):
                     "destination_account": {"id": 1},
                     "date": "02/08/2026",
                     "amount": "50.00",
-                    "category": {"code": "2.99.01"},
+                    "category": {"code": "0.01.02"},
                 },
                 integration_id="cw-test",
             )
+
+    def test_transfer_requires_category_before_api_payload(self):
+        client = FakeOperationClient(
+            {"ConsultarContaCorrente": lambda params: {"nCodCC": params["nCodCC"], "inativo": "N"}}
+        )
+        with self.assertRaisesRegex(omie.OmieToolError, "exige 'category'"):
+            omie.transfer_payload(
+                client,
+                {},
+                {
+                    "source_account": {"id": 1},
+                    "destination_account": {"id": 2},
+                    "date": "02/08/2026",
+                    "amount": "50.00",
+                },
+                integration_id="cw-test",
+            )
+
+    def test_transfer_rejects_category_without_transfer_marker(self):
+        client = FakeOperationClient(
+            {
+                "ConsultarContaCorrente": lambda params: {"nCodCC": params["nCodCC"], "inativo": "N"},
+                "ConsultarCategoria": {
+                    "codigo": "2.01.01",
+                    "conta_inativa": "N",
+                    "transferencia": "N",
+                    "totalizadora": "N",
+                    "nao_exibir": "N",
+                },
+            }
+        )
+        with self.assertRaisesRegex(omie.OmieToolError, "marcada.*transfer"):
+            omie.transfer_payload(
+                client,
+                {},
+                {
+                    "source_account": {"id": 1},
+                    "destination_account": {"id": 2},
+                    "date": "02/08/2026",
+                    "amount": "50.00",
+                    "category": {"code": "2.01.01"},
+                },
+                integration_id="cw-test",
+            )
+
+    def test_transfer_prepare_persists_category(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            derived = root / "data" / "telegram" / "jobs" / "7" / "derived"
+            derived.mkdir(parents=True)
+            args = argparse.Namespace(
+                request_id="telegram:omie:transfer-7",
+                source_account_id=1,
+                destination_account_id=2,
+                date="20/07/2026",
+                amount="6000.00",
+                category_code="0.01.02",
+                counterparty_id=None,
+                project_id=None,
+                department=[],
+                document_number=None,
+                observation=None,
+            )
+            result = omie.prepare_transfer_envelope(
+                args,
+                project_root=root,
+                environment={"COWORKER_JOB_DERIVED": str(derived)},
+            )
+            document = omie.parse_input_document(
+                Path(result["path"]).read_text(encoding="utf-8")
+            )
+        self.assertEqual(document["data"]["category"], {"code": "0.01.02"})
+        self.assertTrue(result["validated"]["has_category"])
 
     def test_account_entries_parser_requires_nature_and_maps_origin(self):
         parser = omie.build_parser()

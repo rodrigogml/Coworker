@@ -418,6 +418,77 @@ def read_entry_secret(
     )[0]
 
 
+def read_entry_username(
+    entry: str,
+    *,
+    cli_path: Path | None = None,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> str:
+    """Obtém somente o usuário de uma entrada, sem revelar a senha."""
+    return _read_entry_attributes(
+        entry,
+        ("Username",),
+        cli_path=cli_path,
+        vault_path=vault_path,
+        credential_target=credential_target,
+        config_path=config_path,
+    )[0]
+
+
+def read_entry_attachment(
+    entry: str,
+    filename: str | None = None,
+    *,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> tuple[str, bytes]:
+    """Lê um único anexo do KeePassXC somente em memória."""
+    normalized_entry = validate_entry_path(entry)
+    expected = str(filename or "").strip()
+    if expected and any(char in expected for char in "\\/\r\n\0"):
+        raise VaultToolError("O nome do anexo é inválido.")
+    if vault_path is None or credential_target is None:
+        config = load_vault_config(config_path)
+        vault_path = vault_path or config.vault_path
+        credential_target = credential_target or config.credential_target
+    require_file(vault_path, "Cofre")
+    ensure_keepassxc_gui_closed()
+    if PyKeePass is None:
+        raise VaultToolError("A dependência PyKeePass não está instalada.")
+    master_password = read_windows_credential(credential_target)
+    try:
+        database = PyKeePass(str(vault_path), password=master_password)
+        parts = normalized_entry.split("/")
+        group = database.root_group
+        for group_name in parts[:-1]:
+            matches = [child for child in group.subgroups if child.name == group_name]
+            if len(matches) != 1:
+                raise VaultToolError("O caminho da entrada é inexistente ou ambíguo.")
+            group = matches[0]
+        entries = [item for item in group.entries if item.title == parts[-1]]
+        if len(entries) != 1:
+            raise VaultToolError("A entrada da credencial é inexistente ou ambígua.")
+        attachments = list(getattr(entries[0], "attachments", ()) or ())
+        if expected:
+            attachments = [item for item in attachments if item.filename == expected]
+        if len(attachments) != 1:
+            raise VaultToolError("O anexo da credencial é inexistente ou ambíguo.")
+        attachment = attachments[0]
+        data = bytes(attachment.binary)
+        if not data:
+            raise VaultToolError("O anexo da credencial está vazio.")
+        return str(attachment.filename), data
+    except VaultToolError:
+        raise
+    except Exception as exc:
+        raise VaultToolError("Não foi possível ler o anexo da credencial.") from exc
+    finally:
+        master_password = ""
+
+
 def read_entry_credentials(
     entry: str,
     *,
@@ -689,6 +760,102 @@ def write_entry_credentials(
         credential_target=credential_target,
         config_path=config_path,
     )
+
+
+def write_entry_attachment(
+    entry: str,
+    attachment_name: str,
+    attachment_data: bytes,
+    *,
+    username: str = "",
+    password: str = "",
+    replace_existing: bool = False,
+    vault_path: Path | None = None,
+    credential_target: str | None = None,
+    config_path: Path = DEFAULT_CONFIG,
+) -> None:
+    """Cria/atualiza uma entrada e anexa bytes recebidos somente em memória.
+
+    Uma entrada existente só é alterada quando não possui anexos conflitantes;
+    isso evita apagar anexos mantidos por outra integração.
+    """
+    normalized = validate_entry_path(entry)
+    name = str(attachment_name or "").strip()
+    if not name or any(char in name for char in "\\/\r\n\0") or len(name) > 255:
+        raise VaultToolError("O nome do anexo é inválido.")
+    data = bytes(attachment_data or b"")
+    if not data:
+        raise VaultToolError("O anexo está vazio.")
+    if vault_path is None or credential_target is None:
+        config = load_vault_config(config_path)
+        vault_path = vault_path or config.vault_path
+        credential_target = credential_target or config.credential_target
+    require_file(vault_path, "Cofre")
+    ensure_keepassxc_gui_closed()
+    if PyKeePass is None:
+        raise VaultToolError("A dependência PyKeePass não está instalada.")
+    master_password = read_windows_credential(credential_target)
+    try:
+        database = PyKeePass(str(vault_path), password=master_password)
+        parts = normalized.split("/")
+        group = database.root_group
+        for group_name in parts[:-1]:
+            matches = [child for child in group.subgroups if child.name == group_name]
+            if len(matches) > 1:
+                raise VaultToolError("O caminho da entrada é ambíguo.")
+            group = matches[0] if matches else database.add_group(group, group_name)
+        matches = [item for item in group.entries if item.title == parts[-1]]
+        if len(matches) > 1:
+            raise VaultToolError("O título da entrada é ambíguo.")
+        if matches:
+            target = matches[0]
+            attachments = list(getattr(target, "attachments", ()) or ())
+            other = [item for item in attachments if item.filename != name]
+            if replace_existing and len(attachments) == 1 and len(other) == 1:
+                other = []
+            if other:
+                raise VaultToolError("A entrada possui anexos diferentes; operação recusada.")
+            if username:
+                target.username = username
+            if password:
+                target.password = password
+            for item in attachments:
+                item.delete()
+        else:
+            target = database.add_entry(group, parts[-1], username, password)
+        binary_id = database.add_binary(data, protected=True)
+        target.add_attachment(binary_id, name)
+        database.save()
+        saved_name, saved_data = read_entry_attachment(
+            normalized,
+            name,
+            vault_path=vault_path,
+            credential_target=credential_target,
+            config_path=config_path,
+        )
+        if saved_name != name or saved_data != data:
+            raise VaultToolError("A credencial nao foi confirmada apos o salvamento.")
+        if username and read_entry_username(
+            normalized,
+            vault_path=vault_path,
+            credential_target=credential_target,
+            config_path=config_path,
+        ) != username:
+            raise VaultToolError("O usuario da credencial nao foi confirmado apos o salvamento.")
+        if password and read_entry_secret(
+            normalized,
+            vault_path=vault_path,
+            credential_target=credential_target,
+            config_path=config_path,
+        ) != password:
+            raise VaultToolError("A passphrase nao foi confirmada apos o salvamento.")
+    except VaultToolError:
+        raise
+    except Exception as exc:
+        raise VaultToolError("Não foi possível salvar a credencial com anexo.") from exc
+    finally:
+        master_password = ""
+        data = b""
 
 
 def copy_entry_field(

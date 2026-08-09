@@ -51,6 +51,8 @@ python skills/omie/scripts/omie.py --profile EMPRESA categories list
 python skills/omie/scripts/omie.py --profile EMPRESA departments show --code DEP-1
 python skills/omie/scripts/omie.py --profile EMPRESA current-accounts list
 python skills/omie/scripts/omie.py --profile EMPRESA account-entries list --nature expense
+python skills/omie/scripts/omie.py --profile EMPRESA account-entries list --nature expense --date-from 01/07/2026 --date-to 31/07/2026 --category 2.11.93 --observation-contains MEI
+python skills/omie/scripts/omie.py --profile EMPRESA transfers prepare --request-id telegram:omie:transfer-1 --source-account-id 1 --destination-account-id 2 --date 20/07/2026 --amount 6000.00 --category-code 0.01.02 --observation "Transferência operacional"
 python skills/omie/scripts/omie.py --profile EMPRESA transfers show --integration-id ID
 ```
 

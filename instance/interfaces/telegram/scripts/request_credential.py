@@ -27,7 +27,9 @@ def print_json(value: object, *, stream: object = sys.stdout) -> None:
 
 def request_credential(args: argparse.Namespace) -> dict[str, object]:
     fields = [parse_field_spec(value) for value in args.field]
-    request = create_request(args.entry, args.prompt, fields, args.timeout)
+    request = create_request(
+        args.entry, args.prompt, fields, args.timeout, getattr(args, "attachment_name", None)
+    )
     deadline = time.monotonic() + args.timeout
     try:
         while time.monotonic() < deadline:
@@ -66,9 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--field",
         action="append",
         required=True,
-        help="Campo protegido no formato username:Rótulo ou password:Rótulo.",
+        help="Campo protegido no formato username:Rótulo, password:Rótulo ou attachment:Rótulo.",
     )
     parser.add_argument("--timeout", type=int, default=600, choices=range(60, 1801))
+    parser.add_argument("--attachment-name")
     return parser
 
 

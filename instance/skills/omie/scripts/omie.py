@@ -841,6 +841,95 @@ def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
     raise OmieToolError(f"Resumo não definido para '{resource}'.")
 
 
+FILTER_KEYS = {
+    "date_between", "account_id", "category", "amount_eq", "amount_gte", "amount_lte",
+    "nature", "origin", "document_type", "counterparty_id", "project_id", "department",
+    "observation_contains", "document_number",
+}
+
+
+def validate_filter_ast(node: Any, label: str = "filter") -> dict[str, Any]:
+    if not isinstance(node, dict) or len(node) != 1:
+        raise OmieToolError(f"'{label}' deve ser um objeto com uma condição única.")
+    key, value = next(iter(node.items()))
+    if key in ("and", "or"):
+        if not isinstance(value, list) or not value:
+            raise OmieToolError(f"'{label}.{key}' deve conter uma lista não vazia.")
+        return {key: [validate_filter_ast(child, f"{label}.{key}") for child in value]}
+    if key not in FILTER_KEYS:
+        raise OmieToolError(f"Filtro não permitido: {key}.")
+    if key == "date_between":
+        if not isinstance(value, list) or len(value) != 2:
+            raise OmieToolError("date_between exige duas datas.")
+        date_value(value[0], "date_between[0]"); date_value(value[1], "date_between[1]")
+        validate_date_range(value[0], value[1], "lançamento")
+    elif key in {"amount_eq", "amount_gte", "amount_lte"}:
+        decimal_value(value, key, allow_zero=True)
+    elif key in {"account_id", "counterparty_id", "project_id"}:
+        positive_identifier(value, key)
+    elif key == "category":
+        if isinstance(value, list):
+            if not value or any(not isinstance(item, str) or not item.strip() for item in value): raise OmieToolError("category contém código inválido.")
+        elif not isinstance(value, str) or not value.strip(): raise OmieToolError("category deve ser texto.")
+    elif not isinstance(value, str) or not value.strip():
+        raise OmieToolError(f"{key} deve ser texto não vazio.")
+    return {key: value}
+
+
+def _entry_values(item: Mapping[str, Any]) -> dict[str, Any]:
+    header = item.get("cabecalho") if isinstance(item.get("cabecalho"), dict) else {}
+    details = item.get("detalhes") if isinstance(item.get("detalhes"), dict) else {}
+    diverse = item.get("diversos") if isinstance(item.get("diversos"), dict) else {}
+    departments = item.get("departamentos") if isinstance(item.get("departamentos"), list) else []
+    categories = []
+    if details.get("cCodCateg") not in (None, ""): categories.append(str(details["cCodCateg"]))
+    for value in details.get("aCodCateg", []) if isinstance(details.get("aCodCateg"), list) else []:
+        if isinstance(value, dict) and value.get("cCodCateg") not in (None, ""): categories.append(str(value["cCodCateg"]))
+    return {"date": header.get("dDtLanc"), "account_id": header.get("nCodCC"), "amount": header.get("nValorLanc"), "categories": categories,
+            "nature": diverse.get("cNatureza"), "origin": diverse.get("cOrigem"), "document_type": details.get("cTipo"),
+            "counterparty_id": details.get("nCodCliente"), "project_id": details.get("nCodProjeto"), "departments": departments,
+            "observation": details.get("cObs"), "document_number": details.get("cNumDoc")}
+
+
+def filter_matches(item: Mapping[str, Any], node: Mapping[str, Any]) -> bool:
+    if "and" in node: return all(filter_matches(item, child) for child in node["and"])
+    if "or" in node: return any(filter_matches(item, child) for child in node["or"])
+    key, expected = next(iter(node.items())); actual = _entry_values(item)
+    if key == "date_between":
+        if actual["date"] is None: return False
+        try:
+            actual_date = datetime.strptime(str(actual["date"]), "%d/%m/%Y")
+            start_date = datetime.strptime(expected[0], "%d/%m/%Y")
+            end_date = datetime.strptime(expected[1], "%d/%m/%Y")
+        except ValueError: return False
+        return start_date <= actual_date <= end_date
+    if key == "category": return any(category in ([str(x) for x in expected] if isinstance(expected, list) else [expected]) for category in actual["categories"])
+    if key == "observation_contains": return str(expected).casefold() in str(actual["observation"] or "").casefold()
+    if key == "document_number": return str(actual["document_number"] or "") == str(expected)
+    if key == "department": return any(isinstance(dep, dict) and str(dep.get("cCodDep")) == str(expected) for dep in actual["departments"])
+    if key in {"account_id", "counterparty_id", "project_id"}: return str(actual[key]) == str(expected)
+    if key in {"nature", "origin", "document_type"}: return str(actual[key] or "") == str(expected)
+    try: amount = decimal_value(actual["amount"], "lançamento.amount", allow_zero=True)
+    except OmieToolError: return False
+    target = decimal_value(expected, key, allow_zero=True)
+    return {"amount_eq": amount == target, "amount_gte": amount >= target, "amount_lte": amount <= target}[key]
+
+
+def list_filter_ast(args: argparse.Namespace) -> dict[str, Any] | None:
+    clauses: list[dict[str, Any]] = []
+    if getattr(args, "filter_json", None):
+        try: clauses.append(validate_filter_ast(json.loads(args.filter_json), "--filter-json"))
+        except json.JSONDecodeError as exc: raise OmieToolError("--filter-json deve ser JSON válido.") from exc
+    if args.date_from or args.date_to:
+        if not args.date_from or not args.date_to: raise OmieToolError("--date-from e --date-to devem ser usados juntos.")
+        clauses.append({"date_between": [args.date_from, args.date_to]})
+    for option, key in (("account_id", "account_id"), ("amount_eq", "amount_eq"), ("amount_gte", "amount_gte"), ("amount_lte", "amount_lte"), ("nature_filter", "nature"), ("origin", "origin"), ("document_type", "document_type"), ("counterparty_id", "counterparty_id"), ("project_id", "project_id"), ("department", "department"), ("observation_contains", "observation_contains"), ("document_number", "document_number")):
+        value = getattr(args, option, None)
+        if value is not None: clauses.append({key: value})
+    if getattr(args, "category", None): clauses.append({"category": args.category if len(args.category) > 1 else args.category[0]})
+    return {"and": clauses} if len(clauses) > 1 else (clauses[0] if clauses else None)
+
+
 def list_params(resource: str, args: argparse.Namespace) -> dict[str, Any]:
     """Monta apenas filtros documentados e explicitamente informados."""
     if resource == "transfers":
@@ -953,7 +1042,6 @@ TRANSFER_FIELDS = {
     "date",
     "amount",
     "category",
-    "categories",
     "counterparty",
     "project",
     "departments",
@@ -2264,6 +2352,48 @@ def execute_prepare_account_entry(args: argparse.Namespace) -> dict[str, Any]:
     return prepare_account_entry_envelope(args)
 
 
+def prepare_transfer_envelope(
+    args: argparse.Namespace,
+    *,
+    project_root: Path = PROJECT_ROOT,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Cria envelope fechado de transferência, sem categoria e sem chamada à API."""
+    request_id = request_identifier(args.request_id)
+    source = positive_identifier(args.source_account_id, "--source-account-id")
+    destination = positive_identifier(args.destination_account_id, "--destination-account-id")
+    if source == destination:
+        raise OmieToolError("As contas de origem e destino devem ser diferentes.")
+    data: dict[str, Any] = {
+        "source_account": {"id": source},
+        "destination_account": {"id": destination},
+        "date": date_value(args.date, "--date"),
+        "amount": decimal_number(decimal_value(args.amount, "--amount")),
+        "category": {"code": require_nonempty_string(args.category_code, "--category-code", 60)},
+    }
+    for option, public_name in (("counterparty_id", "counterparty"), ("project_id", "project")):
+        value = getattr(args, option, None)
+        if value is not None:
+            data[public_name] = {"id": positive_identifier(value, f"--{option.replace('_', '-')}")}
+    for option, public_name, maximum in (("document_number", "document_number", 20), ("observation", "observation", 5000)):
+        value = getattr(args, option, None)
+        if value is not None:
+            data[public_name] = require_nonempty_string(value, f"--{option.replace('_', '-')}", maximum)
+    departments = prepare_department_allocations(getattr(args, "department", None))
+    if departments:
+        data["departments"] = departments
+    document = {"schema_version": SCHEMA_VERSION, "request_id": request_id, "data": data}
+    try:
+        stored = write_job_json("omie-transfer", request_id, document, project_root=project_root, environment=environment)
+    except JobContextError as exc:
+        raise OmieToolError(str(exc)) from exc
+    return {"ok": True, "created": stored.created, "path": str(stored.path), "validated": {"source_account_id": source, "destination_account_id": destination, "amount": data["amount"], "category": data["category"], "has_category": True}}
+
+
+def execute_prepare_transfer(args: argparse.Namespace) -> dict[str, Any]:
+    return prepare_transfer_envelope(args)
+
+
 def prepare_customer_envelope(
     args: argparse.Namespace,
     *,
@@ -2344,6 +2474,20 @@ def validate_account_entry_category(
     if item.get(expected_flag) != "S":
         label = "despesa" if nature == "expense" else "receita"
         raise OmieToolError(f"A categoria informada não é uma categoria de {label}.")
+
+
+def validate_transfer_category(item: Mapping[str, Any]) -> None:
+    """Garante que a categoria pertence ao plano ativo de transferencias."""
+    if is_inactive(item):
+        raise OmieToolError("A categoria da transferencia esta inativa.")
+    if item.get("totalizadora") == "S":
+        raise OmieToolError("A categoria da transferencia nao pode ser totalizadora.")
+    if item.get("nao_exibir") == "S":
+        raise OmieToolError("A categoria da transferencia nao esta disponivel para uso.")
+    if item.get("transferencia") != "S":
+        raise OmieToolError(
+            "A categoria informada nao esta marcada pela Omie como transferencia."
+        )
 
 
 def account_entry_category_payload(
@@ -2738,28 +2882,12 @@ def transfer_payload(
             decimal_value(data["amount"], "data.amount")
         )
     total = decimal_value(header.get("nValorLanc"), "data.amount")
+    if "category" in data:
+        identifier, category = resolve_reference(client, "category", data["category"])
+        validate_transfer_category(category)
+        details["cCodCateg"] = identifier
     if header.get("nCodCC") == transfer.get("nCodCCDestino"):
         raise OmieToolError("As contas de origem e destino devem ser diferentes.")
-    if "category" in data and "categories" in data:
-        raise OmieToolError("Use 'category' ou 'categories', nunca ambos.")
-    if "category" in data:
-        details["cCodCateg"] = resolve_reference(
-            client, "category", data["category"]
-        )[0]
-        details.pop("aCodCateg", None)
-    if "categories" in data:
-        allocations = allocation_payload(
-            client, data["categories"], total, "category"
-        )
-        details["aCodCateg"] = [
-            {
-                "cCodCateg": entry["codigo_categoria"],
-                **({"nValor": entry["valor"]} if "valor" in entry else {}),
-                **({"nPerc": entry["percentual"]} if "percentual" in entry else {}),
-            }
-            for entry in allocations
-        ]
-        details.pop("cCodCateg", None)
     if "counterparty" in data:
         if data["counterparty"] is None:
             details.pop("nCodCliente", None)
@@ -2805,8 +2933,10 @@ def transfer_payload(
         raise OmieToolError(
             f"Campos obrigatórios da transferência ausentes: {', '.join(missing)}."
         )
-    if not (details.get("cCodCateg") or details.get("aCodCateg")):
-        raise OmieToolError("Informe 'category' ou 'categories' na transferência.")
+    if details.get("cCodCateg") in (None, ""):
+        raise OmieToolError(
+            "A transferencia exige 'category' com uma categoria marcada como transferencia."
+        )
     details["cTipo"] = "TRA"
     payload = {
         "cCodIntLanc": integration_id,
@@ -3108,34 +3238,41 @@ def execute_list(
     if args.resource in ("payables", "receivables"):
         validate_date_range(args.issued_from, args.issued_to, "emissão")
     params = list_params(args.resource, args)
+    filter_ast = list_filter_ast(args) if args.resource in ("transfers", "account-entries") else None
     page = args.page
     collected: list[dict[str, Any]] = []
     metadata: dict[str, int] = {}
     pages_fetched = 0
+    total_consulted = 0
     while True:
         items, metadata = client.list_page(service, page=page, params=params)
         collected.extend(items)
+        total_consulted += len(items)
         pages_fetched += 1
-        if not args.all_pages or page >= metadata["total_pages"]:
+        if not (args.all_pages or filter_ast is not None) or page >= metadata["total_pages"]:
             break
         if pages_fetched >= client.config.max_pages:
             break
         page += 1
     truncated = (
-        args.all_pages
+        (args.all_pages or filter_ast is not None)
         and bool(metadata)
         and page < metadata["total_pages"]
     )
+    filtered = [item for item in collected if filter_ast is None or filter_matches(item, filter_ast)]
     return {
         "ok": True,
         "resource": args.resource,
-        "count": len(collected),
-        "items": [sanitize_payload(summarize(args.resource, item)) for item in collected],
+        "count": len(filtered),
+        "items": [sanitize_payload(summarize(args.resource, item)) for item in filtered],
         "pagination": {
             **metadata,
             "pages_fetched": pages_fetched,
             "truncated": truncated,
             "next_page": page + 1 if truncated else None,
+            "total_consulted": total_consulted,
+            "total_returned": len(filtered),
+            "filters_applied": filter_ast is not None,
         },
     }
 
@@ -3193,6 +3330,23 @@ def add_list_filters(parser: argparse.ArgumentParser, resource: str) -> None:
             choices=tuple(ACCOUNT_ENTRY_NATURES),
             help="Natureza manual: expense (EXTP) ou revenue (EXTR).",
         )
+    if resource in ("transfers", "account-entries"):
+        parser.add_argument("--date-from", type=validate_date)
+        parser.add_argument("--date-to", type=validate_date)
+        parser.add_argument("--account-id", type=int)
+        parser.add_argument("--category", action="append", default=[])
+        parser.add_argument("--amount-eq")
+        parser.add_argument("--amount-gte")
+        parser.add_argument("--amount-lte")
+        parser.add_argument("--nature-filter")
+        parser.add_argument("--origin")
+        parser.add_argument("--document-type")
+        parser.add_argument("--counterparty-id", type=int)
+        parser.add_argument("--project-id", type=int)
+        parser.add_argument("--department")
+        parser.add_argument("--observation-contains")
+        parser.add_argument("--document-number")
+        parser.add_argument("--filter-json", help="AST JSON fechado com and/or e filtros allowlisted.")
     parser.set_defaults(handler=execute_list)
 
 
@@ -3257,6 +3411,21 @@ def add_account_entry_prepare(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(handler=execute_prepare_account_entry)
 
 
+def add_transfer_prepare(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--request-id", required=True)
+    parser.add_argument("--source-account-id", required=True, type=int)
+    parser.add_argument("--destination-account-id", required=True, type=int)
+    parser.add_argument("--date", required=True, type=validate_date)
+    parser.add_argument("--amount", required=True)
+    parser.add_argument("--category-code", required=True)
+    parser.add_argument("--department", action="append", default=[], metavar="CODIGO:PERCENTUAL")
+    parser.add_argument("--counterparty-id", type=int)
+    parser.add_argument("--project-id", type=int)
+    parser.add_argument("--document-number")
+    parser.add_argument("--observation")
+    parser.set_defaults(handler=execute_prepare_transfer)
+
+
 def add_customer_prepare(parser: argparse.ArgumentParser) -> None:
     """Expõe somente campos tipados para preparar uma contraparte."""
     parser.add_argument("--request-id", required=True)
@@ -3303,6 +3472,9 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Prepara um envelope de criação no trabalho Telegram.",
             )
             add_account_entry_prepare(prepare)
+        if name == "transfers":
+            prepare = operations.add_parser("prepare", help="Prepara envelope tipado de transferência.")
+            add_transfer_prepare(prepare)
         if name == "customers":
             prepare = operations.add_parser(
                 "prepare",
@@ -3352,7 +3524,7 @@ def main() -> int:
         return 2
     client: OmieClient | None = None
     try:
-        if args.handler in (execute_prepare_account_entry, execute_prepare_customer):
+        if args.handler in (execute_prepare_account_entry, execute_prepare_transfer, execute_prepare_customer):
             result = args.handler(args)
         else:
             config = load_config(Path(args.config).expanduser().resolve(), args.profile)

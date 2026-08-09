@@ -144,6 +144,40 @@ class IntegrationConfigTests(unittest.TestCase):
                     (PROJECT_ROOT / "config" / f"{filename}.example.toml").is_file()
                 )
 
+    def test_ssh_profile_set_updates_existing_typed_profile(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config").mkdir()
+            (root / "config" / "ssh.example.toml").write_text(
+                'default_profile = "turing"\n\n[profiles.turing]\n'
+                'host = ""\nport = 22\ncredential_ref = ""\nattachment_name = ""\n',
+                encoding="utf-8",
+            )
+            integration_config.initialize_integration("ssh", project_root=root)
+            result = integration_config.set_profile(
+                "ssh", "turing", "192.168.3.64", 22,
+                "Infraestrutura/Turing/SSH", "id_ed25519", project_root=root,
+            )
+            self.assertFalse(result["created"])
+            values = integration_config.list_profiles("ssh", project_root=root)
+            self.assertEqual("192.168.3.64", values["profiles"][0]["host"])
+            self.assertEqual("Infraestrutura/Turing/SSH", values["profiles"][0]["credential_ref"])
+            self.assertEqual("id_ed25519", values["profiles"][0]["attachment_name"])
+
+    def test_ssh_profile_rejects_path_in_attachment_name(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config").mkdir()
+            (root / "config" / "ssh.example.toml").write_text(
+                'default_profile = "turing"\n', encoding="utf-8"
+            )
+            integration_config.initialize_integration("ssh", project_root=root)
+            with self.assertRaises(integration_config.IntegrationConfigError):
+                integration_config.set_profile(
+                    "ssh", "turing", "127.0.0.1", 22, "APIs/SSH", "..\\key",
+                    project_root=root,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

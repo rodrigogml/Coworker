@@ -18,6 +18,10 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH = PROJECT_ROOT / "data" / "config" / "bis2.toml"
+DOC_FISCAL_STATUSES = (
+    "SELLING", "STORED", "SOLD", "CANCELLING", "CANCELED", "ERROR",
+    "ERROR_SYNC", "VOID", "SEFAZVALIDATING", "SEFAZPROBLEM", "SEFAZOFFLINE",
+)
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -178,7 +182,7 @@ def run_biscmd(
         password = ""
     stdout = _sanitize(completed.stdout, (username,))
     stderr = _sanitize(completed.stderr, (username,))
-    return {
+    result = {
         "ok": completed.returncode == 0,
         "profile": profile.name,
         "host": profile.host,
@@ -187,6 +191,21 @@ def run_biscmd(
         "stdout": stdout,
         "stderr": stderr,
     }
+    structured = []
+    for line in stdout.splitlines():
+        if line.startswith("BISJSON "):
+            try:
+                structured.append(json.loads(line[8:]))
+            except json.JSONDecodeError:
+                raise Bis2ToolError("O BISCMD retornou uma linha BISJSON inválida.")
+        elif line.startswith("BISMETA "):
+            try:
+                result["pagination"] = json.loads(line[8:])
+            except json.JSONDecodeError as exc:
+                raise Bis2ToolError("Invalid BISCMD pagination metadata.") from exc
+    if structured:
+        result["records"] = structured
+    return result
 
 
 def _base_arguments() -> argparse.ArgumentParser:
@@ -203,10 +222,49 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("help", help="Exibe ajuda do BISCMD.")
 
     list_keys = commands.add_parser("nfce-listagem-chaves", help="Lista chaves NFC-e de um período.")
-    list_keys.add_argument("--company-id", required=True)
-    list_keys.add_argument("--certificate-id", required=True)
+    list_keys.add_argument("--company-id")
+    list_keys.add_argument("--certificate-id")
     list_keys.add_argument("--start", required=True)
     list_keys.add_argument("--end", required=True)
+    list_keys.add_argument("--status", choices=DOC_FISCAL_STATUSES)
+    list_keys.add_argument("--limit", type=int, default=500)
+    list_keys.add_argument("--offset", type=int, default=0)
+
+    companies = commands.add_parser("companies-list", help="Lista empresas disponiveis com paginacao.")
+    companies.add_argument("--limit", type=int, default=500)
+    companies.add_argument("--offset", type=int, default=0)
+    certificates = commands.add_parser("certificates-list", help=argparse.SUPPRESS)
+    certificates.add_argument("--company-id")
+    certificates.add_argument("--limit", type=int, default=500)
+    certificates.add_argument("--offset", type=int, default=0)
+
+    items = commands.add_parser("items-list", help="Lista itens do cadastro com filtros e paginação.")
+    items.add_argument("--id", type=int)
+    items.add_argument("--code-id", type=int)
+    items.add_argument("--status")
+    items.add_argument("--code")
+    items.add_argument("--displayline")
+    items.add_argument("--limit", type=int, default=500)
+    items.add_argument("--offset", type=int, default=0)
+
+    item_update = commands.add_parser("item-update", help="Altera campo explícito de ItemVO ou ItemCodeVO.")
+    item_update.add_argument("--item-id", type=int, required=True)
+    item_update.add_argument("--code-id", type=int)
+    item_update.add_argument("--field", required=True)
+    item_update.add_argument("--value", required=True)
+    item_update.add_argument("--confirm", action="store_true", required=True)
+
+    price_update = commands.add_parser("item-price-update", help="Define preço aplicando as regras do BIS2.")
+    price_update.add_argument("--company-id", type=int, required=True)
+    price_update.add_argument("--code-id", type=int, required=True)
+    price_update.add_argument("--price", required=True)
+    price_update.add_argument("--confirm", action="store_true", required=True)
+
+    detail = commands.add_parser("nfce-detail", help="Consulta uma NFC-e detalhadamente por ID ou série/número.")
+    detail_ids = detail.add_mutually_exclusive_group(required=True)
+    detail_ids.add_argument("--id", type=int)
+    detail_ids.add_argument("--serie")
+    detail.add_argument("--number", type=int)
 
     download = commands.add_parser("nfce-download-xml", help="Consulta ou persiste XML autorizado de NFC-e.")
     download.add_argument("--company-id", required=True)
@@ -238,6 +296,15 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--number", required=True)
     update.add_argument("--status", required=True)
 
+    repair = commands.add_parser("doc-fiscal-repair", help="Corrige múltiplos campos de documento em SEFAZPROBLEM.")
+    repair.add_argument("--doc-id", type=int, required=True)
+    repair.add_argument("--set", dest="doc_sets", action="append", default=[], metavar="CAMPO=VALOR")
+    repair.add_argument("--nfce-set", action="append", default=[], metavar="CAMPO=VALOR")
+    repair.add_argument("--item-set", action="append", default=[], metavar="ITEM_ID:CAMPO=VALOR")
+    repair.add_argument("--payment-set", action="append", default=[], metavar="PAGAMENTO_ID:CAMPO=VALOR")
+    repair.add_argument("--clear", action="append", default=[], metavar="ESCOPO:ID:CAMPO")
+    repair.add_argument("--confirm", action="store_true", required=True)
+
     return parser
 
 
@@ -248,6 +315,17 @@ def build_biscmd_arguments(args: argparse.Namespace) -> tuple[list[str], bool]:
     if args.command == "help":
         return ["-h"], False
     if args.command == "nfce-listagem-chaves":
+        if args.status:
+            if args.limit < 1 or args.limit > 500:
+                raise Bis2ToolError("--limit deve estar entre 1 e 500.")
+            if args.offset < 0:
+                raise Bis2ToolError("--offset nao pode ser negativo.")
+            return [
+                "-facade", "-nfceStatusList", "status", args.status,
+                "start", args.start, "end", args.end, "limit", str(args.limit), "offset", str(args.offset),
+            ] + (["companyId", args.company_id] if args.company_id else []), False
+        if not args.company_id or not args.certificate_id:
+            raise Bis2ToolError("--company-id e --certificate-id são obrigatórios sem --status.")
         return [
             "-facade",
             "-nfceListagemChaves",
@@ -259,7 +337,47 @@ def build_biscmd_arguments(args: argparse.Namespace) -> tuple[list[str], bool]:
             args.start,
             "end",
             args.end,
+            "limit", str(args.limit), "offset", str(args.offset),
         ], False
+    if args.command == "companies-list":
+        if args.limit < 1 or args.limit > 500 or args.offset < 0:
+            raise Bis2ToolError("--limit deve estar entre 1 e 500 e --offset nao pode ser negativo.")
+        return ["-facade", "-companiesList", "limit", str(args.limit), "offset", str(args.offset)], False
+    if args.command == "certificates-list":
+        command = ["-facade", "-certificatesList"]
+        if args.company_id:
+            command.extend(["companyId", args.company_id])
+        if args.limit < 1 or args.limit > 500 or args.offset < 0:
+            raise Bis2ToolError("--limit deve estar entre 1 e 500 e --offset nao pode ser negativo.")
+        command.extend(["limit", str(args.limit), "offset", str(args.offset)])
+        return command, False
+    if args.command == "items-list":
+        if args.limit < 1 or args.limit > 500 or args.offset < 0:
+            raise Bis2ToolError("--limit deve estar entre 1 e 500 e --offset nao pode ser negativo.")
+        command = ["-facade", "-itemsList"]
+        if args.code_id is not None and args.id is None:
+            raise Bis2ToolError("--code-id exige --id do ItemVO.")
+        for key, value in (("id", args.id), ("codeId", args.code_id), ("status", args.status), ("code", args.code), ("displayline", args.displayline)):
+            if value is not None:
+                command.extend([key, str(value)])
+        command.extend(["limit", str(args.limit), "offset", str(args.offset)])
+        return command, False
+    if args.command == "item-update":
+        command = ["-facade", "-itemUpdate", "itemId", str(args.item_id)]
+        if args.code_id is not None:
+            command.extend(["codeId", str(args.code_id)])
+        command.extend(["field", args.field, "value", args.value, "confirm"])
+        return command, True
+    if args.command == "item-price-update":
+        return ["-facade", "-itemPriceUpdate", "companyId", str(args.company_id), "codeId", str(args.code_id), "price", args.price, "confirm"], True
+    if args.command == "nfce-detail":
+        if args.id is not None:
+            if args.number is not None:
+                raise Bis2ToolError("--number não pode ser usado com --id.")
+            return ["-facade", "-docFiscalDetail", str(args.id)], False
+        if args.number is None:
+            raise Bis2ToolError("--serie exige --number.")
+        return ["-facade", "-docFiscalDetail", "serie", args.serie, "number", str(args.number)], False
     if args.command == "nfce-download-xml":
         command = [
             "-facade",
@@ -305,7 +423,52 @@ def build_biscmd_arguments(args: argparse.Namespace) -> tuple[list[str], bool]:
         return ["-facade", "-validateDocFiscal", args.doc_id], True
     if args.command == "update-doc-fiscal-status":
         return ["-facade", "-updateDocFiscalStatus", args.serie, args.number, args.status], True
+    if args.command == "doc-fiscal-repair":
+        command = ["-facade", "-docFiscalRepair", "docId", str(args.doc_id)]
+        for spec in args.doc_sets:
+            field, value = _repair_assignment(spec, "campo")
+            command.extend(["DOC", field, value])
+        for spec in args.nfce_set:
+            field, value = _repair_assignment(spec, "campo NFC-e")
+            command.extend(["NFCE", field, value])
+        for spec in args.item_set:
+            object_id, field, value = _repair_scoped_assignment(spec, "item")
+            command.extend(["ITEM", object_id, field, value])
+        for spec in args.payment_set:
+            object_id, field, value = _repair_scoped_assignment(spec, "pagamento")
+            command.extend(["PAYMENT", object_id, field, value])
+        for spec in args.clear:
+            parts = spec.split(":")
+            if len(parts) == 2 and parts[0].lower() in {"doc", "nfce"}:
+                command.extend([parts[0].upper(), "CLEAR", parts[1]])
+            elif len(parts) == 3 and parts[0].lower() in {"item", "payment"}:
+                if not parts[1].isdigit() or not parts[2]:
+                    raise Bis2ToolError("--clear de item/pagamento deve ser ESCOPO:ID:CAMPO.")
+                command.extend([parts[0].upper(), parts[1], "CLEAR", parts[2]])
+            else:
+                raise Bis2ToolError("--clear deve usar DOC:CAMPO, NFCE:CAMPO, ITEM:ID:CAMPO ou PAYMENT:ID:CAMPO.")
+        command.append("confirm")
+        return command, True
     raise Bis2ToolError(f"Comando não suportado: {args.command}.")
+
+
+def _repair_assignment(spec: str, label: str) -> tuple[str, str]:
+    if "=" not in spec:
+        raise Bis2ToolError(f"{label} deve usar CAMPO=VALOR.")
+    field, value = spec.split("=", 1)
+    if not field:
+        raise Bis2ToolError(f"{label} não pode ter campo vazio.")
+    return field, value
+
+
+def _repair_scoped_assignment(spec: str, label: str) -> tuple[str, str, str]:
+    if ":" not in spec or "=" not in spec:
+        raise Bis2ToolError(f"{label} deve usar ID:CAMPO=VALOR.")
+    object_id, assignment = spec.split(":", 1)
+    if not object_id.isdigit():
+        raise Bis2ToolError(f"ID de {label} inválido: {object_id}.")
+    field, value = _repair_assignment(assignment, label)
+    return object_id, field, value
 
 
 def print_json(payload: Any, *, stream: Any = sys.stdout) -> None:
