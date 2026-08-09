@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import queue
 import re
 import shutil
@@ -71,6 +72,7 @@ from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
 )
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
 from scheduler import SchedulerStore, TaskScheduler, run_python_script  # noqa: E402
+from scripts.app_logging import close_logging, configure_logging, log_event  # noqa: E402
 from skills.totp.core import TotpError, decode_qr, format_codes, parse_input, totp_codes  # noqa: E402
 from skills.totp.vault import TotpVaultError, find_records, read as read_totp, store as store_totp  # noqa: E402
 from interfaces.telegram.automation_state import AutomationState, AutomationStateError  # noqa: E402
@@ -123,6 +125,8 @@ BOT_COMMANDS = (
     ("totp", "Cadastrar ou consultar códigos TOTP"),
     ("help", "Listar os comandos disponíveis"),
 )
+
+LOGGER = logging.getLogger("coworker.telegram")
 
 REDACTED_SECRET = "[Censurado por segurança]"
 SETTINGS_PANEL_TTL_SECONDS = 15 * 60
@@ -677,31 +681,31 @@ class Gateway:
         return records
 
     def _set_reaction(
-        self, chat_id: int, message_ids: tuple[int, ...], emoji: str | None
+        self,
+        chat_id: int,
+        message_ids: tuple[int, ...],
+        emoji: str | None,
+        *,
+        transition: str,
+        job_id: int | None = None,
+        update_id: int | None = None,
     ) -> None:
         """Atualiza a reação de referência sem interromper o trabalho se falhar."""
         setter = getattr(self.api, "set_message_reaction", None)
         if setter is None:
             return
         if not message_ids:
+            log_event(LOGGER, logging.WARNING, "telegram_reaction_skipped", chat_id=chat_id, emoji=emoji, transition=transition, job_id=job_id, update_id=update_id, reason="missing_message_id")
             return
         # O Bot API aplica a reação de um media group à primeira mensagem não
         # excluída. Usar uma única referência também evita chamadas concorrentes.
         message_id = message_ids[0]
+        log_event(LOGGER, logging.DEBUG, "telegram_reaction_attempt", chat_id=chat_id, message_id=message_id, emoji=emoji, transition=transition, job_id=job_id, update_id=update_id)
         try:
-            setter(chat_id, message_id, emoji)
+            result = setter(chat_id, message_id, emoji)
+            log_event(LOGGER, logging.INFO, "telegram_reaction_applied", chat_id=chat_id, message_id=message_id, emoji=emoji, transition=transition, job_id=job_id, update_id=update_id, result=result)
         except TelegramApiError as exc:
-            print_json(
-                {
-                    "ok": False,
-                    "warning": "Falha ao atualizar reação Telegram",
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "reaction": emoji,
-                    "error": str(exc)[:300],
-                },
-                stream=sys.stderr,
-            )
+            log_event(LOGGER, logging.ERROR, "telegram_reaction_failed", chat_id=chat_id, message_id=message_id, emoji=emoji, transition=transition, job_id=job_id, update_id=update_id, error=str(exc)[:300])
 
     @staticmethod
     def _inline_keyboard(rows: list[list[tuple[str, str]]]) -> dict[str, Any]:
@@ -1300,6 +1304,9 @@ class Gateway:
             chat_id,
             (message_id,),
             QUEUE_REACTION if already_busy else choose_processing_reaction(),
+            transition="queued" if already_busy else "received",
+            job_id=job_id,
+            update_id=update_id,
         )
         self.work.put(
             WorkItem(
@@ -1781,6 +1788,9 @@ class Gateway:
                     inbound.chat_id,
                     inbound.message_ids,
                     QUEUE_REACTION if already_busy else choose_processing_reaction(),
+                    transition="queued" if already_busy else "received",
+                    job_id=job_id,
+                    update_id=inbound.update_ids[0],
                 )
             else:
                 with self.state_lock:
@@ -2201,7 +2211,7 @@ class Gateway:
             with self.state_lock:
                 cancelled = self.state.job_status(item.job_id) == "cancelled"
             if cancelled:
-                self._set_reaction(item.inbound.chat_id, item.inbound.message_ids, None)
+                self._set_reaction(item.inbound.chat_id, item.inbound.message_ids, None, transition="cancelled", job_id=item.job_id, update_id=item.inbound.update_ids[0])
                 continue
             self._execute(item)
 
@@ -2226,6 +2236,9 @@ class Gateway:
                 inbound.chat_id,
                 inbound.message_ids,
                 choose_processing_reaction(),
+                transition="running",
+                job_id=item.job_id,
+                update_id=inbound.update_ids[0],
             )
             with self.state_lock:
                 self.state.set_job_workspace(item.job_id, workspace.root)
@@ -2373,6 +2386,9 @@ class Gateway:
                 inbound.chat_id,
                 inbound.message_ids,
                 COMPLETED_REACTION,
+                transition="completed",
+                job_id=item.job_id,
+                update_id=inbound.update_ids[0],
             )
         except CodexCancelledError as exc:
             if progress and not progress_finished:
@@ -2380,7 +2396,7 @@ class Gateway:
                 progress_finished = True
             with self.state_lock:
                 self.state.update_job(item.job_id, "cancelled", error=str(exc))
-            self._set_reaction(inbound.chat_id, inbound.message_ids, None)
+            self._set_reaction(inbound.chat_id, inbound.message_ids, None, transition="cancelled", job_id=item.job_id, update_id=inbound.update_ids[0])
             try:
                 self._send(inbound.chat_id, "A execução foi cancelada.", update_id=inbound.update_ids[0])
             except TelegramApiError:
@@ -2391,7 +2407,7 @@ class Gateway:
                 progress_finished = True
             with self.state_lock:
                 self.state.update_job(item.job_id, "failed", error=str(exc))
-            self._set_reaction(inbound.chat_id, inbound.message_ids, None)
+            self._set_reaction(inbound.chat_id, inbound.message_ids, None, transition="failed", job_id=item.job_id, update_id=inbound.update_ids[0])
             try:
                 self._send(inbound.chat_id, f"Não foi possível concluir: {exc}", update_id=inbound.update_ids[0])
             except TelegramApiError:
@@ -2841,6 +2857,8 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
 
 def command_run(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(Path(args.config))
+    configure_logging(config.logging)
+    log_event(LOGGER, logging.INFO, "gateway_start_requested", instance_id=config.identity.instance_id, config=args.config)
     runtime = claim_runtime(config.state_dir, config.identity.instance_id)
     pid = int(runtime["pid"])
     monitor_done = threading.Event()
@@ -2903,6 +2921,8 @@ def command_run(args: argparse.Namespace) -> dict[str, Any]:
         if monitor is not None:
             monitor.join(timeout=2)
         release_runtime(config.state_dir, pid)
+        log_event(LOGGER, logging.INFO, "gateway_stopped", instance_id=config.identity.instance_id, pid=pid)
+        close_logging()
     return {"ok": True, "stopped": True, "restart_handoff": restart_handoff}
 
 

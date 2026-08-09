@@ -116,6 +116,14 @@ class RetentionConfig:
 
 
 @dataclass(frozen=True)
+class LoggingConfig:
+    enabled: bool = True
+    level: str = "INFO"
+    directory: Path = DATA_DIR / "log"
+    retention_days: int = 15
+
+
+@dataclass(frozen=True)
 class TelegramGroupConfig:
     """Política privada de um grupo Telegram vinculado à instância."""
 
@@ -145,6 +153,7 @@ class TelegramConfig:
     webhook: WebhookConfig
     feedback: FeedbackConfig = FeedbackConfig()
     retention: RetentionConfig = RetentionConfig()
+    logging: LoggingConfig = LoggingConfig()
     groups: tuple[TelegramGroupConfig, ...] = ()
 
 
@@ -240,6 +249,29 @@ def _retention_config(values: dict[str, Any]) -> RetentionConfig:
             )
         numbers.append(number)
     return RetentionConfig(*numbers)
+
+
+def _logging_config(values: dict[str, Any]) -> LoggingConfig:
+    raw = values.get("logging", {})
+    if not isinstance(raw, dict):
+        raise TelegramConfigError("A seção [logging] deve ser uma tabela TOML.")
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise TelegramConfigError("'logging.enabled' deve ser booleano.")
+    level = str(raw.get("level", "INFO")).strip().upper()
+    if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise TelegramConfigError(
+            "'logging.level' deve ser DEBUG, INFO, WARNING, ERROR ou CRITICAL."
+        )
+    try:
+        retention_days = int(raw.get("retention_days", 15))
+    except (TypeError, ValueError) as exc:
+        raise TelegramConfigError("'logging.retention_days' deve ser inteiro.") from exc
+    if not 1 <= retention_days <= 3650:
+        raise TelegramConfigError("'logging.retention_days' deve estar entre 1 e 3650 dias.")
+    directory = _resolve(raw.get("directory", "data/log"), PROJECT_ROOT)
+    assert directory is not None
+    return LoggingConfig(enabled, level, _require_data_path(directory, "logging.directory"), retention_days)
 
 
 def _group_configs(values: dict[str, Any], retention: RetentionConfig) -> tuple[TelegramGroupConfig, ...]:
@@ -545,6 +577,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
     if not isinstance(feedback_values, dict):
         raise TelegramConfigError("A seção [feedback] deve ser uma tabela TOML.")
     retention = _retention_config(values)
+    logging_config = _logging_config(values)
     groups = _group_configs(values, retention)
     typing_interval = float(feedback_values.get("typing_interval_seconds", 4.0))
     if not 1.0 <= typing_interval <= 5.0:
@@ -622,5 +655,6 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             typing_interval,
         ),
         retention=retention,
+        logging=logging_config,
         groups=groups,
     )
