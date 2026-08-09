@@ -3,7 +3,7 @@ import time
 import unittest
 from pathlib import Path
 
-from interfaces.telegram.scheduler import (
+from scheduler import (
     ScheduledTask,
     SchedulerError,
     SchedulerStore,
@@ -14,6 +14,11 @@ from interfaces.telegram.scheduler import (
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_scheduler_core_is_not_owned_by_telegram(self):
+        import scheduler
+
+        self.assertEqual("scheduler", scheduler.__name__)
+
     def test_rejects_script_outside_allowed_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

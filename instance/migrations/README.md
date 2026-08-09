@@ -16,4 +16,5 @@ progresso da interface sem ativá-lo automaticamente em bancos existentes.
 
 Os bancos locais não são versionados. A memória fica em `data/memory.sqlite3`; o banco
 do Telegram fica, por padrão, em
-`instance/data/telegram/state/telegram.sqlite3`.
+`instance/data/telegram/state/telegram.sqlite3`; o estado independente do scheduler
+fica em `instance/data/scheduler/scheduler.sqlite3`.

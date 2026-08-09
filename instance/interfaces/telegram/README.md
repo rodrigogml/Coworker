@@ -463,16 +463,26 @@ Ao reiniciar, jobs que estavam na fila ou executando são marcados como falhos. 
 artefato que estava em `uploading` passa para `unknown`: ele não é reenviado
 automaticamente, pois a Bot API pode ter aceitado o upload antes da queda e não oferece
 uma chave geral de idempotência para essa operação.
-### Grupos, tópicos e scheduler
+### Grupos e tópicos Telegram
 
 Grupos configurados como supergrupo-fórum passam por validação de privacidade
 desligada, permissão de gerenciamento de tópicos e membros autorizados. Todas as
 mensagens são registradas para formar contexto, mas somente menções, respostas ao
 bot, comandos e aprovações chegam ao Codex.
 
-O scheduler privado usa `data/telegram/state/scheduler.sqlite3` e é iniciado/encerrado com o
-gateway. O MVP executa somente scripts Python existentes em `data/`, `interfaces/`
-ou `skills/`, sem shell, código inline ou caminho externo. A retenção de mensagens,
+O Telegram é um adaptador opcional de notificação para o scheduler da instância. O
+núcleo é independente, usa `data/scheduler/scheduler.sqlite3`, é controlado pelo
+gateway/orquestrador e pode ser consultado/configurado sem Bot API:
+
+```powershell
+python scripts/scheduler.py status
+python scripts/scheduler.py list
+python scripts/scheduler.py enable TASK_UID
+python scripts/scheduler.py disable TASK_UID
+```
+
+O MVP executa somente scripts Python existentes em `data/`, `interfaces/` ou `skills/`,
+sem shell, código inline ou caminho externo. A retenção de mensagens,
 anexos, artefatos e resumos usa padrão mínimo de 180 dias, configurável para prazos
 maiores no TOML privado.
 ### Serviço Windows e futuro Linux

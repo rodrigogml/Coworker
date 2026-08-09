@@ -65,7 +65,7 @@ from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
     spawn_relauncher,
 )
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
-from interfaces.telegram.scheduler import SchedulerStore, TaskScheduler, run_python_script  # noqa: E402
+from scheduler import SchedulerStore, TaskScheduler, run_python_script  # noqa: E402
 from interfaces.telegram.automation_state import AutomationState, AutomationStateError  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
 from interfaces.telegram.progress import (  # noqa: E402
@@ -330,7 +330,7 @@ class Gateway:
         self.config = config
         self.api = api
         self.state = StateStore(config.state_dir)
-        automation_db = config.project_root / "data" / "automation" / "scheduler.sqlite3"
+        automation_db = config.project_root / "data" / "scheduler" / "scheduler.sqlite3"
         self.scheduler_store = SchedulerStore(automation_db)
         self.automation_state = AutomationState(automation_db)
         self.state.recover_interrupted_jobs()
@@ -377,11 +377,14 @@ class Gateway:
         return any(entity.get("type") == "mention" for entity in (message.get("entities") or []))
 
     def _run_scheduled_task(self, task, run_uid: str) -> object:
-        if task.telegram_chat_id is None:
-            return {"ok": False, "status": "notification_pending", "run_uid": run_uid}
-        group = next((g for g in self.config.groups if g.chat_id == task.telegram_chat_id), None)
-        if group is None or not self.automation_state.group_valid(group.alias):
-            return {"ok": False, "status": "notification_pending", "reason": "grupo Telegram inválido"}
+        # A tarefa pertence ao scheduler; Telegram é somente um destino opcional.
+        target_chat_id = task.telegram_chat_id
+        execution_chat_id = target_chat_id if target_chat_id is not None else -abs(hash(task.task_uid))
+        group = None
+        if target_chat_id is not None:
+            group = next((g for g in self.config.groups if g.chat_id == target_chat_id), None)
+            if group is None or not self.automation_state.group_valid(group.alias):
+                return {"ok": False, "status": "notification_pending", "reason": "grupo Telegram inválido"}
         definition = {
             "task_uid": task.task_uid, "topic_title": task.topic_title,
             "topic_policy": task.topic_policy, "thread_policy": task.thread_policy,
@@ -389,12 +392,19 @@ class Gateway:
             "prompt": task.prompt if not task.script_path else None,
             "script_id": task.task_uid if task.script_path else None, "enabled": True,
         }
-        if self.automation_state.task(task.task_uid) is None:
+        if group is not None and self.automation_state.task(task.task_uid) is None:
             self.automation_state.save_task(definition, group_alias=group.alias)
         try:
-            self.automation_state.create_run(run_uid, task.task_uid)
+            if group is None:
+                create_run = False
+            else:
+                create_run = True
+            if not create_run:
+                pass
+            else:
+                self.automation_state.create_run(run_uid, task.task_uid)
         except AutomationStateError:
-            existing = self.automation_state.run_for_topic(task.telegram_chat_id, 0)
+            existing = self.automation_state.run_for_topic(target_chat_id, 0)
             if existing:
                 return {"ok": False, "status": "duplicate", "run_uid": run_uid}
             raise
@@ -423,12 +433,14 @@ class Gateway:
         )
         try:
             result = self.codex.run(
-                task.telegram_chat_id, prompt, None, [],
-                options=self._codex_options(task.telegram_chat_id),
+                execution_chat_id, prompt, None, [],
+                options=self._codex_options(execution_chat_id),
             )
         except CodexExecutionError:
             self.automation_state.update_run_status(run_uid, "unknown")
             raise
+        if target_chat_id is None:
+            return {"ok": True, "run_uid": run_uid, "thread_id": result.thread_id, "event": event_result}
         title = topic_title_for_run(task.topic_title, task.topic_policy, run_uid)
         try:
             topic = self.api.create_forum_topic(task.telegram_chat_id, title)
@@ -2558,7 +2570,7 @@ def command_permissions(args: argparse.Namespace) -> dict[str, Any]:
 def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(Path(args.config), require_codex=False)
     state = StateStore(config.state_dir)
-    automation_state = AutomationState(config.project_root / "data" / "automation" / "scheduler.sqlite3")
+    automation_state = AutomationState(config.project_root / "data" / "scheduler" / "scheduler.sqlite3")
     result: dict[str, Any] = {
         "ok": True,
         "telegram": None,
