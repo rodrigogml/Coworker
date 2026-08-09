@@ -288,6 +288,13 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--all", action="store_true")
     send.add_argument("--confirm", action="store_true", required=True)
 
+    fix_xml = commands.add_parser(
+        "nfce-fix-envi-xml",
+        help="Reconstrói o XML de envio de uma NFC-e em SEFAZPROBLEM.",
+    )
+    fix_xml.add_argument("--doc-id", type=int, required=True)
+    fix_xml.add_argument("--confirm", action="store_true", required=True)
+
     validate = commands.add_parser("validate-doc-fiscal", help="Revalida documento fiscal por ID.")
     validate.add_argument("--doc-id", required=True)
 
@@ -419,6 +426,14 @@ def build_biscmd_arguments(args: argparse.Namespace) -> tuple[list[str], bool]:
             command.extend(["docId", args.doc_id])
         command.append("confirm")
         return command, True
+    if args.command == "nfce-fix-envi-xml":
+        return [
+            "-facade",
+            "-fixNFCeEnviXML",
+            "docId",
+            str(args.doc_id),
+            "confirm",
+        ], True
     if args.command == "validate-doc-fiscal":
         return ["-facade", "-validateDocFiscal", args.doc_id], True
     if args.command == "update-doc-fiscal-status":

@@ -48,3 +48,15 @@ Todas as listagens retornam metadados de paginação no campo `pagination`:
 `complete`, `truncated`, `limit`, `offset`, `next_offset`, `total` e `total_known`.
 O limite máximo é 500. Quando `complete` for falso, consulte a próxima página usando
 `--offset` igual a `next_offset`; nunca interprete uma página truncada como ausência de registros.
+## Recuperação de NFC-e com problema de envio
+
+São duas operações independentes e devem ser executadas nesta ordem, depois de
+confirmar o documento e corrigir seus dados no banco:
+
+1. `nfce-fix-envi-xml` chama `DocFiscalCrud.fixNFCeEnviXML(id)`, reconstrói o XML
+   com os dados persistidos e muda o documento de `SEFAZPROBLEM` para
+   `SEFAZOFFLINE`.
+2. `nfce-send-offline` chama o fluxo de envio de contingência para a SEFAZ. Ele
+   espera o XML pronto e o status `SEFAZOFFLINE`.
+
+O segundo comando não substitui o primeiro quando o XML está desatualizado.
