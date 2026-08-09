@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import shutil
 from pathlib import Path
 
@@ -75,6 +76,42 @@ def _rewrite_config(path: Path, *, apply: bool) -> bool:
     return True
 
 
+def _rewrite_codex_rollout_paths(legacy_codex: Path, current_codex: Path, *, apply: bool) -> int:
+    """Atualiza índices do Codex depois de mover sessões para data/codex."""
+    database = current_codex / "state_5.sqlite"
+    if not database.is_file():
+        return 0
+    connection = sqlite3.connect(database)
+    try:
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'"
+        ).fetchone() is None:
+            return 0
+        rows = connection.execute(
+            "SELECT rowid, rollout_path FROM threads WHERE rollout_path IS NOT NULL"
+        ).fetchall()
+        old_root = str(legacy_codex.resolve())
+        updates: list[tuple[str, int]] = []
+        for rowid, raw_path in rows:
+            value = str(raw_path)
+            normalized = value[4:] if value.startswith("\\\\?\\") else value
+            if not normalized.casefold().startswith(old_root.casefold()):
+                continue
+            suffix = normalized[len(old_root):]
+            target = current_codex / suffix.lstrip("\\/")
+            if not target.is_file():
+                raise MigrationError(f"Rollout não encontrado após a migração: {target}")
+            updates.append((str(target), int(rowid)))
+        if apply:
+            with connection:
+                connection.executemany(
+                    "UPDATE threads SET rollout_path=? WHERE rowid=?", updates
+                )
+        return len(updates)
+    finally:
+        connection.close()
+
+
 def migrate(
     instance_id: str,
     legacy_root: Path,
@@ -87,8 +124,13 @@ def migrate(
     if not legacy_root.exists():
         return {"ok": True, "instance_id": instance_id, "source_exists": False, "moved": [], "config_updated": False}
     moved: list[str] = []
-    _merge(legacy_root / "codex", DATA_DIR / "codex", apply=apply, remove_source=remove_source, moved=moved)
+    legacy_codex = legacy_root / "codex"
+    current_codex = DATA_DIR / "codex"
+    _merge(legacy_codex, current_codex, apply=apply, remove_source=remove_source, moved=moved)
     _merge(legacy_root / "telegram", DATA_DIR / "telegram" / "state", apply=apply, remove_source=remove_source, moved=moved)
+    rollout_paths_updated = _rewrite_codex_rollout_paths(
+        legacy_codex, current_codex, apply=apply
+    )
     config_updated = _rewrite_config(DATA_DIR / "config" / "telegram.toml", apply=apply)
     if apply and remove_source and legacy_root.exists() and not any(legacy_root.iterdir()):
         legacy_root.rmdir()
@@ -98,6 +140,7 @@ def migrate(
         "source_exists": True,
         "moved": moved,
         "config_updated": config_updated,
+        "rollout_paths_updated": rollout_paths_updated,
         "source_removed": not legacy_root.exists(),
         "dry_run": not apply,
     }
