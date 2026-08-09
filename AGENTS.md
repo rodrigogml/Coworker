@@ -12,6 +12,10 @@ instâncias fica em [`instance/`](instance/).
 - Alterações de runtime devem ser implementadas dentro de `instance/` e acompanhadas
   de testes e documentação.
 - O contrato de execução da instância está em [`instance/AGENTS.md`](instance/AGENTS.md).
+- Todo conteúdo privado e volátil de uma instância deve permanecer em
+  `instance/data/`, ignorado pelo Git e usado como raiz única de backup. É proibido
+  espalhar estado, `CODEX_HOME`, runtime do Telegram, caches, logs ou cópias de código
+  pelo perfil do usuário ou por diretórios do sistema operacional.
 
 ## Validação
 
