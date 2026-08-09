@@ -37,6 +37,7 @@ from interfaces.telegram.config import (
     MediaConfig,
     PairingConfig,
     ProcessorConfig,
+    TelegramConfigError,
     TelegramConfig,
     WebhookConfig,
     load_config,
@@ -150,11 +151,11 @@ class StructuredStateTests(unittest.TestCase):
             )
             normalized = root.as_posix()
             config_path.write_text(
-                f'''transport = "polling"\ncredential_ref = "entry"\nproject_root = "{normalized}"\nstate_dir = "{normalized}/state"\n'''
+                f'''transport = "polling"\ncredential_ref = "entry"\nproject_root = "{normalized}"\nstate_dir = "data/telegram/state"\n'''
                 "poll_timeout_seconds = 10\nrequest_timeout_seconds = 10\n"
                 "[pairing]\nttl_seconds = 600\nmax_attempts = 5\n"
                 "[codex]\nexecutable = \"\"\nhome_dir = \"\"\nsandbox = \"workspace-write\"\nnetwork_access = false\napproval_policy = \"never\"\ntimeout_seconds = 60\nadditional_directories = []\n"
-                f'''[media]\ninbox_dir = "{normalized}/inbox"\nmax_download_bytes = 1000\n'''
+                f'''[media]\ninbox_dir = "data/telegram/inbox"\nmax_download_bytes = 1000\n'''
                 "[webhook]\npublic_url = \"\"\nsecret_credential_ref = \"\"\nlisten_host = \"127.0.0.1\"\nlisten_port = 8787\n",
                 encoding="utf-8",
             )
@@ -169,6 +170,26 @@ class StructuredStateTests(unittest.TestCase):
         )
         self.assertEqual(20 * 1024 * 1024, config.media.max_upload_bytes)
         self.assertEqual(before, after)
+
+    def test_persistent_paths_outside_instance_data_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "telegram.toml"
+            (root / "identity.toml").write_text(
+                '''[identity]\ninstance_id = "teste"\ndisplay_name = "Assistente Teste"\nlanguage = "pt-BR"\ngrammatical_gender = "neutral"\npronouns = ""\nsummary = "Assistente usada em testes."\ntone = "direto"\nhumor = "nenhum"\nenthusiasm = "moderada"\nwriting_style = "conciso"\nbio = "Identidade fictícia."\n''',
+                encoding="utf-8",
+            )
+            config_path.write_text(
+                'transport = "polling"\ncredential_ref = "entry"\n'
+                'state_dir = "C:/fora-da-instancia"\n'
+                '[pairing]\nttl_seconds = 600\nmax_attempts = 5\n'
+                '[codex]\nhome_dir = "data/codex"\n'
+                '[media]\ninbox_dir = "data/telegram/inbox"\n'
+                '[webhook]\npublic_url = ""\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(TelegramConfigError, "dentro de"):
+                load_config(config_path, require_codex=False)
 
 
 class WorkspaceTests(unittest.TestCase):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import tomllib
@@ -16,6 +15,7 @@ from interfaces.telegram.feedback import IMMEDIATE_MESSAGES, QUEUED_MESSAGES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_CONFIG = PROJECT_ROOT / "data" / "config" / "telegram.toml"
 EXAMPLE_CONFIG = PROJECT_ROOT / "config" / "telegram.example.toml"
 
@@ -162,6 +162,20 @@ def _resolve(raw: Any, base: Path, *, allow_empty: bool = False) -> Path | None:
         raise TelegramConfigError("Um caminho obrigatório está vazio.")
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+
+def _require_data_path(path: Path, label: str) -> Path:
+    """Garante que o estado persistente permaneça dentro de instance/data."""
+    data_root = DATA_DIR.resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(data_root)
+    except ValueError as exc:
+        raise TelegramConfigError(
+            f"'{label}' deve ficar dentro de '{data_root}'. "
+            "Migre a instância para instance/data antes de iniciar o gateway."
+        ) from exc
+    return resolved
 
 
 def _feedback_messages(raw: Any, default: tuple[str, ...], name: str) -> tuple[str, ...]:
@@ -357,16 +371,15 @@ def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
 
 
 def default_state_dir(instance_id: str) -> Path:
-    """Mantém o estado volátil fora do diretório sincronizado do projeto."""
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        return Path(local_app_data) / "Coworker" / "instances" / instance_id / "telegram"
-    return Path.home() / ".coworker" / "instances" / instance_id / "telegram"
+    """Retorna o estado volátil da instância dentro de instance/data."""
+    del instance_id
+    return DATA_DIR / "telegram" / "state"
 
 
 def default_codex_home(instance_id: str) -> Path:
-    """Isola autenticação, configuração e sessões usadas pela interface remota."""
-    return default_state_dir(instance_id).parent / "codex"
+    """Retorna o CODEX_HOME privado dentro de instance/data."""
+    del instance_id
+    return DATA_DIR / "codex"
 
 
 def discover_codex(raw: Any) -> Path:
@@ -422,10 +435,13 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         else default_state_dir(identity.instance_id).resolve()
     )
     assert state_dir is not None
+    state_dir = _require_data_path(state_dir, "state_dir")
     inbox_dir = _resolve(media_values.get("inbox_dir"), PROJECT_ROOT)
     assert inbox_dir is not None
+    inbox_dir = _require_data_path(inbox_dir, "media.inbox_dir")
     jobs_dir = _resolve(media_values.get("jobs_dir", "data/telegram/jobs"), PROJECT_ROOT)
     assert jobs_dir is not None
+    jobs_dir = _require_data_path(jobs_dir, "media.jobs_dir")
     executable = (
         discover_codex(codex_values.get("executable"))
         if require_codex
@@ -438,12 +454,14 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         else default_codex_home(identity.instance_id).resolve()
     )
     assert codex_home is not None
+    codex_home = _require_data_path(codex_home, "codex.home_dir")
     raw_generated_images = str(codex_values.get("generated_images_dir", "")).strip()
     generated_images = (
         _resolve(raw_generated_images, PROJECT_ROOT)
         if raw_generated_images
         else (codex_home / "generated_images").resolve()
     )
+    generated_images = _require_data_path(generated_images, "codex.generated_images_dir")
     additional = tuple(
         path
         for item in codex_values.get("additional_directories", [])
@@ -454,6 +472,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
         for item in codex_values.get("writable_directories", ["data"])
         if (path := _resolve(item, PROJECT_ROOT)) is not None
     )
+    writable = tuple(_require_data_path(path, "codex.writable_directories") for path in writable)
     raw_access_mode = codex_values.get("access_mode")
     access_mode = str(raw_access_mode or "restricted").strip().casefold()
     if access_mode not in {"restricted", "super"}:

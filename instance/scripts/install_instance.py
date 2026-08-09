@@ -295,7 +295,7 @@ def _telegram_content(
 transport = "polling"
 credential_ref = {_toml_string(credential_ref)}
 project_root = "."
-state_dir = ""
+    state_dir = "data/telegram/state"
 poll_timeout_seconds = 45
 request_timeout_seconds = 60
 
@@ -305,9 +305,9 @@ max_attempts = 5
 
 [codex]
 executable = {_toml_string(str(settings['executable']))}
-home_dir = {_toml_string(str(settings['home_dir']))}
+home_dir = "data/codex"
 backend = {_toml_string(str(settings['backend']))}
-generated_images_dir = {_toml_string(str(settings['generated_images_dir']))}
+generated_images_dir = "data/codex/generated_images"
 access_mode = {_toml_string(str(settings['access_mode']))}
 sandbox = {_toml_string(str(settings['sandbox']))}
 network_access = {str(bool(settings['network_access'])).lower()}
@@ -1261,8 +1261,13 @@ def configure_codex(instance_id: str) -> dict[str, Any]:
         elif answer == "2":
             raw = _ask("CODEX_HOME privado desta instância", str(status["home_dir"]))
             home = _resolve_configured_path(raw)
+            try:
+                home.relative_to(DATA_DIR.resolve())
+            except ValueError:
+                print(f"CODEX_HOME deve ficar dentro de {DATA_DIR}.")
+                continue
             home.mkdir(parents=True, exist_ok=True)
-            values["home_dir"] = str(home)
+            values["home_dir"] = "data/codex"
             changed = True
         elif answer == "3":
             if executable is None:

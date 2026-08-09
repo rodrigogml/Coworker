@@ -2,7 +2,7 @@
 transport = "polling"
 credential_ref = "APIs/Telegram/INSTANCE_ID"
 project_root = "."
-state_dir = ""
+state_dir = "data/telegram/state"
 poll_timeout_seconds = 45
 request_timeout_seconds = 60
 
@@ -30,9 +30,9 @@ max_attempts = 5
 
 [codex]
 executable = ""
-home_dir = ""
+home_dir = "data/codex"
 backend = "exec"
-generated_images_dir = ""
+generated_images_dir = "data/codex/generated_images"
 access_mode = "restricted"
 sandbox = "workspace-write"
 network_access = false

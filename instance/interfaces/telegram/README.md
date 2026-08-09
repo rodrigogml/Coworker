@@ -56,7 +56,8 @@ seguros.
    seção. O valor é registrado em `codex.executable`.
 7. O campo `codex.home_dir` identifica a instância isolada usada pelo gateway. O
    configurador grava explicitamente o padrão
-   `%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`; ele não deve apontar para o
+   `data/codex`; ele não deve apontar para o perfil global do Codex ou para qualquer
+   diretório fora de `instance/data`;
    diretório do Codex Desktop.
 8. Mantenha `codex.network_access = false` até decidir habilitar integrações externas.
    Para Gmail, Notion e outras APIs, altere-o para `true` após autorização explícita.
@@ -121,13 +122,13 @@ python interfaces/telegram/gateway.py run
 O configurador local também administra o processo persistente. Execute
 `python scripts/install_instance.py` e escolha **6. Gerenciar gateway Telegram**
 para consultar o status, iniciar, finalizar ou reiniciar. O processo registra PID e
-horário em `<state_dir>/gateway-runtime.json`; a finalização usa uma
+horário em `data/telegram/state/gateway-runtime.json`; a finalização usa uma
 solicitação cooperativa e espera o polling corrente terminar. O registro
 também impede duas cópias gerenciadas da mesma instância.
 
 A inicialização tenta sincronizar comandos, nome e descrições públicas, mas uma
 limitação temporária dessas edições pela Bot API não impede mais o polling. Avisos e
-falhas de inicialização ficam em `<state_dir>/gateway.log`; quando o processo encerrar
+falhas de inicialização ficam em `data/telegram/state/gateway.log`; quando o processo encerrar
 prematuramente, o configurador apresenta a última linha desse log. Respostas HTTP 429
 incluem o tempo de espera informado pelo Telegram, sem revelar o token.
 
@@ -383,8 +384,8 @@ de runtime ficam em `instance/AGENTS.md`; preferências privadas opcionais ficam
 ## Dados e segurança
 
 Por padrão, o SQLite operacional fica em
-`%LOCALAPPDATA%\Coworker\instances\<instance_id>\telegram`. Isso evita
-sincronização concorrente de um banco ativo. Entradas, derivados e saídas ficam em
+`data/telegram/state`. Todo o estado volátil, incluindo runtime, logs, scheduler,
+jobs, entradas e derivados, fica dentro de `instance/data/`. Entradas, derivados e saídas ficam em
 `data/telegram/jobs/`, com metadados, tamanho e SHA-256, e permanecem ignorados pelo Git.
 
 A autorização usa os IDs numéricos do usuário e da conversa, nunca o `@username`.
@@ -437,7 +438,7 @@ drena o trabalho atual e os itens que j&aacute; estavam na fila. Depois que o PI
 termina, o relan&ccedil;ador inicia outra c&oacute;pia, confirma o novo PID e sai.
 
 O estado transit&oacute;rio usa `gateway-restart-request.json` e
-`gateway-restart-worker.json` dentro de `state_dir`; o diagn&oacute;stico fica em
+`gateway-restart-worker.json` dentro de `data/telegram/state`; o diagn&oacute;stico fica em
 `gateway-restart.log`. O relan&ccedil;ador &eacute; criado pelo gateway, e n&atilde;o
 pelo processo tempor&aacute;rio do Codex, para sobreviver ao encerramento da &aacute;rvore
 do trabalho. Solicita&ccedil;&otilde;es duplicadas s&atilde;o recusadas.
@@ -469,7 +470,7 @@ desligada, permissão de gerenciamento de tópicos e membros autorizados. Todas 
 mensagens são registradas para formar contexto, mas somente menções, respostas ao
 bot, comandos e aprovações chegam ao Codex.
 
-O scheduler privado usa `state_dir/scheduler.sqlite3` e é iniciado/encerrado com o
+O scheduler privado usa `data/telegram/state/scheduler.sqlite3` e é iniciado/encerrado com o
 gateway. O MVP executa somente scripts Python existentes em `data/`, `interfaces/`
 ou `skills/`, sem shell, código inline ou caminho externo. A retenção de mensagens,
 anexos, artefatos e resumos usa padrão mínimo de 180 dias, configurável para prazos

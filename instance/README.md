@@ -128,6 +128,17 @@ instalação pelo [site oficial do Git](https://git-scm.com/download/win).
 
 ## Configuração de uma instância
 
+### Regra de armazenamento
+
+`instance/data/` é a única raiz persistente da instância. Toda configuração privada,
+credencial, banco, memória, job, mídia, log, cache, plugin, `CODEX_HOME` e estado do
+Telegram deve permanecer dentro dela e está coberta pelo backup da pasta `data/`.
+É proibido criar ou manter cópias de código, estado ou conteúdo da instância em
+`%LOCALAPPDATA%`, no perfil do usuário, em `AppData`, em `C:\temp` ou em qualquer
+outro diretório do sistema operacional. O código executável deve permanecer no
+repositório; somente o executável externo do Codex pode ser instalado pelo sistema,
+enquanto seu `CODEX_HOME` deve apontar para `data/codex`.
+
 O configurador cria e mantém a base da instância: identidade, configuração do cofre,
 interface Telegram e sandbox do Codex. Configurações de skills e contas externas são
 feitas posteriormente em conversa com a própria instância. O mesmo comando pode ser
@@ -751,7 +762,7 @@ artefatos em um SQLite local da máquina. Respostas podem referenciar mensagens 
 mídias nativas validadas.
 
 O gateway executa o CLI com um `CODEX_HOME` próprio, por padrão em
-`%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`. Autenticação, configuração, sessões e logs da interface
+`instance/data/codex`. Autenticação, configuração, sessões e logs da interface
 ficam separados do Codex Desktop. O perfil inicial permite ler o projeto e escrever
 somente em `data/`; acesso de rede e regras para os scripts oficiais são configurados
 explicitamente pela interface.

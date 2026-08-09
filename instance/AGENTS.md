@@ -303,7 +303,7 @@ não uma skill.
 
 O configurador local em `scripts/install_instance.py` deve oferecer status, início,
 finalização e reinício do gateway. O processo mantém seu registro em
-`<state_dir>/gateway-runtime.json`, impede duplicidade e aceita parada cooperativa.
+`instance/data/telegram/state/gateway-runtime.json`, impede duplicidade e aceita parada cooperativa.
 Instalação e remoção como serviço do sistema permanecem opções reservadas até existir
 uma implementação específica, testada e reversível; não improvisar criação de
 serviço com comandos genéricos.
@@ -311,12 +311,12 @@ serviço com comandos genéricos.
 O token fica na referência definida em `data/config/telegram.toml`. A configuração
 efetiva fica nesse arquivo, as mídias recebidas em `data/telegram/inbox/` e o estado
 operacional, por padrão, em
-`%LOCALAPPDATA%\Coworker\instances\<instance_id>\telegram`. Nenhum desses dados deve ser
-versionado.
+`instance/data/telegram/`. Nenhum desses dados deve ser gravado em `%LOCALAPPDATA%`,
+no perfil do usuário ou fora do repositório da instância.
 
 Executar o CLI com o `codex.home_dir` privado como `CODEX_HOME` somente no processo
 filho. Por padrão, usar
-`%LOCALAPPDATA%\Coworker\instances\<instance_id>\codex`, mantendo autenticação,
+`instance/data/codex`, mantendo autenticação,
 configuração, sessões e logs separados do Codex Desktop. Não definir essa variável
 globalmente no Windows.
 
@@ -432,7 +432,7 @@ entregue ao gateway atual, que cria um relançador externo destacado antes de pa
 receber atualizações. O gateway deve drenar o trabalho atual; o relançador espera o PID
 antigo terminar, inicia e valida a nova cópia e então encerra. Não finalizar o processo
 principal diretamente a partir do trabalho que solicitou o reinício. Manter trava,
-timeouts e log dentro de `state_dir`, sem persistir segredos.
+timeouts e log dentro de `instance/data/telegram/state`, sem persistir segredos.
 
 ### Cloudflare
 
