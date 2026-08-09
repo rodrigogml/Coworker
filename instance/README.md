@@ -35,6 +35,7 @@ O runtime não deve usar o `AGENTS.md` da raiz como instrução operacional.
 - gerenciamento de zonas e registros DNS da Cloudflare;
 - gerenciamento de domínios e aliases do Forward Email;
 - consultas ao ERP Omie;
+- acesso MySQL somente leitura via `mysql.exe`, condicionado à habilitação explícita e perfis protegidos;
 - gerenciamento de tarefas, projetos, seções e etiquetas do Todoist;
 - busca, leitura, criação e edição de notas do Notion;
 - múltiplos perfis de autenticação por integração;

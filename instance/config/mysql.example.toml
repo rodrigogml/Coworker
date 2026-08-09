@@ -1,0 +1,17 @@
+# A skill só pode ser usada após habilitada explicitamente.
+enabled = false
+mysql_executable = ""
+default_profile = "example"
+
+[profiles.example]
+host = "127.0.0.1"
+port = 3306
+database = ""
+credential_ref = "Databases/MySQL/Example"
+credential_mode = "password"
+attachment_name = ""
+ssl_mode = "preferred"
+connect_timeout = 15
+
+[profiles.example.parameters]
+# Parâmetros adicionais tipados aceitos pelo cliente mysql.
