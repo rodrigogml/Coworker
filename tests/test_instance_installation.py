@@ -16,6 +16,17 @@ from scripts import install_instance
 
 
 class IdentityTests(unittest.TestCase):
+    def test_install_script_has_no_mojibake_markers(self) -> None:
+        source = install_instance.__file__
+        assert source is not None
+        content = Path(source).read_text(encoding="utf-8")
+        mojibake_markers = (
+            "\u00c3\u00a7", "\u00c3\u00a3", "\u00c3\u00a9", "\u00c3\u00ba",
+            "\u00c3\u00b3", "\u00c3\u00aa", "\u00c3\u00ad", "\u00c2", "\ufffd",
+        )
+        for marker in mojibake_markers:
+            self.assertNotIn(marker, content)
+
     def test_loads_identity_and_builds_bounded_telegram_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "identity.toml"

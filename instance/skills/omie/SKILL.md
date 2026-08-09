@@ -56,6 +56,10 @@ python skills/omie/scripts/omie.py --profile EMPRESA transfers prepare --request
 python skills/omie/scripts/omie.py --profile EMPRESA transfers show --integration-id ID
 ```
 
+Transferências exigem `--category-code` e uma categoria ativa marcada pela Omie
+como transferência; categorias comuns de receita ou despesa são rejeitadas antes
+da chamada de escrita.
+
 Quando um comprovante trouxer CPF/CNPJ e nome de uma contraparte ausente, pesquisar
 primeiro por `customers` usando `tax_id`. Somente após autorização explícita usar o
 preparador tipado, executar `customers create --dry-run` e então a criação real:

@@ -2358,7 +2358,7 @@ def prepare_transfer_envelope(
     project_root: Path = PROJECT_ROOT,
     environment: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Cria envelope fechado de transferência, sem categoria e sem chamada à API."""
+    """Cria envelope fechado de transferência, sem chamada à API."""
     request_id = request_identifier(args.request_id)
     source = positive_identifier(args.source_account_id, "--source-account-id")
     destination = positive_identifier(args.destination_account_id, "--destination-account-id")
@@ -2886,6 +2886,9 @@ def transfer_payload(
         identifier, category = resolve_reference(client, "category", data["category"])
         validate_transfer_category(category)
         details["cCodCateg"] = identifier
+    elif details.get("cCodCateg") not in (None, ""):
+        _, category = resolve_reference(client, "category", {"code": details["cCodCateg"]})
+        validate_transfer_category(category)
     if header.get("nCodCC") == transfer.get("nCodCCDestino"):
         raise OmieToolError("As contas de origem e destino devem ser diferentes.")
     if "counterparty" in data:

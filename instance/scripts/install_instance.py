@@ -1668,40 +1668,40 @@ def manage_gateway(instance_id: str) -> None:
             continue
         if answer == "5":
             if os.name != "nt":
-                print("A instalaÃ§Ã£o de serviÃ§o Linux permanece planejada para um MVP futuro.")
+                print("A instalação de serviço Linux permanece planejada para um MVP futuro.")
                 continue
-            service_name = _ask("Nome do serviÃ§o", instance_id)
+            service_name = _ask("Nome do serviço", instance_id)
             startup = _ask(
-                "InicializaÃ§Ã£o (automatic_delayed, automatic ou manual)",
+                "Inicialização (automatic_delayed, automatic ou manual)",
                 "automatic_delayed",
             ).casefold()
             account_mode = _ask("Conta (current_user ou local_system)", "current_user").casefold()
-            if _yes_no("Instalar e iniciar o serviÃ§o agora", default=True):
+            if _yes_no("Instalar e iniciar o serviço agora", default=True):
                 try:
                     result = windows_service_action(
                         instance_id, "install", service_name=service_name,
                         display_name=str(_load_identity_values()["display_name"]),
                         startup=startup, account_mode=account_mode,
                     )
-                    print(f"ServiÃ§o instalado: {result.get('name', service_name)}")
+                    print(f"Serviço instalado: {result.get('name', service_name)}")
                     windows_service_action(instance_id, "start", service_name=service_name)
                 except (InstallError, OSError) as exc:
-                    print(f"NÃ£o foi possÃ­vel instalar/iniciar o serviÃ§o: {exc}")
+                    print(f"Não foi possível instalar/iniciar o serviço: {exc}")
                     continue
-                print("ServiÃ§o iniciado.")
+                print("Serviço iniciado.")
             continue
         if answer == "6":
             if os.name != "nt":
-                print("A remoÃ§Ã£o de serviÃ§o Linux permanece planejada para um MVP futuro.")
+                print("A remoção de serviço Linux permanece planejada para um MVP futuro.")
                 continue
-            service_name = _ask("Nome do serviÃ§o", instance_id)
-            if _yes_no(f"Parar e remover o serviÃ§o '{service_name}'", default=False):
+            service_name = _ask("Nome do serviço", instance_id)
+            if _yes_no(f"Parar e remover o serviço '{service_name}'", default=False):
                 try:
                     windows_service_action(instance_id, "remove", service_name=service_name)
                 except (InstallError, OSError) as exc:
-                    print(f"NÃ£o foi possÃ­vel remover o serviÃ§o: {exc}")
+                    print(f"Não foi possível remover o serviço: {exc}")
                     continue
-                print("ServiÃ§o removido. Os dados da instÃ¢ncia foram preservados.")
+                print("Serviço removido. Os dados da instância foram preservados.")
             continue
         print("Escolha uma opção válida.")
 
@@ -2308,7 +2308,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--service-action",
         choices=("none", "install", "remove", "start", "stop", "status"),
         default="none",
-        help="Administra o serviÃ§o Windows da instÃ¢ncia; Linux permanece MVP futuro.",
+        help="Administra o serviço Windows da instância; Linux permanece MVP futuro.",
     )
     parser.add_argument("--service-name", default="")
     parser.add_argument(

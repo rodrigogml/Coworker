@@ -119,11 +119,18 @@ filtra `EXTR`. As mutações disponíveis são `create`, `update` e `delete`; co
 python skills/omie/scripts/omie.py transfers list
 python skills/omie/scripts/omie.py transfers show --id 123
 python skills/omie/scripts/omie.py transfers show --integration-id TRANSF-123
+python skills/omie/scripts/omie.py transfers prepare `
+  --request-id telegram:omie:transfer-1 `
+  --source-account-id 100 --destination-account-id 200 `
+  --date 20/07/2026 --amount 6000.00 --category-code 0.01.02
 ```
 
-As mutações disponíveis são `create`, `update` e `delete`. A listagem usa a
-paginação própria de `ListarLancCC`, traduzida para o mesmo formato de saída dos
-demais recursos.
+As mutações disponíveis são `create`, `update` e `delete`. A inclusão exige
+`category` com uma categoria ativa marcada pela Omie como transferência. O
+preparador `transfers prepare` exige `--category-code`, grava `data.category` no
+envelope tipado e não acessa a API; siga `prepare -> create --dry-run -> create ->
+show`. A listagem usa a paginação própria de `ListarLancCC`, traduzida para o mesmo
+formato de saída dos demais recursos.
 
 ## Pedidos de venda
 
