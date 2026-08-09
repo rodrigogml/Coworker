@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import signal
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -66,6 +67,8 @@ from interfaces.telegram.scripts.restart_gateway import (  # noqa: E402
 )
 from interfaces.telegram.state import StateError, StateStore  # noqa: E402
 from scheduler import SchedulerStore, TaskScheduler, run_python_script  # noqa: E402
+from skills.totp.core import TotpError, decode_qr, format_codes, parse_input, totp_codes  # noqa: E402
+from skills.totp.vault import TotpVaultError, find_records, read as read_totp, store as store_totp  # noqa: E402
 from interfaces.telegram.automation_state import AutomationState, AutomationStateError  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
 from interfaces.telegram.progress import (  # noqa: E402
@@ -113,6 +116,7 @@ BOT_COMMANDS = (
     ("cancel", "Interromper a execução atual"),
     ("thread", "Mostrar a sessão Codex ativa"),
     ("secret", "Guardar uma senha ou token no cofre"),
+    ("totp", "Cadastrar ou consultar códigos TOTP"),
     ("help", "Listar os comandos disponíveis"),
 )
 
@@ -159,6 +163,14 @@ class CredentialCapture:
     received: set[str] = field(default_factory=set)
     attachment_name: str | None = None
     attachment_data: bytes = b""
+
+
+@dataclass
+class TotpCapture:
+    stage: str = "secret"
+    secret: str = ""
+    issuer: str = ""
+    account: str = ""
 
 
 def validate_ssh_attachment(filename: str, data: bytes) -> None:
@@ -355,6 +367,8 @@ class Gateway:
         self.albums: dict[tuple[int, str], AlbumBuffer] = {}
         self.album_lock = threading.Lock()
         self.secret_captures: dict[int, str] = {}
+        self.totp_captures: dict[int, TotpCapture] = {}
+        self.totp_message_timers: dict[tuple[int, int], threading.Timer] = {}
         self.credential_lock = threading.RLock()
         self.credential_captures: dict[int, CredentialCapture] = {}
         self.credential_requests_seen: set[str] = set()
@@ -507,6 +521,10 @@ class Gateway:
                     album.timer.cancel()
             self.albums.clear()
         self.secret_captures.clear()
+        for timer in self.totp_message_timers.values():
+            timer.cancel()
+        self.totp_message_timers.clear()
+        self.totp_captures.clear()
         if self.credential_broker.is_alive():
             self.credential_broker.join(timeout=2)
         self.registry.cancel_all()
@@ -530,6 +548,10 @@ class Gateway:
                     album.timer.cancel()
         self.albums.clear()
         self.secret_captures.clear()
+        for timer in self.totp_message_timers.values():
+            timer.cancel()
+        self.totp_message_timers.clear()
+        self.totp_captures.clear()
         self._cancel_all_credential_requests("A interface foi reiniciada.")
         self.work.put(None)
         if self.worker.is_alive():
@@ -1175,6 +1197,7 @@ class Gateway:
         media_group_id = str(message.get("media_group_id") or "") or None
         content = message_attachments(message)
         pending_secret = self.secret_captures.get(chat_id)
+        pending_totp = self.totp_captures.get(chat_id)
         with self.credential_lock:
             pending_credential = self.credential_captures.get(chat_id)
         if pending_credential and command != "/cancel":
@@ -1197,6 +1220,9 @@ class Gateway:
                 pending_secret,
             )
             return
+        if pending_totp and command != "/cancel":
+            self._capture_totp(update_id, chat_id, message_id, text, content, pending_totp)
+            return
         reply_context = self._reply_context(chat_id, message)
         mapped_codex_thread: str | None = None
         if is_group and telegram_message_thread_id is not None:
@@ -1216,7 +1242,7 @@ class Gateway:
                 chat_type=chat_type,
             )
         if command:
-            self._handle_command(update_id, chat_id, command, argument, reply_context)
+            self._handle_command(update_id, chat_id, command, argument, reply_context, content, message_id=message_id)
             return
         if not text and not content:
             self._send(chat_id, "Esse tipo de mensagem ainda não é suportado.", update_id=update_id)
@@ -1415,6 +1441,114 @@ class Gateway:
             self.credential_requests_inflight.discard(request_id)
             self.credential_request_retry_at.pop(request_id, None)
             self.credential_requests_seen.add(request_id)
+
+    def _delete_sensitive_message(self, chat_id: int, message_id: int) -> None:
+        try:
+            self.api.delete_message(chat_id, message_id)
+        except TelegramApiError:
+            pass
+
+    def _capture_totp(
+        self, update_id: int, chat_id: int, message_id: int, text: str,
+        attachments: list[Attachment], capture: TotpCapture,
+    ) -> None:
+        if attachments and capture.stage == "secret":
+            self._handle_totp_image(update_id, chat_id, message_id, attachments)
+            self.totp_captures.pop(chat_id, None)
+            with self.state_lock:
+                self.state.finish_update(update_id, "secured")
+            return
+        if attachments or not text.strip():
+            self._send(chat_id, "Envie a chave TOTP em uma mensagem de texto. Use /cancel para desistir.", update_id=update_id)
+            with self.state_lock:
+                self.state.finish_update(update_id, "invalid")
+            return
+        try:
+            if capture.stage == "secret":
+                try:
+                    config = parse_input(text)
+                except TotpError:
+                    capture.secret = text.strip()
+                    capture.stage = "issuer"
+                    self._send(chat_id, "Informe o sistema ou issuer que esta chave autentica.", update_id=update_id)
+                    self._delete_sensitive_message(chat_id, message_id)
+                    with self.state_lock:
+                        self.state.finish_update(update_id, "secured")
+                    return
+                store_totp(config)
+                self._delete_sensitive_message(chat_id, message_id)
+                self.totp_captures.pop(chat_id, None)
+                self._send(chat_id, f"🔑 TOTP salvo: {config.issuer} — {config.account}.", update_id=update_id)
+            elif capture.stage == "issuer":
+                capture.issuer = text.strip()
+                capture.stage = "account"
+                self._delete_sensitive_message(chat_id, message_id)
+                self._send(chat_id, "Informe a conta autenticada por esta chave.", update_id=update_id)
+            else:
+                capture.account = text.strip()
+                config = parse_input(capture.secret, issuer=capture.issuer, account=capture.account)
+                store_totp(config)
+                capture.secret = ""
+                self.totp_captures.pop(chat_id, None)
+                self._delete_sensitive_message(chat_id, message_id)
+                self._send(chat_id, f"🔑 TOTP salvo: {config.issuer} — {config.account}.", update_id=update_id)
+        except (TotpError, TotpVaultError, VaultToolError) as exc:
+            self.totp_captures.pop(chat_id, None)
+            capture.secret = ""
+            self._send(chat_id, f"Não foi possível salvar o TOTP: {exc}", update_id=update_id)
+        with self.state_lock:
+            self.state.finish_update(update_id, "secured")
+
+    def _show_totp(self, chat_id: int, selector: str, *, update_id: int | None = None) -> None:
+        matches = find_records(selector)
+        if not matches:
+            self._send(chat_id, "Nenhuma chave TOTP corresponde à solicitação.", update_id=update_id)
+            return
+        if len(matches) > 1:
+            choices = "\n".join(f"- {item['issuer']} — {item['account']}" for item in matches)
+            self._send(chat_id, "Há mais de uma chave correspondente; informe issuer e conta:\n" + choices, update_id=update_id)
+            return
+        try:
+            record = read_totp(matches[0]["entry"])
+            receipt_ids = self._send(chat_id, format_codes(record.config), update_id=update_id)
+            if not receipt_ids:
+                return
+            _, _, _, next_expiry, _ = totp_codes(record.config)
+            timer = threading.Timer(
+                max(0.1, next_expiry - time.time()),
+                self._expire_totp_message,
+                args=(chat_id, receipt_ids[0], record.config.issuer, record.config.account),
+            )
+            timer.daemon = True
+            self.totp_message_timers[(chat_id, receipt_ids[0])] = timer
+            timer.start()
+        except (TotpError, TotpVaultError, VaultToolError) as exc:
+            self._send(chat_id, f"Não foi possível consultar o TOTP: {exc}", update_id=update_id)
+
+    def _expire_totp_message(self, chat_id: int, message_id: int, issuer: str, account: str) -> None:
+        self.totp_message_timers.pop((chat_id, message_id), None)
+        try:
+            self.api.edit_text(chat_id, message_id, f"🔑 {issuer} — {account}\nCódigo expirado")
+        except TelegramApiError:
+            pass
+
+    def _handle_totp_image(self, update_id: int, chat_id: int, message_id: int, attachments: list[Attachment]) -> None:
+        if len(attachments) != 1:
+            self._send(chat_id, "Envie exatamente uma imagem de QR Code.", update_id=update_id)
+            return
+        try:
+            with tempfile.TemporaryDirectory(prefix="coworker-totp-") as folder:
+                downloaded = self.api.download(
+                    attachments[0].file_id, attachments[0].original_name,
+                    attachments[0].declared_mime, Path(folder), update_id,
+                    self.config.media.max_download_bytes, attachments[0].file_unique_id,
+                )
+                config = parse_input(decode_qr(downloaded.path))
+                store_totp(config)
+            self._delete_sensitive_message(chat_id, message_id)
+            self._send(chat_id, f"🔑 TOTP salvo: {config.issuer} — {config.account}.", update_id=update_id)
+        except (TotpError, TotpVaultError, VaultToolError, TelegramApiError, OSError) as exc:
+            self._send(chat_id, f"Não foi possível interpretar o QR Code TOTP: {exc}", update_id=update_id)
 
     def _capture_credential_value(
         self,
@@ -1756,6 +1890,8 @@ class Gateway:
     def _handle_command(
         self, update_id: int, chat_id: int, command: str, argument: str,
         reply_context: ReplyContext | None,
+        attachments: list[Attachment] | None = None,
+        *, message_id: int | None = None,
     ) -> None:
         if command in {"/settings", "/codex", "/model", "/reasoning", "/speed", "/verbosity", "/progress"}:
             try:
@@ -1780,6 +1916,7 @@ class Gateway:
             self._send(chat_id, message, update_id=update_id)
         elif command == "/cancel":
             capture_cancelled = self.secret_captures.pop(chat_id, None) is not None
+            totp_cancelled = self.totp_captures.pop(chat_id, None) is not None
             with self.credential_lock:
                 credential_capture = self.credential_captures.get(chat_id)
             if credential_capture is not None:
@@ -1795,7 +1932,7 @@ class Gateway:
                 chat_id,
                 (
                     "Captura protegida cancelada."
-                    if capture_cancelled or credential_capture is not None
+                    if capture_cancelled or totp_cancelled or credential_capture is not None
                     else "Solicitação de cancelamento enviada."
                     if cancelled
                     else "Não há uma execução ativa para cancelar."
@@ -1820,6 +1957,19 @@ class Gateway:
                     "e o gateway tentará removê-la do Telegram. Use /cancel para desistir.",
                     update_id=update_id,
                 )
+        elif command == "/totp":
+            value = argument.strip()
+            if value.casefold() in {"add", "cadastrar", "novo"}:
+                self.totp_captures[chat_id] = TotpCapture()
+                self._send(
+                    chat_id,
+                    "Envie a chave TOTP ou a URI otpauth://totp. A mensagem será capturada de forma protegida e removida quando possível.",
+                    update_id=update_id,
+                )
+            elif attachments:
+                self._handle_totp_image(update_id, chat_id, int(message_id or update_id), attachments)
+            else:
+                self._show_totp(chat_id, value, update_id=update_id)
         elif command == "/resume":
             if not reply_context or reply_context.author != self.config.identity.display_name or not reply_context.thread_id:
                 self._send(
