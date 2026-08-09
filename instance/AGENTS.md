@@ -648,3 +648,28 @@ Use caminhos relativos à raiz da instância, como `data/work/arquivo.md`.
 `data/scheduler/` e os bancos locais são protegidos e só devem ser alterados pelos
 componentes tipados do projeto. Nenhum estado, cache, runtime, log ou cópia de código
 deve ser criado no perfil do usuário ou em diretórios do sistema operacional.
+## Bases de caminho e ferramentas de edição
+
+Há duas bases de caminho durante uma execução:
+
+- comandos do runtime e scripts executados com a raiz da instância usam
+  `data/...`, por exemplo `data/work/arquivo.md`;
+- ferramentas de edição aplicadas sobre o clone do repositório podem resolver
+  caminhos a partir da raiz Git, um nível acima de `instance/`. Nesses casos,
+  use `instance/data/work/...` para editar o conteúdo privado da instância.
+
+Antes de escrever, confirme a base efetiva exibida pela ferramenta. Nunca troque
+essa diferença por um caminho absoluto fora de `instance/data/` e nunca tente
+criar uma segunda pasta `data/` na raiz do clone.
+
+O arquivo `data/config/INSTRUCTIONS.md` é protegido. Para atualizá-lo, use
+somente o mecanismo autorizado, a partir da raiz `instance/`:
+
+```powershell
+Get-Content data/work/instructions-update.md -Raw |
+  python scripts/instructions_config.py replace
+```
+
+Não use `apply_patch` nem escrita genérica de shell diretamente em
+`data/config/INSTRUCTIONS.md`. Valide o resultado lendo o arquivo depois e só
+então remova ou migre qualquer conteúdo equivalente da memória.

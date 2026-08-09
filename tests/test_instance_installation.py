@@ -54,6 +54,11 @@ class IdentityTests(unittest.TestCase):
 
 
 class InstallerTests(unittest.TestCase):
+    def test_instance_contract_documents_runtime_and_git_path_bases(self) -> None:
+        contract = (install_instance.PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("instance/data/work/", contract)
+        self.assertIn("instructions_config.py replace", contract)
+
     def test_generated_telegram_config_starts_with_minimal_sandbox(self) -> None:
         content = install_instance._telegram_content("assistente-teste")
 
