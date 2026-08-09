@@ -153,11 +153,13 @@ class WorkItem:
     message_record_ids: tuple[int, ...]
     codex_options: CodexOptions = CodexOptions()
     progress_mode: str = "off"
+    was_queued: bool = False
 
 
 @dataclass
 class AlbumBuffer:
     job_id: int
+    was_queued: bool = False
     inbound_parts: list[InboundMessage] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
     message_record_ids: list[int] = field(default_factory=list)
@@ -1300,10 +1302,11 @@ class Gateway:
                 update_id, chat_id, request_message_id=message_record_id
             )
             self.state.finish_update(update_id, "queued")
+        initial_reaction = QUEUE_REACTION if already_busy else choose_processing_reaction()
         self._set_reaction(
             chat_id,
             (message_id,),
-            QUEUE_REACTION if already_busy else choose_processing_reaction(),
+            initial_reaction,
             transition="queued" if already_busy else "received",
             job_id=job_id,
             update_id=update_id,
@@ -1316,6 +1319,7 @@ class Gateway:
                 (message_record_id,),
                 self._codex_options(chat_id),
                 self._progress_mode(chat_id),
+                already_busy,
             )
         )
 
@@ -1782,7 +1786,7 @@ class Gateway:
                         media_group_id=inbound.media_group_id,
                         request_message_id=message_record_id,
                     )
-                buffer = AlbumBuffer(job_id)
+                buffer = AlbumBuffer(job_id, already_busy)
                 self.albums[key] = buffer
                 self._set_reaction(
                     inbound.chat_id,
@@ -1830,6 +1834,7 @@ class Gateway:
                 tuple(buffer.message_record_ids),
                 self._codex_options(inbound.chat_id),
                 self._progress_mode(inbound.chat_id),
+                buffer.was_queued,
             )
         )
 
@@ -2232,14 +2237,15 @@ class Gateway:
             workspace = JobWorkspace.create(self.config.media.jobs_dir, item.job_id)
             with self.state_lock:
                 self.state.update_job(item.job_id, "running")
-            self._set_reaction(
-                inbound.chat_id,
-                inbound.message_ids,
-                choose_processing_reaction(),
-                transition="running",
-                job_id=item.job_id,
-                update_id=inbound.update_ids[0],
-            )
+            if item.was_queued:
+                self._set_reaction(
+                    inbound.chat_id,
+                    inbound.message_ids,
+                    choose_processing_reaction(),
+                    transition="running",
+                    job_id=item.job_id,
+                    update_id=inbound.update_ids[0],
+                )
             with self.state_lock:
                 self.state.set_job_workspace(item.job_id, workspace.root)
                 if inbound.codex_thread_id:
