@@ -566,3 +566,28 @@ nessa segunda base.
 
 Para alterar `data/config/INSTRUCTIONS.md`, use apenas
 `python scripts/instructions_config.py replace` a partir de `instance/`.
+# Mini App TOTP
+
+O Gateway pode servir o gerenciador TOTP sem criar job nem chamar o Codex. Ative
+`[mini_app] enabled = true` em `data/config/telegram.toml`, configure
+`public_url` com uma URL HTTPS alcançável pelo Telegram e publique `/totp` nessa
+rota no proxy reverso. O listener local (`listen_host`/`listen_port`) permanece
+restrito à máquina. A URL nunca recebe segredos: o Mini App envia o `initData` do
+Telegram, que é validado com HMAC no Gateway, e recebe somente uma sessão efêmera
+após a senha do módulo TOTP ser confirmada.
+
+A senha é um hash PBKDF2-SHA256 armazenado em uma entrada protegida do grupo
+`TOTP`; tokens continuam nas entradas existentes e o gerenciador usa o mesmo
+parser, cofre e gerador da skill TOTP. QR Codes são decodificados localmente em
+memória. Sem URL HTTPS pública, a configuração pode ser testada localmente, mas
+clientes Telegram não conseguem abrir um Web App de produção.
+
+Quando `public_url` está preenchida, o Gateway também configura o botão global
+`TOTP` no menu do bot. O usuário não precisa memorizar `/totp`, subcomandos ou
+nomes internos de entradas; a seleção ocorre pelos cards da própria interface.
+
+A lógica de domínio não pertence ao Gateway: ela fica em
+`instance/mini_apps/totp/application.py`, que não importa Telegram, HTTP ou
+Codex. Outras interfaces e operações autorizadas podem reutilizar essa aplicação
+para autenticar, cadastrar, consultar códigos, editar identificadores e excluir
+tokens. O Gateway apenas adapta esses casos de uso ao Mini App do Telegram.

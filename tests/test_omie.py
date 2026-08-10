@@ -1997,6 +1997,65 @@ class OmieTests(unittest.TestCase):
         self.assertNotIn("--app-secret", help_text)
         self.assertNotIn("--call", help_text)
 
+    def test_fiscal_resources_are_allowlisted_and_documents_are_read_only(self):
+        parser = omie.build_parser()
+        args = parser.parse_args(["entry-notes", "status", "--input-stdin", "--dry-run"])
+        self.assertIs(args.handler, omie.execute_fiscal_mutation)
+        fiscal = omie.SERVICE_SPECS["fiscal-documents"]
+        self.assertIsNone(fiscal.show_call)
+        self.assertEqual(fiscal.mutation_calls, ())
+        self.assertTrue(fiscal.allows("ListarDocumentos"))
+        self.assertFalse(fiscal.allows("ImportarNotaEnt"))
+
+    def test_fiscal_summary_never_returns_xml_or_urls(self):
+        summary = omie.summarize(
+            "fiscal-documents",
+            {
+                "nNumero": "10",
+                "cSerie": "1",
+                "nChave": "9" * 44,
+                "cXml": "<xml>secret</xml>",
+                "cDanfe": "https://example.invalid/danfe",
+            },
+        )
+        self.assertTrue(summary["xml_available"])
+        self.assertTrue(summary["danfe_available"])
+        self.assertNotIn("cXml", summary)
+        self.assertNotIn("cDanfe", summary)
+
+    def test_entry_note_dry_run_validates_typed_envelope(self):
+        document = {
+            "schema_version": 1,
+            "request_id": "purchase-note-1",
+            "selector": {"id": 44},
+            "data": {
+                "cabec": {"dPrevisao": "10/08/2026", "cGeraFinanceiro": "S", "cCodParc": "001"},
+                "infAdic": {"cCodCateg": "2.01.01", "nCodProj": 8},
+                "produtos": [{"nCodProd": 9, "nQtde": 2, "nValUnit": 50, "cCFOP": "1.102"}],
+            },
+        }
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "note.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = omie.execute_fiscal_mutation(
+                FakeOperationClient(),
+                argparse.Namespace(
+                    profile="empresa", resource="entry-notes", operation="update",
+                    input_file=str(path), input_stdin=False, dry_run=True,
+                ),
+            )
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["calls"][0]["method"], "AlterarNotaEnt")
+        self.assertEqual(result["calls"][0]["params"]["cabec"]["nCodNotaEnt"], 44)
+
+    def test_entry_note_rejects_unknown_fiscal_fields(self):
+        with self.assertRaises(omie.OmieToolError):
+            omie.validate_fiscal_item(
+                "entry-notes",
+                "create",
+                {"data": {"cabec": {"campo_inventado": "x"}}},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

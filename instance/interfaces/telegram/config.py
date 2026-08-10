@@ -118,6 +118,15 @@ class WebhookConfig:
 
 
 @dataclass(frozen=True)
+class MiniAppConfig:
+    enabled: bool = False
+    listen_host: str = "127.0.0.1"
+    listen_port: int = 8790
+    public_url: str = ""
+    session_ttl_seconds: int = 900
+
+
+@dataclass(frozen=True)
 class FeedbackConfig:
     immediate_messages: tuple[str, ...] = IMMEDIATE_MESSAGES
     queued_messages: tuple[str, ...] = QUEUED_MESSAGES
@@ -170,6 +179,7 @@ class TelegramConfig:
     media: MediaConfig
     processors: ProcessorConfig
     webhook: WebhookConfig
+    mini_app: MiniAppConfig = MiniAppConfig()
     feedback: FeedbackConfig = FeedbackConfig()
     retention: RetentionConfig = RetentionConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -537,6 +547,9 @@ def load_config(
     codex_values = _mapping(values, "codex")
     media_values = _mapping(values, "media")
     webhook_values = _mapping(values, "webhook")
+    mini_values = values.get("mini_app", {})
+    if not isinstance(mini_values, dict):
+        raise TelegramConfigError("A seção [mini_app] deve ser uma tabela TOML.")
     transport = str(values.get("transport", "polling")).strip().casefold()
     if transport not in {"polling", "webhook", "auto"}:
         raise TelegramConfigError("'transport' deve ser polling, webhook ou auto.")
@@ -657,6 +670,8 @@ def load_config(
             "'feedback.typing_interval_seconds' deve estar entre 1 e 5 segundos."
         )
     listen_port = int(webhook_values.get("listen_port", 8787))
+    mini_port = int(mini_values.get("listen_port", 8790))
+    mini_ttl = int(mini_values.get("session_ttl_seconds", 900))
     if not 60 <= ttl <= 3600 or not 1 <= attempts <= 10:
         raise TelegramConfigError("Limites de pareamento inválidos.")
     if not 5 <= poll_timeout <= 50 or not 10 <= request_timeout <= 180:
@@ -669,6 +684,8 @@ def load_config(
         raise TelegramConfigError("Limites de execução ou mídia inválidos.")
     if not 1 <= listen_port <= 65535:
         raise TelegramConfigError("Porta do webhook inválida.")
+    if not 1 <= mini_port <= 65535 or not 60 <= mini_ttl <= 3600:
+        raise TelegramConfigError("Configuração do Mini App inválida.")
     processor_limits = (
         int(processor_values.get("max_extracted_characters", 200_000)),
         int(processor_values.get("max_archive_members", 500)),
@@ -720,6 +737,13 @@ def load_config(
             str(webhook_values.get("secret_credential_ref", "")).strip(),
             str(webhook_values.get("listen_host", "127.0.0.1")).strip(),
             listen_port,
+        ),
+        mini_app=MiniAppConfig(
+            bool(mini_values.get("enabled", False)),
+            str(mini_values.get("listen_host", "127.0.0.1")).strip(),
+            mini_port,
+            str(mini_values.get("public_url", "")).strip(),
+            mini_ttl,
         ),
         feedback=FeedbackConfig(
             _feedback_messages(

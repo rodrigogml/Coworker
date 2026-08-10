@@ -146,3 +146,35 @@ e `--account-id`. Consuma o caminho devolvido com `account-entries update --dry-
 --input-file` e, após validar, repita sem `--dry-run`; os demais campos são
 preservados. O preparador não acessa credenciais nem a API e grava somente no
 trabalho derivado atual.
+
+## Compras fiscais e Nota de Entrada
+
+Para compras com documento fiscal, nÃ£o usar `account-entries`: esse recurso representa
+movimento direto em conta e nÃ£o cria a obrigaÃ§Ã£o da compra. Usar os recursos fechados
+`entry-notes`, `receipt-notes` e `fiscal-documents`.
+
+```powershell
+python skills/omie/scripts/omie.py --profile EMPRESA entry-notes list --details
+python skills/omie/scripts/omie.py --profile EMPRESA entry-notes show --id 123
+python skills/omie/scripts/omie.py --profile EMPRESA entry-notes status --input-file nota.json --dry-run
+python skills/omie/scripts/omie.py --profile EMPRESA entry-notes links --id 123
+python skills/omie/scripts/omie.py --profile EMPRESA entry-notes qualify --id 123
+python skills/omie/scripts/omie.py --profile EMPRESA receipt-notes list --stage 01
+python skills/omie/scripts/omie.py --profile EMPRESA fiscal-documents list --issued-from 01/08/2026 --issued-to 31/08/2026
+```
+
+CriaÃ§Ãµes e alteraÃ§Ãµes usam o mesmo envelope tipado da skill. A Nota de Entrada
+aceita geraÃ§Ã£o financeira por `data.cabec.cGeraFinanceiro = "S"`, com `cCodParc` e
+`nQtdeParc` quando exigidos pela API. Depois da escrita, a nota Ã© consultada
+novamente; quando houver geraÃ§Ã£o financeira, a skill procura os tÃ­tulos e devolve
+somente candidatos operacionais. Zero ou mÃºltiplos candidatos produzem estado
+`not_found`/`ambiguous` e nunca autorizam baixa automÃ¡tica.
+
+`entry-notes links` Ã© somente leitura. Ele nÃ£o escolhe projeto pelo endereÃ§o, nÃ£o
+seleciona parcela por valor e nÃ£o executa pagamento. A baixa continua exigindo o
+seletor inequÃ­voco do tÃ­tulo/parcela em `payables pay`, incluindo
+`data.installment_number` quando o tÃ­tulo for parcelado, com autorizaÃ§Ã£o atual.
+
+`fiscal-documents` informa disponibilidade de XML/DANFE e metadados, mas nÃ£o devolve
+XML, URLs ou documentos integrais. ImportaÃ§Ã£o de XML de Nota de Entrada permanece
+bloqueada atÃ© existir contrato oficial confirmado para esse mÃ³dulo.

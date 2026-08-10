@@ -88,3 +88,17 @@ o percurso de páginas.
 Falhas podem chegar por status HTTP ou objeto com `faultcode` e `faultstring`. O
 cliente extrai somente a mensagem curta, remove as credenciais defensivamente e nunca
 imprime o corpo original do erro.
+
+## Compras e documentos fiscais
+
+Os serviÃ§os oficiais de Nota de Entrada (`produtos/notaentrada/`), Recebimento de NF-e
+(`produtos/recebimentonfe/`) e Documentos Fiscais (`contador/xml/`) possuem allowlists
+separadas no script. Nota de Entrada expÃµe inclusÃ£o, alteraÃ§Ã£o, consulta, listagem,
+status e exclusÃ£o; Recebimento expÃµe consulta, listagem, alteraÃ§Ã£o, mudanÃ§a de etapa,
+conclusÃ£o, reversÃ£o e exclusÃ£o. Documentos Fiscais Ã© somente leitura.
+
+Os retornos fiscais sÃ£o reduzidos antes da saÃ­da: XML, DANFE, links e anexos nÃ£o sÃ£o
+devolvidos. A listagem de documentos informa apenas metadados e disponibilidade.
+Quando `cGeraFinanceiro = "S"`, `cCodParc`/`nQtdeParc` seguem o contrato da Nota de
+Entrada; os tÃ­tulos gerados devem ser localizados e verificados apÃ³s a escrita, nunca
+inferidos a partir do retorno de inclusÃ£o.

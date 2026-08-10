@@ -102,7 +102,7 @@ class ServiceSpec:
     path: str
     list_call: str
     list_key: str
-    show_call: str
+    show_call: str | None
     selectors: tuple[tuple[str, str, str], ...]
     mutation_calls: tuple[tuple[str, str], ...] = ()
     page_field: str = "pagina"
@@ -125,7 +125,7 @@ class ServiceSpec:
         """Informa se um método pertence à allowlist imutável do serviço."""
         return method in {
             self.list_call,
-            self.show_call,
+            *(call for call in (self.show_call,) if call),
             *(call for _, call in self.mutation_calls),
         }
 
@@ -340,6 +340,69 @@ SERVICE_SPECS = {
             ),
             ("number", "cNumOS", "Número visível da ordem de serviço."),
         ),
+    ),
+    "entry-notes": ServiceSpec(
+        "entry-notes",
+        "produtos/notaentrada/",
+        "ListarNotaEnt",
+        "notas",
+        "ConsultarNotaEnt",
+        (
+            ("id", "nCodNotaEnt", "Código interno da nota de entrada."),
+            ("integration-id", "cCodIntNotaEnt", "Código de integração da nota."),
+        ),
+        (
+            ("create", "IncluirNotaEnt"),
+            ("update", "AlterarNotaEnt"),
+            ("delete", "ExcluirNotaEnt"),
+            ("status", "StatusNotaEnt"),
+        ),
+        "nPagina",
+        "nRegistrosPorPagina",
+        "nPagina",
+        "nTotalPaginas",
+        "nRegistros",
+        "nTotalRegistros",
+    ),
+    "receipt-notes": ServiceSpec(
+        "receipt-notes",
+        "produtos/recebimentonfe/",
+        "ListarRecebimentos",
+        "recebimentos",
+        "ConsultarRecebimento",
+        (
+            ("id", "nIdReceb", "Código interno do recebimento."),
+            ("key", "cChaveNfe", "Chave de acesso da NF-e."),
+        ),
+        (
+            ("update", "AlterarRecebimento"),
+            ("update-completed", "AlterarRecebimentoConcluido"),
+            ("change-stage", "AlterarEtapaRecebimento"),
+            ("complete", "ConcluirRecebimento"),
+            ("reverse", "ReverterRecebimento"),
+            ("delete", "ExcluirRecebimento"),
+        ),
+        "nPagina",
+        "nRegistrosPorPagina",
+        "nPagina",
+        "nTotalPaginas",
+        "nRegistros",
+        "nTotalRegistros",
+    ),
+    "fiscal-documents": ServiceSpec(
+        "fiscal-documents",
+        "contador/xml/",
+        "ListarDocumentos",
+        "documentosEncontrados",
+        None,
+        (),
+        (),
+        "nPagina",
+        "nRegPorPagina",
+        "nPagina",
+        "nRegPorPaginas",
+        "nRegistros",
+        "nTotRegistros",
     ),
 }
 
@@ -649,6 +712,8 @@ def pick(source: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
 
 def summarize(resource: str, item: dict[str, Any]) -> dict[str, Any]:
     """Produz uma visão operacional sem campos secretos ou corpos excessivos."""
+    if resource in {"entry-notes", "receipt-notes", "fiscal-documents"}:
+        return summarize_fiscal(resource, item)
     if resource == "companies":
         return pick(
             item,
@@ -930,12 +995,106 @@ def list_filter_ast(args: argparse.Namespace) -> dict[str, Any] | None:
     return {"and": clauses} if len(clauses) > 1 else (clauses[0] if clauses else None)
 
 
+def _fiscal_pick(value: Any, fields: Sequence[str]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {field: value[field] for field in fields if field in value}
+
+
+def _fiscal_items(value: Any, fields: Sequence[str], *, limit: int = 200) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [_fiscal_pick(item, fields) for item in value[:limit] if isinstance(item, dict)]
+
+
+def summarize_fiscal(resource: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Resume fiscal sem devolver XML, URLs, DANFE ou anexos integrais."""
+    if resource == "fiscal-documents":
+        return {
+            **_fiscal_pick(item, (
+                "nNumero", "cSerie", "nChave", "dEmissao", "hEmissao",
+                "nValor", "nIdNF", "nIdPedido", "nIdReceb", "cStatus",
+            )),
+            "xml_available": bool(item.get("cXml")),
+            "danfe_available": bool(item.get("cDanfe")),
+        }
+    if resource == "receipt-notes":
+        header = item.get("cabec", item)
+        return {
+            "cabec": _fiscal_pick(header, (
+                "nIdReceb", "nIdFornecedor", "cNome", "cRazaoSocial",
+                "cCNPJ_CPF", "cChaveNfe", "cEtapa", "cNumeroNFe",
+                "cSerieNFe", "cModeloNFe", "dEmissaoNFe", "nValorNFe",
+                "cAmbienteNFe", "cNaturezaOperacao",
+            )),
+            "categorias": _fiscal_items(item.get("categorias"), ("cCategoria", "vCategoria", "pCategoria")),
+            "departamentos": _fiscal_items(item.get("departamentos"), ("cCodDepto", "nValor", "nPerc")),
+            "itens": _fiscal_items(item.get("itens", item.get("itensRecebimento")), (
+                "nSequencia", "nCodProd", "cCodIntProd", "cDescricao", "nQtde",
+                "nValUnit", "nValorTotal", "cCFOP", "cNCM", "cAcao",
+            )),
+            "etapa": header.get("cEtapa") if isinstance(header, dict) else None,
+        }
+    header = item.get("cabec", {})
+    additional = item.get("infAdic", {})
+    return {
+        "cabec": _fiscal_pick(header, (
+            "nCodNotaEnt", "cCodIntNotaEnt", "nCodCli", "cCodIntCli",
+            "cNumeroNotaEnt", "cChaveNFe", "cChaveNfe", "dPrevisao", "nCodVend",
+            "cGeraFinanceiro", "cCodParc", "nQtdeParc", "cNome", "cRazaoSocial",
+            "cCNPJ_CPF", "endereco", "endereco_numero", "bairro", "cidade",
+            "estado", "cep",
+        )),
+        "fiscal": _fiscal_pick(item, ("cChaveNFe", "cChaveNfe", "cStatus", "cDesStatus", "cancelada", "faturada")),
+        "totais": _fiscal_pick(item.get("totais"), (
+            "nValorTotal", "nTotalProdutos", "nTotalICMS", "nTotalIPI",
+            "nTotalPIS", "nTotalCOFINS", "nValorFrete", "nValorSeguro",
+        )),
+        "financeiro": _fiscal_pick(additional, ("cGeraFinanceiro", "cCodParc", "nQtdeParc", "nCodCC")),
+        "categoria": additional.get("cCodCateg") if isinstance(additional, dict) else None,
+        "projeto": additional.get("nCodProj") if isinstance(additional, dict) else None,
+        "frete": _fiscal_pick(item.get("frete"), ("nCodTransp", "cTpFrete", "nValFrete", "nValSeguro", "nValOutras")),
+        "departamentos": _fiscal_items(item.get("departamentos"), ("cCodDepto", "nValor", "nPerc")),
+        "itens": _fiscal_items(item.get("produtos"), (
+            "cCodItInt", "nCodProd", "cCodIntProd", "cDescricao", "nQtde",
+            "nValUnit", "nValorTotal", "cCFOP", "cNCM", "cEAN",
+        )),
+        "document_available": bool(item.get("ListaNfe") or item.get("listaNfe")),
+    }
+
+
 def list_params(resource: str, args: argparse.Namespace) -> dict[str, Any]:
     """Monta apenas filtros documentados e explicitamente informados."""
     if resource == "transfers":
         return {}
     if resource == "account-entries":
         return {"cOrigem": ACCOUNT_ENTRY_NATURES[args.nature][1]}
+    if resource == "entry-notes":
+        params: dict[str, Any] = {"cExibirDetalhes": "S" if getattr(args, "details", False) else "N"}
+        if getattr(args, "customer_id", None) is not None:
+            params["nIdCliente"] = args.customer_id
+        if getattr(args, "changed_from", None):
+            params["dtAltDe"] = args.changed_from
+        if getattr(args, "changed_to", None):
+            params["dtAltAte"] = args.changed_to
+        return params
+    if resource == "receipt-notes":
+        params = {}
+        if getattr(args, "key", None):
+            params["cChaveNfe"] = args.key
+        if getattr(args, "stage", None):
+            params["cEtapa"] = args.stage
+        return params
+    if resource == "fiscal-documents":
+        params = {"cModelo": "55", "cOperacao": "0", "cAmbiente": getattr(args, "environment", "P")}
+        for option, api_name in (("issued_from", "dEmiInicial"), ("issued_to", "dEmiFinal"), ("key", "nChave"), ("series", "cSerie")):
+            value = getattr(args, option, None)
+            if value:
+                params[api_name] = value
+        if getattr(args, "document_number", None) is not None:
+            params["nDocInicial"] = args.document_number
+            params["nDocFinal"] = args.document_number
+        return params
     params: dict[str, Any] = {
         "apenas_importado_api": "S" if getattr(args, "only_api", False) else "N"
     }
@@ -1062,6 +1221,19 @@ ACCOUNT_ENTRY_FIELDS = {
     "document_number",
     "observation",
 }
+
+FISCAL_TOP_LEVEL_FIELDS = {"cabec", "frete", "infAdic", "email", "obs", "produtos", "departamentos", "ide", "itensRecebimento", "itensRecebimentoEditar", "infoAdicionais", "cEtapa"}
+FISCAL_ENTRY_HEADER_FIELDS = {
+    "nCodNotaEnt", "cCodIntNotaEnt", "nCodCli", "cCodIntCli", "dPrevisao",
+    "nCodVend", "cGeraFinanceiro", "cCodParc", "nQtdeParc",
+}
+FISCAL_RECEIPT_HEADER_FIELDS = {
+    "nIdReceb", "cChaveNfe", "cEtapa", "nIdFornecedor", "cNumeroNFe",
+    "cSerieNFe", "cModeloNFe", "dEmissaoNFe", "nValorNFe",
+}
+FISCAL_TRANSITION_FIELDS = {
+    "cEtapa", "itensIde", "itensRecebimentoEditar", "infoAdicionais",
+}
 ACCOUNT_ENTRY_DOCUMENT_TYPES = {
     "ADI",
     "BOL",
@@ -1094,6 +1266,7 @@ SETTLEMENT_FIELDS = {
     "date",
     "observation",
     "reconcile",
+    "installment_number",
 }
 
 
@@ -2113,6 +2286,13 @@ def prepare_financial_call(
         current = client.call(service, service.show_call, selector)
         data = require_data(item)
         reject_unknown_fields(data, SETTLEMENT_FIELDS, "data")
+        expected_installment = current.get("numero_parcela")
+        if expected_installment not in (None, ""):
+            supplied_installment = data.get("installment_number")
+            if not isinstance(supplied_installment, str) or supplied_installment.strip() != str(expected_installment).strip():
+                raise OmieToolError(
+                    "A baixa exige 'data.installment_number' exatamente igual à parcela do título consultado."
+                )
         amount = decimal_value(data.get("amount"), "data.amount")
         document = decimal_value(
             current.get("valor_documento"), "valor_documento"
@@ -3168,6 +3348,294 @@ def summarize_mutation_response(response: Mapping[str, Any]) -> dict[str, Any]:
     )
 
 
+FISCAL_SECTION_FIELDS = {
+    "cabec": FISCAL_ENTRY_HEADER_FIELDS | {
+        "cNumeroNotaEnt", "cChaveNFe", "cChaveNfe", "cAmbiente",
+    },
+    "frete": {
+        "nCodTransp", "cTpFrete", "cPlaca", "cUF", "nQtdVol", "cEspVol",
+        "cMarVol", "cNumVol", "nPesoLiq", "nPesoBruto", "nValFrete",
+        "nValSeguro", "nValOutras", "cNumeroLacre", "cRegistroTransp",
+        "cVeiculoProprio",
+    },
+    "infAdic": {"cCodCateg", "cContato", "nCodProj", "cPedido", "cDadosAdic", "cConsFinal", "nCodCC"},
+    "email": {"cEmail"},
+    "obs": {"cObs"},
+    "produtos": {
+        "cCodItInt", "nCodProd", "cCodIntProd", "codigo_local_estoque", "nQtde",
+        "nValUnit", "cCFOP", "cNCM", "cEAN", "cDescricao", "PIS", "COFINS",
+        "ICMS", "IPI", "cAcaoItem",
+    },
+    "departamentos": {"cCodDepto", "nValor", "nPerc"},
+    "ide": {"nIdReceb", "cChaveNfe"},
+    "itensRecebimento": {"itensIde"},
+    "infoAdicionais": {"cCategCompra", "nIdConta", "dRegistro", "nIdProjeto", "nIdComprador"},
+}
+
+
+def _validate_fiscal_mapping(value: Any, allowed: set[str], label: str) -> None:
+    if not isinstance(value, dict):
+        raise OmieToolError(f"'{label}' deve ser um objeto JSON.")
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise OmieToolError(f"Campos não permitidos em '{label}': {', '.join(unknown)}.")
+
+
+def validate_fiscal_item(resource: str, operation: str, item: Mapping[str, Any]) -> None:
+    if operation == "delete":
+        required = {"selector", "confirm_delete"}
+    elif resource == "entry-notes" and operation == "status":
+        required = {"selector"}
+    elif resource == "receipt-notes" and operation in {"complete", "reverse", "change-stage"}:
+        required = {"selector", "data"}
+    else:
+        required = {"selector", "data"} if operation != "create" else {"data"}
+    missing = sorted(required - set(item))
+    if missing:
+        raise OmieToolError(f"Campos obrigatórios ausentes no item fiscal: {', '.join(missing)}.")
+    allowed = required | ({"confirm_delete"} if operation == "delete" else set())
+    unexpected = sorted(set(item) - allowed)
+    if unexpected:
+        raise OmieToolError(f"Campos incompatíveis com '{operation}': {', '.join(unexpected)}.")
+    if operation == "delete" and item.get("confirm_delete") is not True:
+        raise OmieToolError("A exclusão fiscal exige 'confirm_delete': true.")
+    if "selector" in item:
+        selector = item["selector"]
+        if not isinstance(selector, dict) or len(selector) != 1:
+            raise OmieToolError("O seletor fiscal deve conter exatamente um identificador.")
+        selector_allowed = {
+            "id", "integration_id", "key", "number", "series", "supplier_id",
+        }
+        if set(selector) - selector_allowed:
+            raise OmieToolError("Seletor fiscal contém campos não permitidos.")
+    data = item.get("data")
+    if data is None:
+        return
+    _validate_fiscal_mapping(data, FISCAL_TOP_LEVEL_FIELDS, "data")
+    if resource == "entry-notes":
+        for section, value in data.items():
+            allowed_fields = FISCAL_SECTION_FIELDS.get(section, set())
+            if isinstance(value, list):
+                for index, child in enumerate(value):
+                    _validate_fiscal_mapping(child, allowed_fields, f"data.{section}[{index}]")
+            elif isinstance(value, dict):
+                _validate_fiscal_mapping(value, allowed_fields, f"data.{section}")
+    elif resource == "receipt-notes":
+        for section, value in data.items():
+            _validate_fiscal_mapping(value, FISCAL_SECTION_FIELDS.get(section, FISCAL_TRANSITION_FIELDS), f"data.{section}")
+
+
+def fiscal_selector(item: Mapping[str, Any], resource: str) -> dict[str, Any]:
+    selector = item.get("selector")
+    if not isinstance(selector, dict) or len(selector) != 1:
+        raise OmieToolError("O seletor fiscal deve conter exatamente um identificador.")
+    mapping = {
+        "id": "nCodNotaEnt" if resource == "entry-notes" else "nIdReceb",
+        "integration_id": "cCodIntNotaEnt",
+        "key": "cChaveNfe",
+    }
+    key, value = next(iter(selector.items()))
+    if key not in mapping:
+        raise OmieToolError(f"Seletor '{key}' não é suportado para '{resource}'.")
+    if key == "integration_id" and resource != "entry-notes":
+        raise OmieToolError("Recebimento deve ser selecionado por ID ou chave da NF-e.")
+    return {mapping[key]: value}
+
+
+def fiscal_call_params(resource: str, operation: str, item: Mapping[str, Any]) -> dict[str, Any]:
+    data = dict(item.get("data") or {})
+    if operation in {"delete", "status"}:
+        return fiscal_selector(item, resource)
+    if resource == "entry-notes":
+        header = dict(data.get("cabec") or {})
+        if "selector" in item:
+            header.update(fiscal_selector(item, resource))
+        data["cabec"] = header
+        return data
+    if resource == "receipt-notes":
+        ide = dict(data.get("ide") or {})
+        ide.update(fiscal_selector(item, resource)) if "selector" in item else None
+        data["ide"] = ide
+        if operation == "change-stage":
+            stage = data.get("cEtapa")
+            if not isinstance(stage, str) or not stage.strip():
+                raise OmieToolError("'data.cEtapa' é obrigatório para alterar a etapa.")
+            return {**ide, "cEtapa": stage}
+        if operation in {"complete", "reverse"}:
+            return ide
+        return data
+    raise OmieToolError("Recurso fiscal sem mutação suportada.")
+
+
+def fiscal_existing(client: OmieClient, resource: str, item: Mapping[str, Any]) -> dict[str, Any] | None:
+    if resource == "entry-notes":
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        header = data.get("cabec") if isinstance(data, dict) else {}
+        if isinstance(header, dict) and (header.get("cCodIntNotaEnt") or header.get("nCodNotaEnt")):
+            selector = {"nCodNotaEnt": header["nCodNotaEnt"]} if header.get("nCodNotaEnt") else {"cCodIntNotaEnt": header["cCodIntNotaEnt"]}
+        else:
+            return None
+    else:
+        selector = fiscal_selector(item, resource) if "selector" in item else None
+    if not selector:
+        return None
+    return maybe_show(client, SERVICE_SPECS[resource], selector)
+
+
+def find_entry_note_duplicates(client: OmieClient, item: Mapping[str, Any]) -> list[dict[str, Any]]:
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    header = data.get("cabec") if isinstance(data.get("cabec"), dict) else {}
+    integration = str(header.get("cCodIntNotaEnt") or "")
+    supplier = header.get("nCodCli")
+    number = str(header.get("cNumeroNotaEnt") or "")
+    key = str(header.get("cChaveNFe") or header.get("cChaveNfe") or "")
+    expected_total = None
+    totals = data.get("totais")
+    if isinstance(totals, dict):
+        expected_total = str(totals.get("nValorTotal") or "")
+    candidates: list[dict[str, Any]] = []
+    page = 1
+    while page <= client.config.max_pages:
+        items, metadata = client.list_page(
+            SERVICE_SPECS["entry-notes"], page=page,
+            params={"nIdCliente": supplier, "cExibirDetalhes": "S"} if supplier is not None else {"cExibirDetalhes": "S"},
+        )
+        for candidate in items:
+            candidate_header = candidate.get("cabec", {}) if isinstance(candidate.get("cabec"), dict) else {}
+            same = False
+            if integration and candidate_header.get("cCodIntNotaEnt") == integration:
+                same = True
+            if key and (candidate_header.get("cChaveNFe") or candidate_header.get("cChaveNfe")) == key:
+                same = True
+            if number and str(candidate_header.get("cNumeroNotaEnt") or "") == number and (supplier is None or candidate_header.get("nCodCli") == supplier):
+                same = True
+            if expected_total and str((candidate.get("totais") or {}).get("nValorTotal") or "") == expected_total and number and str(candidate_header.get("cNumeroNotaEnt") or "") == number:
+                same = True
+            if same:
+                candidates.append(candidate)
+        if page >= metadata["total_pages"]:
+            break
+        page += 1
+    return candidates[:20]
+
+
+def execute_fiscal_mutation(client: OmieClient, args: argparse.Namespace) -> dict[str, Any]:
+    envelope = load_input_document(args)
+    base_request_id = envelope["request_id"]
+    items = envelope_items(envelope)
+    prepared: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
+    for index, item in enumerate(items, 1):
+        validate_fiscal_item(args.resource, args.operation, item)
+        request_id = base_request_id if len(items) == 1 else f"{base_request_id}:{index}"
+        existing = fiscal_existing(client, args.resource, item) if args.operation == "create" else None
+        if args.resource == "entry-notes" and args.operation == "create":
+            duplicates = find_entry_note_duplicates(client, item)
+            if len(duplicates) > 1:
+                raise OmieToolError("A Nota de Entrada possui múltiplas duplicidades candidatas; nenhuma escrita foi executada.")
+            if duplicates:
+                existing = duplicates[0]
+        if existing is not None:
+            prepared.append((request_id, {}, existing))
+            continue
+        prepared.append((request_id, fiscal_call_params(args.resource, args.operation, item), None))
+    if args.dry_run:
+        return {
+            "ok": True, "dry_run": True, "resource": args.resource,
+            "operation": args.operation, "request_id": base_request_id,
+            "calls": [{"request_id": request_id, "method": SERVICE_SPECS[args.resource].mutation_call(args.operation), "params": sanitize_payload(params), "already_exists": existing is not None} for request_id, params, existing in prepared],
+        }
+    results: list[dict[str, Any]] = []
+    service = SERVICE_SPECS[args.resource]
+    for index, (request_id, params, existing) in enumerate(prepared, 1):
+        if existing is not None:
+            results.append({"index": index, "status": "already_exists", "item": sanitize_payload(summarize(args.resource, existing))})
+            continue
+        response = client.call(service, service.mutation_call(args.operation), params)
+        verification: dict[str, Any] = {"status": "not_requeried"}
+        if args.operation not in {"delete", "status", "complete", "reverse", "change-stage"}:
+            response_selector = {
+                "nCodNotaEnt": response.get("nCodNotaEnt"),
+                "cCodIntNotaEnt": response.get("cCodIntNotaEnt"),
+            } if args.resource == "entry-notes" else {
+                "nIdReceb": response.get("nIdReceb"),
+                "cChaveNfe": response.get("cChaveNfe"),
+            }
+            response_selector = {key: value for key, value in response_selector.items() if value not in (None, "")}
+            if response_selector:
+                verified = maybe_show(client, service, response_selector)
+                verification = {"status": "verified", "item": summarize(args.resource, verified)} if verified else {"status": "ambiguous"}
+                if args.resource == "entry-notes" and args.operation == "create":
+                    finance = (params.get("cabec") or {}).get("cGeraFinanceiro")
+                    if finance == "S" and verified:
+                        candidates = find_entry_note_payables(client, verified)
+                        verification["financial"] = {
+                            "status": "verified" if len(candidates) == 1 else ("ambiguous" if candidates else "not_found"),
+                            "payables": sanitize_payload(candidates),
+                        }
+        results.append({"index": index, "status": "applied", "request_id": request_id, "response": sanitize_payload(summarize_mutation_response(response)), "verification": sanitize_payload(verification)})
+    return {"ok": True, "dry_run": False, "resource": args.resource, "operation": args.operation, "request_id": base_request_id, "count": len(results), "results": results}
+
+
+def find_entry_note_payables(client: OmieClient, note: Mapping[str, Any]) -> list[dict[str, Any]]:
+    header = note.get("cabec", {}) if isinstance(note.get("cabec"), dict) else {}
+    number = str(header.get("cNumeroNotaEnt") or "")
+    supplier = header.get("nCodCli")
+    candidates: list[dict[str, Any]] = []
+    page = 1
+    while page <= client.config.max_pages:
+        items, metadata = client.list_page(
+            SERVICE_SPECS["payables"],
+            page=page,
+            params={"filtrar_cliente": supplier} if supplier is not None else {},
+        )
+        for item in items:
+            if number and str(item.get("numero_documento") or "") != number:
+                continue
+            candidates.append(summarize("payables", item))
+        if page >= metadata["total_pages"]:
+            break
+        page += 1
+    return candidates[:200]
+
+
+def execute_entry_note_links(client: OmieClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Consulta nota e candidatos de títulos sem inferir vínculo contábil."""
+    note_service = SERVICE_SPECS["entry-notes"]
+    payable_service = SERVICE_SPECS["payables"]
+    selector = {"nCodNotaEnt": args.id} if args.id is not None else {"cCodIntNotaEnt": args.integration_id}
+    note = client.call(note_service, note_service.show_call, selector)
+    candidates = find_entry_note_payables(client, note)
+    return {
+        "ok": True,
+        "resource": "entry-notes",
+        "operation": "links",
+        "note": summarize("entry-notes", note),
+        "payables": sanitize_payload(candidates),
+        "link_status": "verified" if len(candidates) == 1 else ("ambiguous" if candidates else "not_found"),
+        "warning": "Candidatos não autorizam baixa; selecione o título e a parcela por identificador antes de pagar.",
+    }
+
+
+def execute_entry_note_qualification(client: OmieClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Consulta fornecedor/endereço e separa destino sem inferir projeto."""
+    selector = {"nCodNotaEnt": args.id} if args.id is not None else {"cCodIntNotaEnt": args.integration_id}
+    note = client.call(SERVICE_SPECS["entry-notes"], "ConsultarNotaEnt", selector)
+    header = note.get("cabec", {}) if isinstance(note.get("cabec"), dict) else {}
+    supplier_id = header.get("nCodCli")
+    supplier = None
+    if supplier_id is not None:
+        supplier = client.call(SERVICE_SPECS["customers"], "ConsultarCliente", {"codigo_cliente_omie": supplier_id})
+    delivery = note.get("entrega") or note.get("enderecoEntrega") or note.get("destinatario")
+    return {
+        "ok": True,
+        "resource": "entry-notes",
+        "operation": "qualify",
+        "supplier": sanitize_payload(summarize("customers", supplier)) if isinstance(supplier, dict) else None,
+        "delivery": sanitize_payload(delivery) if isinstance(delivery, dict) else {"available": False, "reason": "A API de Nota de Entrada não devolveu um endereço de entrega separado."},
+        "project": {"selected": None, "requires_confirmation": True},
+    }
+
+
 def execute_mutation(
     client: OmieClient,
     args: argparse.Namespace,
@@ -3370,7 +3838,7 @@ def add_list_filters(parser: argparse.ArgumentParser, resource: str) -> None:
         action="store_true",
         help="Percorre páginas até o limite configurado.",
     )
-    if resource not in ("transfers", "account-entries"):
+    if resource not in ("transfers", "account-entries", "entry-notes", "receipt-notes", "fiscal-documents"):
         parser.add_argument("--only-api", action="store_true")
         parser.add_argument("--changed-from", type=validate_date)
         parser.add_argument("--changed-to", type=validate_date)
@@ -3379,6 +3847,19 @@ def add_list_filters(parser: argparse.ArgumentParser, resource: str) -> None:
         change_group.add_argument("--only-changed", action="store_true")
     if resource == "products":
         parser.add_argument("--description")
+    if resource == "entry-notes":
+        parser.add_argument("--customer-id", type=int)
+        parser.add_argument("--details", action="store_true")
+    if resource == "receipt-notes":
+        parser.add_argument("--key")
+        parser.add_argument("--stage")
+    if resource == "fiscal-documents":
+        parser.add_argument("--key")
+        parser.add_argument("--series")
+        parser.add_argument("--document-number", type=int)
+        parser.add_argument("--issued-from", type=validate_date)
+        parser.add_argument("--issued-to", type=validate_date)
+        parser.add_argument("--environment", choices=("P", "H"), default="P")
     if resource in ("payables", "receivables"):
         parser.add_argument("--issued-from", type=validate_date)
         parser.add_argument("--issued-to", type=validate_date)
@@ -3527,6 +4008,20 @@ def add_customer_prepare(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(handler=execute_prepare_customer)
 
 
+def add_entry_note_links(parser: argparse.ArgumentParser) -> None:
+    selectors = parser.add_mutually_exclusive_group(required=True)
+    selectors.add_argument("--id", type=int, help="ID interno da Nota de Entrada.")
+    selectors.add_argument("--integration-id", help="Código de integração da Nota de Entrada.")
+    parser.set_defaults(handler=execute_entry_note_links)
+
+
+def add_entry_note_qualification(parser: argparse.ArgumentParser) -> None:
+    selectors = parser.add_mutually_exclusive_group(required=True)
+    selectors.add_argument("--id", type=int)
+    selectors.add_argument("--integration-id")
+    parser.set_defaults(handler=execute_entry_note_qualification)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Constrói a CLI restrita aos contratos documentados da skill."""
     parser = argparse.ArgumentParser(
@@ -3543,8 +4038,9 @@ def build_parser() -> argparse.ArgumentParser:
         operations = resource.add_subparsers(dest="operation", required=True)
         list_command = operations.add_parser("list", help="Lista registros.")
         add_list_filters(list_command, name)
-        show_command = operations.add_parser("show", help="Consulta um registro.")
-        add_show_selectors(show_command, service)
+        if service.show_call:
+            show_command = operations.add_parser("show", help="Consulta um registro.")
+            add_show_selectors(show_command, service)
         if name == "account-entries":
             prepare = operations.add_parser(
                 "prepare",
@@ -3565,12 +4061,25 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Prepara um envelope tipado no trabalho Telegram.",
             )
             add_customer_prepare(prepare)
+        if name == "entry-notes":
+            links = operations.add_parser(
+                "links",
+                help="Consulta candidatos de títulos a pagar ligados à nota.",
+            )
+            add_entry_note_links(links)
+            qualify = operations.add_parser(
+                "qualify",
+                help="Consulta fornecedor e separa endereço de entrega sem inferir projeto.",
+            )
+            add_entry_note_qualification(qualify)
         for operation, _ in service.mutation_calls:
             mutation = operations.add_parser(
                 operation,
                 help=f"Executa {operation} com envelope JSON validado.",
             )
             add_mutation_input(mutation)
+            if name in {"entry-notes", "receipt-notes"}:
+                mutation.set_defaults(handler=execute_fiscal_mutation)
     return parser
 
 
@@ -3600,7 +4109,7 @@ def main() -> int:
             stream=sys.stderr,
         )
         return 2
-    if getattr(args, "handler", None) is execute_mutation and not args.profile:
+    if getattr(args, "handler", None) in (execute_mutation, execute_fiscal_mutation) and not args.profile:
         print_json(
             {"ok": False, "error": "Toda mutação exige '--profile' explícito."},
             stream=sys.stderr,

@@ -52,6 +52,11 @@ class TelegramApi:
         self.timeout_seconds = timeout_seconds
         self.assistant_name = assistant_name.strip() or "A assistente"
 
+    @property
+    def bot_token_for_local_services(self) -> str:
+        """Uso interno de serviços do Gateway (nunca exibir ou registrar)."""
+        return self._token
+
     def close(self) -> None:
         self._token = ""
         self._base = ""
@@ -107,6 +112,13 @@ class TelegramApi:
             "scope": {"type": "all_private_chats"},
         }
         return bool(self.call("setMyCommands", payload))
+
+    def set_chat_menu_button(self, menu_button: dict[str, Any] | None = None) -> bool:
+        """Configura o botão de menu global do bot sem expor credenciais."""
+        payload: dict[str, Any] = {}
+        if menu_button is not None:
+            payload["menu_button"] = menu_button
+        return bool(self.call("setChatMenuButton", payload))
 
     def get_profile(self) -> dict[str, str]:
         """Consulta os campos públicos editáveis do bot."""

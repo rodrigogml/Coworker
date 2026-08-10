@@ -22,6 +22,7 @@ ATTRIBUTES = {
     "TOTP_DIGITS": "digits",
     "TOTP_PERIOD": "period",
 }
+PROTECTION_TITLE = "__protection__"
 
 
 class TotpVaultError(RuntimeError):
@@ -143,3 +144,47 @@ def find_records(selector: str, *, config_path: Path | None = None) -> list[dict
         if normalized in {item["entry"].casefold(), item["issuer"].casefold(), item["account"].casefold()}
         or normalized in f'{item["issuer"]} {item["account"]}'.casefold()
     ]
+
+
+def get_protection_hash(*, config_path: Path | None = None) -> str | None:
+    """Retorna somente o hash da senha do módulo, nunca uma senha TOTP."""
+    database, _ = _open(config_path)
+    try:
+        group = _group(database, ["TOTP"])
+    except TotpVaultError:
+        return None
+    matches = [item for item in group.entries if item.title == PROTECTION_TITLE]
+    if len(matches) > 1:
+        raise TotpVaultError("A proteção TOTP está ambígua.")
+    return str(matches[0].password or "") if matches else None
+
+
+def set_protection_hash(value: str, *, config_path: Path | None = None) -> None:
+    if not value or len(value) > 512 or "\n" in value or "\r" in value:
+        raise TotpVaultError("Hash de proteção TOTP inválido.")
+    credential_vault.ensure_keepassxc_gui_closed()
+    database, _ = _open(config_path)
+    group = _group(database, ["TOTP"], create=True)
+    matches = [item for item in group.entries if item.title == PROTECTION_TITLE]
+    if len(matches) > 1:
+        raise TotpVaultError("A proteção TOTP está ambígua.")
+    target = matches[0] if matches else database.add_entry(group, PROTECTION_TITLE, "", value)
+    target.password = value
+    target.set_custom_property("TOTP_PROTECTION", "pbkdf2-sha256", protect=True)
+    try:
+        database.save()
+    except Exception as exc:
+        raise TotpVaultError("Não foi possível salvar a proteção TOTP.") from exc
+
+
+def delete(entry: str, *, config_path: Path | None = None) -> None:
+    credential_vault.ensure_keepassxc_gui_closed()
+    database, _ = _open(config_path)
+    target = _find(database, entry)
+    if target.title == PROTECTION_TITLE:
+        raise TotpVaultError("A proteção TOTP não pode ser removida por esta operação.")
+    try:
+        database.delete_entry(target)
+        database.save()
+    except Exception as exc:
+        raise TotpVaultError("Não foi possível excluir a entrada TOTP.") from exc

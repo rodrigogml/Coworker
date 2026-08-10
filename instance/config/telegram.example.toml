@@ -114,3 +114,12 @@ public_url = ""
 secret_credential_ref = "APIs/Telegram/INSTANCE_ID-webhook"
 listen_host = "127.0.0.1"
 listen_port = 8787
+
+# Mini App TOTP servido pelo próprio Gateway. Telegram exige URL HTTPS pública
+# para abrir em produção; listen_host/port são o listener local do Gateway.
+[mini_app]
+enabled = false
+listen_host = "127.0.0.1"
+listen_port = 8790
+public_url = ""
+session_ttl_seconds = 900

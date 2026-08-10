@@ -99,6 +99,7 @@ from interfaces.telegram.telegram_api import (  # noqa: E402
     unique_path,
 )
 from interfaces.telegram.workspace import JobWorkspace, WorkspaceError, parse_delivery  # noqa: E402
+from interfaces.telegram.totp_mini_app import TotpMiniApp  # noqa: E402
 from scripts.credential_vault import (  # noqa: E402
     VaultToolError,
     read_entry_secret,
@@ -381,6 +382,7 @@ class Gateway:
         self.secret_captures: dict[int, str] = {}
         self.totp_captures: dict[int, TotpCapture] = {}
         self.totp_message_timers: dict[tuple[int, int], threading.Timer] = {}
+        self.totp_mini_app: TotpMiniApp | None = None
         self.credential_lock = threading.RLock()
         self.credential_captures: dict[int, CredentialCapture] = {}
         self.credential_requests_seen: set[str] = set()
@@ -390,6 +392,28 @@ class Gateway:
         self.credential_request_retry_at: dict[str, float] = {}
         self.bot_username: str | None = None
         self.scheduler = TaskScheduler(self.scheduler_store, config.project_root, self._run_scheduled_task)
+
+    def _start_totp_mini_app(self) -> None:
+        cfg = self.config.mini_app
+        if not cfg.enabled:
+            return
+        self.totp_mini_app = TotpMiniApp(
+            cfg.listen_host,
+            cfg.listen_port,
+            self.api.bot_token_for_local_services,
+            lambda user_id: (
+                self.state.is_authorized(user_id, owner.chat_id)
+                if (owner := self.state.owner()) is not None
+                else False
+            ),
+            ttl=cfg.session_ttl_seconds,
+        )
+        self.totp_mini_app.start()
+
+    def _stop_totp_mini_app(self) -> None:
+        if self.totp_mini_app is not None:
+            self.totp_mini_app.stop()
+            self.totp_mini_app = None
 
     def _group_config(self, chat_id: int):
         return next((group for group in self.config.groups if group.chat_id == chat_id and group.enabled), None)
@@ -525,6 +549,7 @@ class Gateway:
                 return {"ok": False, "status": "notification_pending", "error": str(exc)}
 
     def close(self) -> None:
+        self._stop_totp_mini_app()
         self.stop_event.set()
         self._cancel_all_credential_requests("A interface foi encerrada.")
         with self.album_lock:
@@ -554,6 +579,7 @@ class Gateway:
 
     def drain_and_close(self) -> None:
         """Para de receber atualizações e conclui a fila antes do handoff."""
+        self._stop_totp_mini_app()
         with self.album_lock:
             for album in self.albums.values():
                 if album.timer:
@@ -586,6 +612,7 @@ class Gateway:
                 "O transporte webhook ainda não foi ativado nesta instalação. Use polling."
             )
         self._sync_public_metadata()
+        self._start_totp_mini_app()
         self.api.delete_webhook()
         self.worker.start()
         self.credential_broker.start()
@@ -619,6 +646,20 @@ class Gateway:
             self.bot_username = None
         operations = (
             ("comandos", lambda: self.api.set_commands(BOT_COMMANDS)),
+            (
+                "menu TOTP",
+                lambda: self.api.set_chat_menu_button(
+                    {
+                        "type": "web_app",
+                        "text": "TOTP",
+                        "web_app": {"url": self.config.mini_app.public_url},
+                    }
+                )
+                if getattr(self.api, "set_chat_menu_button", None)
+                and getattr(getattr(self.config, "mini_app", None), "enabled", False)
+                and getattr(getattr(self.config, "mini_app", None), "public_url", "")
+                else True,
+            ),
             (
                 "perfil",
                 lambda: self.api.set_profile(
@@ -2070,6 +2111,14 @@ class Gateway:
                 )
         elif command == "/totp":
             value = argument.strip()
+            if not value and self.config.mini_app.enabled and self.config.mini_app.public_url:
+                self._send(
+                    chat_id,
+                    "Abra o gerenciador seguro de TOTP:",
+                    update_id=update_id,
+                    reply_markup={"inline_keyboard": [[{"text": "Abrir TOTP", "web_app": {"url": self.config.mini_app.public_url}}]]},
+                )
+                return
             if value.casefold() in {"add", "cadastrar", "novo"}:
                 self.totp_captures[chat_id] = TotpCapture()
                 self._send(

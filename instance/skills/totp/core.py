@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import io
 import hmac
 import re
 import time
@@ -176,6 +177,30 @@ def decode_qr(path: Path) -> str:
     try:
         image = Image.open(path)
         results = zxingcpp.read_barcodes(image)
+    except Exception as exc:
+        raise TotpError("Não foi possível ler o QR Code.") from exc
+    for result in results:
+        text = str(getattr(result, "text", "") or "").strip()
+        if text:
+            return text
+    raise TotpError("O QR Code não contém dados legíveis.")
+
+
+def decode_qr_bytes(data: bytes) -> str:
+    """Decodifica QR em memória sem persistir a imagem recebida."""
+    if not data or len(data) > 4 * 1024 * 1024:
+        raise TotpError("A imagem do QR Code excede o limite.")
+    try:
+        import zxingcpp
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as image:
+            if image.width * image.height > 16_000_000:
+                raise TotpError("A imagem do QR Code excede o limite de pixels.")
+            results = zxingcpp.read_barcodes(image)
+    except TotpError:
+        raise
+    except ImportError as exc:
+        raise TotpError("A dependência local de leitura de QR Code não está instalada.") from exc
     except Exception as exc:
         raise TotpError("Não foi possível ler o QR Code.") from exc
     for result in results:
