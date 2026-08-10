@@ -23,6 +23,14 @@ class TelegramApiError(RuntimeError):
     """Representa uma falha da API sem incluir o token na mensagem."""
 
 
+def _reply_parameters(message_id: int) -> dict[str, int | bool]:
+    """Mantém a entrega mesmo quando a mensagem referenciada já foi apagada."""
+    return {
+        "message_id": message_id,
+        "allow_sending_without_reply": True,
+    }
+
+
 @dataclass(frozen=True)
 class DownloadedFile:
     file_id: str
@@ -219,7 +227,7 @@ class TelegramApi:
                 "disable_web_page_preview": True,
             }
             if index == 0 and reply_to_message_id is not None:
-                payload["reply_parameters"] = {"message_id": reply_to_message_id}
+                payload["reply_parameters"] = _reply_parameters(reply_to_message_id)
             if message_thread_id is not None:
                 payload["message_thread_id"] = message_thread_id
             if index == len(chunks) - 1 and reply_markup is not None:
@@ -339,7 +347,7 @@ class TelegramApi:
         if caption:
             fields.update({"caption": markdown_to_telegram_html(caption[:1024]), "parse_mode": "HTML"})
         if reply_to_message_id is not None:
-            fields["reply_parameters"] = {"message_id": reply_to_message_id}
+            fields["reply_parameters"] = _reply_parameters(reply_to_message_id)
         if message_thread_id is not None:
             fields["message_thread_id"] = message_thread_id
         return _receipt(self.call_multipart(method, fields, {field: path}))
@@ -365,7 +373,7 @@ class TelegramApi:
             media.append(item)
         fields: dict[str, Any] = {"chat_id": chat_id, "media": media}
         if reply_to_message_id is not None:
-            fields["reply_parameters"] = {"message_id": reply_to_message_id}
+            fields["reply_parameters"] = _reply_parameters(reply_to_message_id)
         result = self.call_multipart("sendMediaGroup", fields, files)
         return [_receipt(item) for item in result or []]
 

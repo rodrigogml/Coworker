@@ -508,7 +508,10 @@ class TelegramUploadTests(unittest.TestCase):
             receipts = api.send_text(10, "linha\n" * 1000, reply_to_message_id=9)
 
         self.assertGreater(len(receipts), 1)
-        self.assertEqual({"message_id": 9}, call.call_args_list[0].args[1]["reply_parameters"])
+        self.assertEqual(
+            {"message_id": 9, "allow_sending_without_reply": True},
+            call.call_args_list[0].args[1]["reply_parameters"],
+        )
         self.assertNotIn("reply_parameters", call.call_args_list[1].args[1])
 
     def test_photo_and_document_use_native_multipart_methods(self) -> None:
@@ -530,7 +533,10 @@ class TelegramUploadTests(unittest.TestCase):
         self.assertEqual("photo-id", photo.file_id)
         self.assertEqual("document-id", document.file_id)
         self.assertEqual("sendPhoto", call.call_args_list[0].args[0])
-        self.assertEqual({"message_id": 9}, call.call_args_list[0].args[1]["reply_parameters"])
+        self.assertEqual(
+            {"message_id": 9, "allow_sending_without_reply": True},
+            call.call_args_list[0].args[1]["reply_parameters"],
+        )
         self.assertEqual("sendDocument", call.call_args_list[1].args[0])
 
     def test_multipart_contains_file_and_never_places_token_in_body(self) -> None:

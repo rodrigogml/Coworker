@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -279,6 +281,8 @@ class GoogleAccountsTests(unittest.TestCase):
 
         with TemporaryDirectory() as temporary:
             config_path = Path(temporary) / "google.toml"
+            audit_path = Path(temporary) / "google-oauth.jsonl"
+            audit = google.OAuthAudit(audit_path)
             config_path.write_text(
                 '[profiles.pessoal]\n'
                 'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
@@ -292,20 +296,34 @@ class GoogleAccountsTests(unittest.TestCase):
                     "token_urlsafe",
                     side_effect=["fixed-state", "fixed-verifier"],
                 ),
-                patch.object(google.webbrowser, "open", return_value=True),
+                patch.object(
+                    google.webbrowser, "open", return_value=True
+                ) as open_browser,
                 patch.object(google, "write_entry_credentials") as write_credentials,
             ):
-                result = google.enroll_google_profile(
-                    self.config(),
-                    "pessoal",
-                    requested_services=("calendar",),
-                    config_path=config_path,
-                    opener=opener,
-                )
+                try:
+                    result = google.enroll_google_profile(
+                        self.config(),
+                        "pessoal",
+                        requested_services=("calendar",),
+                        config_path=config_path,
+                        opener=opener,
+                        audit=audit,
+                    )
+                finally:
+                    audit.close()
             updated = config_path.read_text(encoding="utf-8")
+            audit_content = audit_path.read_text(encoding="utf-8")
 
         token_body = requests[0].data.decode("ascii")
+        authorization_query = google.urllib.parse.parse_qs(
+            google.urllib.parse.urlparse(open_browser.call_args.args[0]).query
+        )
+        token_query = google.urllib.parse.parse_qs(token_body)
         self.assertNotIn("client_secret", token_body)
+        self.assertEqual(
+            authorization_query["redirect_uri"], token_query["redirect_uri"]
+        )
         write_credentials.assert_called_once_with(
             "APIs/Google/Accounts/Pessoal",
             "pessoal@example.com",
@@ -313,6 +331,67 @@ class GoogleAccountsTests(unittest.TestCase):
         )
         self.assertEqual(["gmail", "calendar"], result["services"])
         self.assertIn('services = ["gmail", "calendar"]', updated)
+        self.assertIn('"event": "callback_received"', audit_content)
+        self.assertIn('"event": "token_exchange_started"', audit_content)
+        self.assertIn('"event": "refresh_token_persisted"', audit_content)
+        for secret in (
+            "authorization-code",
+            "fixed-verifier",
+            "access-secreto",
+            "refresh-secreto",
+            "pessoal@example.com",
+        ):
+            self.assertNotIn(secret, audit_content)
+
+    def test_http_error_exposes_stage_and_sanitized_description(self):
+        payload = json.dumps(
+            {
+                "error": "invalid_request",
+                "error_description": (
+                    "Missing required parameter for pessoal@example.com: "
+                    "abcdefghijklmnopqrstuvwxyz0123456789"
+                ),
+            }
+        ).encode("utf-8")
+
+        def opener(request, *, timeout):
+            del timeout
+            raise urllib.error.HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(payload),
+            )
+
+        with TemporaryDirectory() as temporary:
+            audit_path = Path(temporary) / "oauth.jsonl"
+            audit = google.OAuthAudit(audit_path)
+            try:
+                with self.assertRaises(google.GoogleAccountError) as raised:
+                    google._post_form(
+                        "https://oauth2.googleapis.com/token",
+                        {"client_id": "public", "code": "secret"},
+                        timeout=10,
+                        opener=opener,
+                        operation="token_exchange",
+                        audit=audit,
+                    )
+            finally:
+                audit.close()
+            audit_content = audit_path.read_text(encoding="utf-8")
+
+        message = str(raised.exception)
+        self.assertIn("token_exchange HTTP 400: invalid_request", message)
+        self.assertIn("Missing required parameter", message)
+        self.assertNotIn("pessoal@example.com", message)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz0123456789", message)
+        self.assertNotIn("pessoal@example.com", audit_content)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz0123456789", audit_content)
+
+    def test_callback_page_does_not_claim_authorization_completed(self):
+        self.assertIn("ainda está sendo finalizada", google.OAUTH_CALLBACK_BODY)
+        self.assertNotIn("Autorização recebida", google.OAUTH_CALLBACK_BODY)
 
     def test_required_scopes_fail_before_api_use(self):
         access = google.GoogleAccess(

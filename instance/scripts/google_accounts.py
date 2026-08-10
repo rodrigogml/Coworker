@@ -7,7 +7,10 @@ import argparse
 import base64
 import hashlib
 import json
+import logging
+import logging.handlers
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -17,6 +20,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -66,10 +70,95 @@ SERVICE_LABELS = {
     "drive": "Drive",
     "contacts": "Contatos",
 }
+_SAFE_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SENSITIVE_ERROR_TOKEN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9._~+/=-]{24,}(?![A-Za-z0-9])")
+_EMAIL_IN_ERROR = re.compile(r"\b[^\s@]+@[^\s@]+\b")
+_OAUTH_LOG_MAX_BYTES = 256 * 1024
+_OAUTH_LOG_BACKUPS = 3
+OAUTH_CALLBACK_BODY = (
+    "<html><body><h1>Coworker</h1>"
+    "<p>Retorno recebido. A autorização ainda está sendo finalizada "
+    "no aplicativo.</p><p>Volte ao console para confirmar o resultado.</p>"
+    "</body></html>"
+)
 
 
 class GoogleAccountError(Exception):
     """Erro seguro do fluxo de contas Google."""
+
+
+class OAuthAudit:
+    """Log JSONL local, rotativo e fechado para eventos não sensíveis do OAuth."""
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        self.session = secrets.token_hex(8)
+        self._logger = logging.getLogger(f"coworker.google.oauth.{id(self)}")
+        self._logger.setLevel(logging.INFO)
+        self._logger.propagate = False
+        handler = logging.handlers.RotatingFileHandler(
+            path,
+            maxBytes=_OAUTH_LOG_MAX_BYTES,
+            backupCount=_OAUTH_LOG_BACKUPS,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        self._handler = handler
+        self._logger.addHandler(handler)
+
+    def event(self, name: str, **fields: str | int | bool | list[str]) -> None:
+        document = {
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "session": self.session,
+            "event": name,
+            **fields,
+        }
+        self._logger.info(
+            json.dumps(document, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        )
+
+    def close(self) -> None:
+        self._logger.removeHandler(self._handler)
+        self._handler.close()
+
+
+def _safe_error_code(value: Any) -> str:
+    candidate = str(value or "").strip().casefold()
+    return candidate if _SAFE_ERROR_CODE.fullmatch(candidate) else "http_error"
+
+
+def _safe_error_description(value: Any) -> str:
+    """Preserva explicação operacional, removendo valores que possam ser segredos."""
+    candidate = " ".join(str(value or "").split())[:500]
+    candidate = _EMAIL_IN_ERROR.sub("[redacted]", candidate)
+    candidate = _SENSITIVE_ERROR_TOKEN.sub("[redacted]", candidate)
+    return candidate[:300]
+
+
+def _oauth_audit_for_config(config_path: Path | None) -> OAuthAudit | None:
+    if config_path is None:
+        return None
+    try:
+        data_root = (PROJECT_ROOT / "data").resolve(strict=True)
+        config_path.resolve(strict=True).relative_to(data_root)
+        return OAuthAudit(data_root / "log" / "google-oauth.jsonl")
+    except (OSError, ValueError):
+        return None
+
+
+def _audit(
+    audit: OAuthAudit | None,
+    name: str,
+    **fields: str | int | bool | list[str],
+) -> None:
+    if audit is None:
+        return
+    try:
+        audit.event(name, **fields)
+    except OSError:
+        return
 
 
 @dataclass(frozen=True)
@@ -307,6 +396,8 @@ def _json_request(
     *,
     timeout: int,
     opener: Callable[..., Any] = urllib.request.urlopen,
+    operation: str = "request",
+    audit: OAuthAudit | None = None,
 ) -> dict[str, Any]:
     try:
         with opener(request, timeout=timeout) as response:
@@ -317,9 +408,22 @@ def _json_request(
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
         code = payload.get("error") if isinstance(payload, dict) else None
-        safe_code = str(code)[:100] if code else "http_error"
+        description = (
+            payload.get("error_description") if isinstance(payload, dict) else None
+        )
+        safe_code = _safe_error_code(code)
+        safe_description = _safe_error_description(description)
+        _audit(
+            audit,
+            "google_http_error",
+            operation=operation,
+            http_status=exc.code,
+            error=safe_code,
+            error_description=safe_description,
+        )
+        detail = f": {safe_description}" if safe_description else ""
         raise GoogleAccountError(
-            f"Google HTTP {exc.code}: {safe_code}."
+            f"Google {operation} HTTP {exc.code}: {safe_code}{detail}."
         ) from exc
     except urllib.error.URLError as exc:
         raise GoogleAccountError("Falha de comunicação com o Google.") from exc
@@ -338,6 +442,8 @@ def _post_form(
     *,
     timeout: int,
     opener: Callable[..., Any] = urllib.request.urlopen,
+    operation: str = "token",
+    audit: OAuthAudit | None = None,
 ) -> dict[str, Any]:
     request = urllib.request.Request(
         endpoint,
@@ -349,7 +455,13 @@ def _post_form(
         },
         method="POST",
     )
-    return _json_request(request, timeout=timeout, opener=opener)
+    return _json_request(
+        request,
+        timeout=timeout,
+        opener=opener,
+        operation=operation,
+        audit=audit,
+    )
 
 
 def _userinfo(
@@ -357,6 +469,7 @@ def _userinfo(
     access_token: str,
     *,
     opener: Callable[..., Any] = urllib.request.urlopen,
+    audit: OAuthAudit | None = None,
 ) -> dict[str, Any]:
     request = urllib.request.Request(
         config.userinfo_endpoint,
@@ -371,6 +484,8 @@ def _userinfo(
         request,
         timeout=config.timeout_seconds,
         opener=opener,
+        operation="userinfo",
+        audit=audit,
     )
 
 
@@ -449,11 +564,7 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
             for key, values in urllib.parse.parse_qs(parsed.query).items()
             if values
         }
-        body = (
-            "<html><body><h1>Coworker</h1>"
-            "<p>Autorização recebida. Você pode fechar esta janela.</p>"
-            "</body></html>"
-        ).encode("utf-8")
+        body = OAUTH_CALLBACK_BODY.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -476,6 +587,7 @@ def enroll_google_profile(
     all_services: bool = False,
     config_path: Path | None = None,
     opener: Callable[..., Any] = urllib.request.urlopen,
+    audit: OAuthAudit | None = None,
 ) -> dict[str, Any]:
     """Executa consentimento no navegador e persiste somente o refresh token."""
     profile = config.select(requested_profile)
@@ -486,6 +598,17 @@ def enroll_google_profile(
             "Selecione ao menos um serviço Google antes de abrir o navegador."
         )
     requested_scopes = scopes_for_services(selected_services)
+    _audit(
+        audit,
+        "enrollment_started",
+        profile=profile.name,
+        services=list(selected_services),
+        client_kind="oauth_public_client_unverified_type",
+        client_id_fingerprint=hashlib.sha256(
+            config.client_id.encode("utf-8")
+        ).hexdigest()[:12],
+        pkce_method="S256",
+    )
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(
@@ -494,6 +617,13 @@ def enroll_google_profile(
     server = _OAuthServer(("127.0.0.1", 0), _OAuthCallbackHandler)
     server.timeout = config.authorization_timeout_seconds
     redirect_uri = f"http://127.0.0.1:{server.server_port}/"
+    _audit(
+        audit,
+        "listener_created",
+        loopback_host="127.0.0.1",
+        port=server.server_port,
+        timeout_seconds=config.authorization_timeout_seconds,
+    )
     authorization_url = (
         f"{config.authorization_endpoint}?"
         + urllib.parse.urlencode(
@@ -518,6 +648,14 @@ def enroll_google_profile(
     finally:
         server.server_close()
     parameters = server.parameters or {}
+    _audit(
+        audit,
+        "callback_received",
+        fields_present=sorted(
+            key for key in ("code", "error", "state") if key in parameters
+        ),
+        state_matches=parameters.get("state") == state,
+    )
     if parameters.get("state") != state:
         raise GoogleAccountError("A resposta OAuth não corresponde à solicitação.")
     if parameters.get("error"):
@@ -535,15 +673,39 @@ def enroll_google_profile(
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
         }
+        _audit(
+            audit,
+            "token_exchange_started",
+            fields_present=sorted(token_fields),
+            redirect_matches_authorization=True,
+            client_secret_sent=False,
+        )
         token_response = _post_form(
             config.token_endpoint,
             token_fields,
             timeout=config.timeout_seconds,
             opener=opener,
+            operation="token_exchange",
+            audit=audit,
         )
     finally:
         code = ""
         verifier = ""
+    _audit(
+        audit,
+        "token_response_received",
+        fields_present=sorted(
+            key
+            for key in (
+                "access_token",
+                "expires_in",
+                "refresh_token",
+                "scope",
+                "token_type",
+            )
+            if key in token_response
+        ),
+    )
     refresh_token = token_response.get("refresh_token")
     access_token = token_response.get("access_token")
     if not isinstance(refresh_token, str) or not refresh_token:
@@ -564,7 +726,7 @@ def enroll_google_profile(
         access_token = ""
         raise GoogleAccountError("O Google não concedeu os escopos de identidade.")
     granted_services = services_for_granted_scopes(granted_scopes)
-    identity = _userinfo(config, access_token, opener=opener)
+    identity = _userinfo(config, access_token, opener=opener, audit=audit)
     email = identity.get("email")
     access_token = ""
     if not isinstance(email, str) or not email:
@@ -572,6 +734,10 @@ def enroll_google_profile(
         raise GoogleAccountError("Não foi possível identificar a conta autorizada.")
     try:
         write_entry_credentials(profile.credential_ref, email, refresh_token)
+        _audit(audit, "refresh_token_persisted", profile=profile.name, success=True)
+    except Exception:
+        _audit(audit, "refresh_token_persisted", profile=profile.name, success=False)
+        raise
     finally:
         refresh_token = ""
     if config_path is not None:
@@ -724,6 +890,7 @@ def main() -> int:
         sys.stderr.reconfigure(encoding="utf-8")
     args = build_parser().parse_args()
     access: GoogleAccess | None = None
+    oauth_audit: OAuthAudit | None = None
     try:
         if args.command == "services":
             print_json(
@@ -775,12 +942,14 @@ def main() -> int:
                 all_services=bool(args.all_services),
             )
         elif args.command == "_enroll":
+            oauth_audit = _oauth_audit_for_config(config_path)
             result = enroll_google_profile(
                 config,
                 args.profile,
                 requested_services=tuple(args.service or ()),
                 all_services=bool(args.all_services),
                 config_path=config_path,
+                audit=oauth_audit,
             )
         else:
             access = refresh_google_access(config, args.profile)
@@ -807,6 +976,8 @@ def main() -> int:
     finally:
         if access is not None:
             access.close()
+        if oauth_audit is not None:
+            oauth_audit.close()
     print_json(result)
     if args.command == "_enroll":
         input("Autorização concluída. Pressione Enter para fechar.")

@@ -20,6 +20,7 @@ from interfaces.telegram.pdf_extraction import (
     dependency_available as pdf_dependency_available,
     extract_pdf_text,
 )
+from interfaces.telegram.pdf_ocr import dependency_status as pdf_ocr_dependency_status
 from interfaces.telegram.transcription import EccoVoxClient, TranscriptionError
 from interfaces.telegram.speech import EccoVoxSpeechClient
 
@@ -50,10 +51,15 @@ class ProcessorRegistry:
         self.transcription.close()
 
     def doctor(self) -> dict[str, dict[str, str | bool]]:
+        ocr_dependencies = pdf_ocr_dependency_status()
         return {
             "text_json_csv_xml_zip_docx_xlsx": {"available": True, "provider": "stdlib"},
             "pdf": {"available": pdf_dependency_available(), "provider": "pypdf"},
-            "ocr": {"available": shutil.which("tesseract") is not None, "provider": "tesseract"},
+            "ocr": {
+                "available": all(ocr_dependencies.values()),
+                "provider": "pypdfium2 + Pillow + Tesseract",
+                **ocr_dependencies,
+            },
             "audio_transcription": self.transcription.doctor(),
             "audio_speech": self.speech.doctor(),
             "video": {

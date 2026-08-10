@@ -120,6 +120,14 @@ def _validated_pdf(path: Path, max_file_bytes: int) -> tuple[Path, int]:
     return resolved, size
 
 
+def validate_pdf_file(path: Path, max_file_bytes: int) -> tuple[Path, int]:
+    """Valida um PDF local sem extrair conteúdo nem executar ações do documento."""
+    max_file_bytes = _positive_limit(
+        max_file_bytes, "max_file_bytes", HARD_MAX_FILE_BYTES
+    )
+    return _validated_pdf(path, max_file_bytes)
+
+
 def _append_limited(current: str, block: str, maximum: int) -> tuple[str, bool]:
     separator = "\n\n" if current else ""
     addition = separator + block

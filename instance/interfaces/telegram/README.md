@@ -261,7 +261,10 @@ atributos personalizados. O comando `/secret` permanece somente como fallback ma
 Responder a uma mensagem inclui um único nível de contexto, quote e anexos conhecidos,
 sem trocar a thread ativa. A confirmação, a resposta final e o primeiro artefato usam
 `reply_parameters` para apontar nativamente à solicitação. IDs devolvidos pelo Telegram,
-thread e turn são persistidos no SQLite.
+thread e turn são persistidos no SQLite. Essas entregas usam
+`allow_sending_without_reply`: se a mensagem original tiver sido apagada enquanto o
+trabalho estava na fila ou em execução, o conteúdo ainda é enviado no chat, sem a
+associação visual que deixou de existir.
 
 No backend `exec`, o gateway usa `codex exec --json` e `codex exec resume`. No backend
 `app-server`, inicia um transporte stdio, faz `initialize`/`initialized`, cria ou retoma
@@ -346,9 +349,25 @@ fora do `input/` atual:
 python interfaces/telegram/scripts/extract_pdf_text.py --input CAMINHO_DO_PDF
 ```
 
-O JSON informa `needs_ocr: true` quando não há texto pesquisável. OCR não é executado
-nem enviado a serviço remoto automaticamente; o original é preservado. Se `pypdf` não
-estiver instalado, o diagnóstico orienta `python -m pip install -r requirements.txt`.
+O JSON informa `needs_ocr: true` quando não há texto pesquisável. O original é
+preservado. Quando for necessário rasterizar páginas e aplicar OCR local, use:
+
+```powershell
+python interfaces/telegram/scripts/extract_pdf_images_ocr.py `
+  --input CAMINHO_DO_PDF --pages 1,3-5 --dpi 220
+```
+
+O comando usa PDFium e Tesseract somente na máquina local, sem upload ou API remota.
+Ele limita arquivo, páginas, pixels, memória e texto e devolve JSON com resultados por
+página, confiança quando disponível, erros técnicos e candidatos de 44, 47 ou 48
+dígitos. A validação de dígitos verificadores permanece separada da confiança do OCR:
+um checksum válido não certifica a autenticidade de boleto ou fatura.
+
+Nenhuma imagem é gravada por padrão. `--save-images` persiste PNGs determinísticos
+somente no `derived/` do job; `output/` continua reservado ao que a pessoa usuária
+solicitar publicar. `pypdfium2` e Pillow pertencem às dependências do projeto;
+Tesseract e seus idiomas são uma dependência externa instalada fora do job. A
+ferramenta nunca instala dependências automaticamente.
 Vídeo mantém apenas diagnóstico opcional. Áudio pode
 ser transcrito pelo EccoVox configurado em `[processors.transcription]`, por CLI
 isolado ou HTTP. O configurador local oferece host, porta, instalação e modelo. Uma

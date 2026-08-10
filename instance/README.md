@@ -106,8 +106,9 @@ python -m pip install -r requirements.txt
 
 PyKeePass permite que a Coworker leia e grave atributos personalizados protegidos no
 arquivo KDBX. `pypdf` extrai localmente texto pesquisável dos PDFs recebidos pelo
-Telegram; PDFs escaneados são apenas sinalizados para OCR. As demais ferramentas
-continuam preferindo a biblioteca padrão.
+Telegram. `pypdfium2` e Pillow rasterizam páginas para o OCR local opcional; o
+Tesseract é um executável externo e deve ser instalado, quando desejado, fora de um
+trabalho do Telegram. As demais ferramentas continuam preferindo a biblioteca padrão.
 
 Antes do bootstrap, a IA deve diagnosticar o ambiente:
 
@@ -534,9 +535,21 @@ de autorização para um celular remoto: o `localhost` passaria a apontar para o
 celular. Autorização remota exigirá um fluxo separado para dispositivos, um callback
 HTTPS público ou um broker OAuth e não faz parte deste procedimento.
 
+O callback confirma apenas que o retorno chegou ao listener; a conclusão aparece no
+console depois da troca do código por tokens, da consulta de identidade e da gravação
+no cofre. Durante `_enroll`, eventos técnicos sanitizados são gravados em
+`data/log/google-oauth.jsonl`. O arquivo é limitado a 256 KiB com três cópias rotativas
+e registra somente etapa, horário, sessão aleatória, perfil, serviços, fingerprint do
+Client ID, porta local, presença de campos, status HTTP e descrição de erro
+sanitizada. Código OAuth, verifier, tokens, URL de autorização e e-mail nunca são
+registrados. Esse log não deve ser retransmitido automaticamente pelo Telegram.
+
 O Client ID público identifica a distribuição Coworker e pode ser reutilizado por
 todas as instâncias. O fluxo Desktop usa PKCE e não depende de Client Secret. Nunca
 pedir Client ID ou Client Secret à pessoa que está apenas autorizando sua conta.
+O tipo cadastrado do cliente não pode ser deduzido com segurança pelo texto do Client
+ID; quando houver dúvida operacional, confirmá-lo na configuração do projeto no Google
+Cloud, sem copiar credenciais para logs ou conversas.
 
 Para adicionar outra conta:
 
