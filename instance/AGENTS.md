@@ -145,7 +145,8 @@ O cofre adotado é o KeePassXC:
 - modelo público em `config/secrets.example.toml`;
 - cofre criptografado dentro de `data/secrets/`;
 - operações por `python scripts/credential_vault.py`;
-- senha mestra no Gerenciador de Credenciais do Windows, cadastrada por máquina;
+- senha mestra no Gerenciador de Credenciais do Windows ou em credencial
+  criptografada do `systemd` no Debian/Linux, cadastrada por máquina;
 - referências no SQLite por `--credential-ref`.
 
 Propriedades de pessoas e organizações são manipuladas por

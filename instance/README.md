@@ -22,10 +22,9 @@ O runtime não deve usar o `AGENTS.md` da raiz como instrução operacional.
 > posterior antes de liberar shells ou execuções menos controladas.
 
 > [!IMPORTANT]
-> O projeto está em estágio experimental e é **Windows-first**. Memória, instruções e
-> integrações baseadas em Python são portáveis, mas o desbloqueio automático do cofre
-> atualmente depende do Gerenciador de Credenciais do Windows. Provedores para macOS e
-> Linux poderão ser adicionados no futuro.
+> O projeto está em estágio experimental e suporta Windows e Linux. Memória,
+> instruções e integrações baseadas em Python são portáveis; o Windows usa o
+> Credential Manager e o Linux usa `systemd-creds` para o desbloqueio automático.
 
 ## Capacidades atuais
 
@@ -35,7 +34,7 @@ O runtime não deve usar o `AGENTS.md` da raiz como instrução operacional.
 - gerenciamento de zonas e registros DNS da Cloudflare;
 - gerenciamento de domínios e aliases do Forward Email;
 - consultas ao ERP Omie;
-- acesso MySQL somente leitura via `mysql.exe`, condicionado à habilitação explícita e perfis protegidos;
+- acesso MySQL somente leitura via cliente `mysql`/`mysql.exe`, condicionado à habilitação explícita e perfis protegidos;
 - gerenciamento de tarefas, projetos, seções e etiquetas do Todoist;
 - busca, leitura, criação e edição de notas do Notion;
 - múltiplos perfis de autenticação por integração;
@@ -89,7 +88,8 @@ instalação. O runtime executável da instância é este diretório `instance/`
 
 ## Dependências
 
-- Windows 10 ou 11 para a integração atual com o Gerenciador de Credenciais;
+- Windows 10/11 ou Debian 13 para a integração de credenciais e serviços da plataforma;
+- `systemd` e `systemd-creds` no Debian headless;
 - Python 3.11 ou superior disponível como `python`;
 - KeePassXC e `keepassxc-cli` para o cofre;
 - Codex CLI autônomo para a interface Telegram;
@@ -883,13 +883,24 @@ O Python da instância precisa ter `pywin32` instalado (incluído em
 > `New-Service`: o gateway não é um entrypoint nativo do Service Control Manager.
 > Use o fluxo do instalador, que cria o host de serviço apropriado.
 
-O suporte a serviços Linux/systemd permanece planejado para um MVP futuro. O
-`install.sh` continua configurando e iniciando o gateway manualmente; ainda não cria
-unidades systemd nem resolve credenciais Linux automaticamente.
+No Debian headless, o instalador pode provisionar o desbloqueio do cofre com
+`systemd-creds` e administrar uma unidade systemd. O provisionamento exige uma
+senha mestra informada localmente e não grava plaintext:
 
-No menu de gerenciamento do gateway, quando existe um serviço Windows associado, as
-ações de iniciar, parar e reiniciar perguntam se devem atuar sobre o serviço ou sobre
-um processo manual. O configurador exibe os dois estados e impede iniciar os dois
+```bash
+python scripts/credential_vault.py enroll
+python scripts/install_instance.py --service-action install --service-user coworker
+python scripts/install_instance.py --service-action status
+```
+
+O usuário `coworker` deve existir previamente e possuir somente as permissões
+necessárias para a instância. A unidade carrega a credencial criptografada apenas
+durante a execução por `LoadCredentialEncrypted=` e mantém o estado em
+`instance/data/`.
+
+No menu de gerenciamento do gateway, quando existe um serviço associado, as ações de
+iniciar, parar e reiniciar perguntam se devem atuar sobre o serviço ou sobre um
+processo manual. O configurador exibe os dois estados e impede iniciar os dois
 runtimes simultaneamente.
 # Workspace livre da instância
 

@@ -9,8 +9,10 @@ import getpass
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 import uuid
 from ctypes import wintypes
@@ -32,6 +34,8 @@ FALLBACK_GUI = Path("KeePassXC.exe")
 FALLBACK_CLI = Path("keepassxc-cli.exe")
 FALLBACK_VAULT = PROJECT_ROOT / "data" / "secrets" / "vault.kdbx"
 FALLBACK_CREDENTIAL_TARGET = "Coworker/KeePassXC/MasterPassword"
+LINUX_CREDENTIAL_NAME = "coworker-master-password"
+FALLBACK_LINUX_CREDENTIAL = PROJECT_ROOT / "data" / "secrets" / "master-password.cred"
 
 CRED_TYPE_GENERIC = 1
 CRED_PERSIST_LOCAL_MACHINE = 2
@@ -70,6 +74,8 @@ class VaultConfig:
     cli_path: Path
     vault_path: Path
     credential_target: str
+    linux_credential_path: Path = FALLBACK_LINUX_CREDENTIAL
+    linux_credential_name: str = LINUX_CREDENTIAL_NAME
 
 
 def configured_path(raw_value: Any, field: str) -> Path:
@@ -98,23 +104,41 @@ def load_vault_config(path: Path = DEFAULT_CONFIG) -> VaultConfig:
 
     executables = values.get("executables")
     vault = values.get("vault")
-    windows_credential = values.get("windows_credential")
+    windows_credential = values.get("windows_credential", {})
+    linux_credential = values.get("linux_credential", {})
     if not isinstance(executables, dict):
         raise VaultToolError("A seção [executables] é obrigatória.")
     if not isinstance(vault, dict):
         raise VaultToolError("A seção [vault] é obrigatória.")
     if not isinstance(windows_credential, dict):
-        raise VaultToolError("A seção [windows_credential] é obrigatória.")
+        raise VaultToolError("A seção [windows_credential] deve ser uma tabela.")
+    if not isinstance(linux_credential, dict):
+        raise VaultToolError("A seção [linux_credential] deve ser uma tabela.")
     credential_target = str(windows_credential.get("target", "")).strip()
     if not credential_target:
         raise VaultToolError(
             "O campo 'windows_credential.target' não pode ficar vazio."
         )
+    linux_path = configured_path(
+        linux_credential.get("encrypted_path", str(FALLBACK_LINUX_CREDENTIAL)),
+        "linux_credential.encrypted_path",
+    )
+    linux_name = str(
+        linux_credential.get("name", LINUX_CREDENTIAL_NAME)
+    ).strip()
+    if not linux_name or any(char in linux_name for char in "/\\\0\r\n"):
+        raise VaultToolError("O campo 'linux_credential.name' é inválido.")
+    gui_value = str(executables.get("gui", "")).strip()
+    if not gui_value and os.name == "nt":
+        raise VaultToolError("O campo 'executables.gui' não pode ficar vazio no Windows.")
+    gui_path = configured_path(gui_value, "executables.gui") if gui_value else FALLBACK_GUI
     return VaultConfig(
-        gui_path=configured_path(executables.get("gui"), "executables.gui"),
+        gui_path=gui_path,
         cli_path=configured_path(executables.get("cli"), "executables.cli"),
         vault_path=configured_path(vault.get("path"), "vault.path"),
         credential_target=credential_target,
+        linux_credential_path=linux_path,
+        linux_credential_name=linux_name,
     )
 
 
@@ -152,6 +176,10 @@ def credential_api() -> Any:
 
 def write_windows_credential(target: str, secret: str) -> None:
     """Grava uma credencial genérica persistente somente na máquina atual."""
+    if os.name != "nt":
+        raise VaultToolError(
+            "No Linux, use o provisionamento systemd-creds para a credencial do serviço."
+        )
     if not secret:
         raise VaultToolError("A senha mestra não pode ficar vazia.")
     blob = secret.encode("utf-16-le")
@@ -183,6 +211,8 @@ def write_windows_credential(target: str, secret: str) -> None:
 
 def read_windows_credential(target: str) -> str:
     """Lê a credencial do usuário atual e libera o buffer nativo imediatamente."""
+    if os.name != "nt":
+        return read_linux_credential()
     library = credential_api()
     credential_pointer = ctypes.POINTER(CredentialW)()
     if not library.CredReadW(
@@ -220,6 +250,8 @@ def read_windows_credential(target: str) -> str:
 
 def windows_credential_exists(target: str) -> bool:
     """Verifica a presença da credencial sem devolver seu conteúdo."""
+    if os.name != "nt":
+        return linux_credential_exists()
     library = credential_api()
     credential_pointer = ctypes.POINTER(CredentialW)()
     if not library.CredReadW(
@@ -249,6 +281,8 @@ def windows_credential_exists(target: str) -> bool:
 
 def delete_windows_credential(target: str) -> bool:
     """Remove a senha mestra cadastrada para o usuário atual nesta máquina."""
+    if os.name != "nt":
+        return delete_linux_credential()
     library = credential_api()
     if library.CredDeleteW(target, CRED_TYPE_GENERIC, 0):
         return True
@@ -258,6 +292,109 @@ def delete_windows_credential(target: str) -> bool:
     raise VaultToolError(
         f"O Windows recusou a remoção da credencial (erro {error_code})."
     )
+
+
+def _linux_credential_file(name: str = LINUX_CREDENTIAL_NAME) -> Path | None:
+    """Localiza a credencial entregue pelo systemd ao processo atual."""
+    directory = os.environ.get("CREDENTIALS_DIRECTORY", "").strip()
+    if directory:
+        candidate = Path(directory) / name
+        if candidate.is_file():
+            return candidate
+    explicit = os.environ.get("COWORKER_MASTER_PASSWORD_FILE", "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def read_linux_credential(name: str = LINUX_CREDENTIAL_NAME) -> str:
+    """Lê somente a credencial efêmera entregue ao serviço Linux."""
+    path = _linux_credential_file(name)
+    if path is None:
+        raise VaultToolError(
+            "A credencial Linux não foi entregue ao processo. Execute a operação "
+            "pelo serviço systemd ou configure COWORKER_MASTER_PASSWORD_FILE "
+            "somente para uma operação local controlada."
+        )
+    try:
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise VaultToolError("A credencial Linux possui permissões muito abertas.")
+        secret = path.read_text(encoding="utf-8").rstrip("\r\n")
+    except OSError as exc:
+        raise VaultToolError("Não foi possível ler a credencial Linux entregue ao processo.") from exc
+    if not secret:
+        raise VaultToolError("A credencial Linux está vazia.")
+    return secret
+
+
+def linux_credential_exists(
+    path: Path = FALLBACK_LINUX_CREDENTIAL,
+    name: str = LINUX_CREDENTIAL_NAME,
+) -> bool:
+    """Informa presença sem tentar descriptografar ou devolver a credencial."""
+    return _linux_credential_file(name) is not None or path.is_file()
+
+
+def delete_linux_credential(path: Path = FALLBACK_LINUX_CREDENTIAL) -> bool:
+    """Remove o ciphertext provisionado, nunca uma credencial efêmera do systemd."""
+    if not path.exists():
+        return False
+    if not path.is_file():
+        raise VaultToolError("O arquivo de credencial Linux não é um arquivo regular.")
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise VaultToolError("Não foi possível remover a credencial Linux provisionada.") from exc
+    return True
+
+
+def provision_linux_credential(
+    cli_path: Path,
+    vault_path: Path,
+    output_path: Path,
+    name: str = LINUX_CREDENTIAL_NAME,
+) -> None:
+    """Valida a senha e cria ciphertext usando systemd-creds sem persistir plaintext."""
+    require_file(cli_path, "KeePassXC CLI")
+    require_file(vault_path, "Cofre")
+    systemd_creds = shutil.which("systemd-creds")
+    if not systemd_creds:
+        raise VaultToolError("systemd-creds não foi encontrado no PATH do Linux.")
+    master_password = getpass.getpass("Senha mestra do KeePassXC: ")
+    confirmation = getpass.getpass("Confirme a senha mestra: ")
+    try:
+        if not master_password:
+            raise VaultToolError("A senha mestra não pode ficar vazia.")
+        if master_password != confirmation:
+            raise VaultToolError("As senhas informadas não coincidem.")
+        if not verify_master_password(cli_path, vault_path, master_password):
+            raise VaultToolError("A senha não conseguiu desbloquear o cofre.")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=output_path.parent,
+            prefix=".master-password-", delete=False,
+        ) as temporary:
+            temporary.write(master_password)
+            plaintext_path = Path(temporary.name)
+        try:
+            completed = subprocess.run(
+                [systemd_creds, "encrypt", f"--name={name}", str(plaintext_path), str(output_path)],
+                check=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+        finally:
+            plaintext_path.unlink(missing_ok=True)
+        if completed.returncode != 0:
+            raise VaultToolError(
+                "systemd-creds não conseguiu provisionar a credencial; "
+                "a saída sensível foi omitida."
+            )
+        os.chmod(output_path, 0o600)
+    finally:
+        master_password = ""
+        confirmation = ""
 
 
 def print_json(payload: Any, *, stream: Any = sys.stdout) -> None:
@@ -1049,10 +1186,12 @@ def launch_enrollment(
     cli_path: Path,
     vault_path: Path,
     credential_target: str,
+    linux_credential_path: Path = FALLBACK_LINUX_CREDENTIAL,
 ) -> int:
     """Abre um console separado para cadastrar a senha mestra nesta máquina."""
     if os.name != "nt":
-        raise VaultToolError("O cadastro está disponível somente no Windows.")
+        provision_linux_credential(cli_path, vault_path, linux_credential_path)
+        return os.getpid()
     process = subprocess.Popen(
         [
             sys.executable,
@@ -1161,7 +1300,8 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
     gui_path = resolved_path(args.gui)
     cli_path = resolved_path(args.cli)
     vault_path = resolved_path(args.vault)
-    require_file(gui_path, "KeePassXC")
+    if os.name == "nt":
+        require_file(gui_path, "KeePassXC")
     require_file(cli_path, "KeePassXC CLI")
     return {
         "ok": True,
@@ -1171,8 +1311,10 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
         "cli": str(cli_path),
         "vault": str(vault_path),
         "vault_exists": vault_path.is_file(),
-        "master_password_enrolled": windows_credential_exists(
-            args.credential_target
+        "master_password_enrolled": (
+            windows_credential_exists(args.credential_target)
+            if os.name == "nt"
+            else linux_credential_exists(resolved_path(args.linux_credential_file))
         ),
         "credential_target": args.credential_target,
         "secrets_may_be_printed": False,
@@ -1387,6 +1529,7 @@ def command_enroll(args: argparse.Namespace) -> dict[str, Any]:
         cli_path,
         vault_path,
         args.credential_target,
+        resolved_path(args.linux_credential_file),
     )
     return {
         "ok": True,
@@ -1394,7 +1537,9 @@ def command_enroll(args: argparse.Namespace) -> dict[str, Any]:
         "process_id": process_id,
         "credential_target": args.credential_target,
         "instruction": (
-            "Digite e confirme a senha mestra somente na janela interativa aberta."
+            "Senha mestra provisionada pelo systemd-creds."
+            if os.name != "nt"
+            else "Digite e confirme a senha mestra somente na janela interativa aberta."
         ),
     }
 
@@ -1403,7 +1548,11 @@ def command_unenroll(args: argparse.Namespace) -> dict[str, Any]:
     """Remove o desbloqueio persistente desta máquina."""
     if not args.confirm:
         raise VaultToolError("A remoção exige a opção '--confirm'.")
-    removed = delete_windows_credential(args.credential_target)
+    removed = (
+        delete_windows_credential(args.credential_target)
+        if os.name == "nt"
+        else delete_linux_credential(resolved_path(args.linux_credential_file))
+    )
     return {
         "ok": True,
         "credential_target": args.credential_target,
@@ -1505,6 +1654,10 @@ def build_parser(config: VaultConfig | None = None) -> argparse.ArgumentParser:
     parser.add_argument(
         "--credential-target",
         default=settings.credential_target,
+    )
+    parser.add_argument(
+        "--linux-credential-file",
+        default=str(settings.linux_credential_path),
     )
     commands = parser.add_subparsers(dest="command", required=True)
 

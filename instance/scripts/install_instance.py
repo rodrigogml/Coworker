@@ -435,7 +435,11 @@ def _load_transcription_values() -> dict[str, Any]:
         "enabled": False,
         "backend": "http",
         "auto_start": False,
-        "python_executable": "C:/opt/EccoVox/.venv/Scripts/python.exe",
+        "python_executable": str(
+            Path("C:/opt/EccoVox/.venv/Scripts/python.exe")
+            if os.name == "nt"
+            else Path("/opt/EccoVox/.venv/bin/python")
+        ),
         "project_dir": "C:/opt/EccoVox",
         "endpoint": "http://127.0.0.1:8870",
         "allow_remote": False,
@@ -641,7 +645,7 @@ def configure_bis2(instance_id: str) -> None:
         if answer in {"", "0"}:
             return
         if answer == "1":
-            values["java_executable"] = _ask("Caminho do java.exe vazio para PATH", str(values.get("java_executable", "")))
+            values["java_executable"] = _ask("Caminho do java vazio para PATH", str(values.get("java_executable", "")))
             _save_bis2_values(values)
         elif answer == "2":
             values["jar_path"] = _ask("Caminho do BISCMD.jar", str(values.get("jar_path", "")))
@@ -944,7 +948,11 @@ def configure_transcription(instance_id: str) -> None:
         elif answer == "5":
             project = _ask("Pasta do EccoVox", str(values["project_dir"]))
             values["project_dir"] = project
-            values["python_executable"] = str(Path(project) / ".venv" / "Scripts" / "python.exe")
+            python_dir = "Scripts" if os.name == "nt" else "bin"
+            python_name = "python.exe" if os.name == "nt" else "python"
+            values["python_executable"] = str(
+                Path(project) / ".venv" / python_dir / python_name
+            )
             changed = True
         elif answer == "6":
             values["model"] = _ask("Modelo faster-whisper", str(values["model"]))
@@ -969,6 +977,7 @@ def _secrets_content(
     cli: str = "",
     vault_path: str = "data/secrets/vault.kdbx",
     credential_target: str | None = None,
+    linux_credential_path: str = "data/secrets/master-password.cred",
 ) -> str:
     target = credential_target or (
         f"Coworker/Instances/{instance_id}/KeePassXC/MasterPassword"
@@ -983,6 +992,10 @@ path = {_toml_string(vault_path)}
 
 [windows_credential]
 target = {_toml_string(target)}
+
+[linux_credential]
+encrypted_path = {_toml_string(linux_credential_path)}
+name = "coworker-master-password"
 '''
 
 
@@ -994,6 +1007,7 @@ def _load_secrets_values(instance_id: str) -> dict[str, str]:
         "credential_target": (
             f"Coworker/Instances/{instance_id}/KeePassXC/MasterPassword"
         ),
+        "linux_credential_path": "data/secrets/master-password.cred",
     }
     if not SECRETS_CONFIG.is_file():
         return defaults
@@ -1007,6 +1021,7 @@ def _load_secrets_values(instance_id: str) -> dict[str, str]:
     executables = root.get("executables", {})
     vault = root.get("vault", {})
     credential = root.get("windows_credential", {})
+    linux_credential = root.get("linux_credential", {})
     if isinstance(executables, dict):
         defaults["gui"] = str(executables.get("gui", "")).strip()
         defaults["cli"] = str(executables.get("cli", "")).strip()
@@ -1017,6 +1032,12 @@ def _load_secrets_values(instance_id: str) -> dict[str, str]:
     if isinstance(credential, dict):
         defaults["credential_target"] = str(
             credential.get("target", defaults["credential_target"])
+        ).strip()
+    if isinstance(linux_credential, dict):
+        defaults["linux_credential_path"] = str(
+            linux_credential.get(
+                "encrypted_path", defaults["linux_credential_path"]
+            )
         ).strip()
     return defaults
 
@@ -1141,12 +1162,13 @@ def configure_vault_executables(
         cli=str(cli or ""),
         vault_path=values["vault_path"] or "data/secrets/vault.kdbx",
         credential_target=values["credential_target"] or None,
+        linux_credential_path=values["linux_credential_path"] or None,
     )
     if existed:
         _replace_config(SECRETS_CONFIG, content)
     else:
         _write_new(SECRETS_CONFIG, content)
-    ready = gui is not None and cli is not None
+    ready = cli is not None and (os.name != "nt" or gui is not None)
     if not ready:
         print(
             "KeePassXC ficou pendente. Execute novamente o configurador após "
@@ -1230,11 +1252,73 @@ def windows_service_action(
         raise InstallError(str(exc)) from exc
 
 
+def linux_service_action(
+    instance_id: str,
+    action: str,
+    *,
+    service_name: str | None = None,
+    service_user: str | None = None,
+    non_interactive: bool = False,
+) -> dict[str, Any]:
+    """Administra o gateway Linux por uma unidade systemd dedicada."""
+    if os.name == "nt":
+        raise InstallError("Serviços systemd só podem ser administrados no Linux.")
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from scripts.systemd_service import (
+        SystemdServiceError,
+        build_definition,
+        control_service,
+        install_service,
+        remove_service,
+        service_status,
+    )
+
+    name = service_name or f"coworker-{instance_id}"
+    values = _load_secrets_values(instance_id)
+    credential_path = Path(values["linux_credential_path"] or "data/secrets/master-password.cred")
+    if not credential_path.is_absolute():
+        credential_path = PROJECT_ROOT / credential_path
+    try:
+        if action == "status":
+            return service_status(name)
+        if action == "remove":
+            return remove_service(name)
+        if action in {"start", "stop", "restart"}:
+            return control_service(name, action)
+        if action != "install":
+            raise InstallError(f"Ação de serviço desconhecida: {action}.")
+        effective_user = str(service_user or os.environ.get("SUDO_USER", "")).strip()
+        if not effective_user or effective_user == "root":
+            raise InstallError(
+                "Informe um usuário Linux dedicado com --service-user; "
+                "o gateway não será instalado como root."
+            )
+        definition = build_definition(
+            PROJECT_ROOT,
+            instance_id=instance_id,
+            service_name=name,
+            user=effective_user,
+            credential_path=credential_path,
+        )
+        return install_service(definition, start=False)
+    except SystemdServiceError as exc:
+        raise InstallError(str(exc)) from exc
+
+
+def service_action(instance_id: str, action: str, **kwargs: Any) -> dict[str, Any]:
+    """Seleciona o supervisor nativo sem contaminar o caminho da outra plataforma."""
+    if os.name == "nt":
+        kwargs.pop("service_user", None)
+        return windows_service_action(instance_id, action, **kwargs)
+    return linux_service_action(instance_id, action, **kwargs)
+
+
 def configure_vault(*, non_interactive: bool) -> bool:
     """Prepara o cofre sem receber senha ou segredo pelo processo instalador."""
     vault = DATA_DIR / "secrets" / "vault.kdbx"
     if non_interactive:
-        return os.name == "nt" and vault.is_file()
+        return vault.is_file()
     if not vault.is_file():
         if os.name == "nt":
             print("\nO cofre ainda não existe. A senha será solicitada em uma janela separada.")
@@ -1253,6 +1337,8 @@ def configure_vault(*, non_interactive: bool) -> bool:
             input("Conclua a criação na janela segura e pressione Enter aqui para continuar.")
         if not vault.is_file():
             raise InstallError("O arquivo do cofre não foi criado.")
+    values = _load_secrets_values(str(_load_identity_values()["instance_id"]))
+    linux_credential = _resolve_configured_path(values["linux_credential_path"])
     enrolled = False
     if os.name == "nt" and vault.is_file():
         try:
@@ -1274,12 +1360,19 @@ def configure_vault(*, non_interactive: bool) -> bool:
         if completed.returncode != 0:
             raise InstallError("Não foi possível iniciar o cadastro local do cofre.")
         input("Conclua o cadastro na janela segura e pressione Enter aqui para continuar.")
-    if os.name != "nt":
-        print(
-            "O cofre foi localizado, mas o desbloqueio automático para Telegram ainda "
-            "não possui backend seguro implementado neste sistema."
+    if os.name != "nt" and not linux_credential.is_file():
+        if non_interactive:
+            return False
+        print("Provisionando o desbloqueio automático Linux com systemd-creds.")
+        completed = subprocess.run(
+            [sys.executable, str(VAULT_TOOL), "--linux-credential-file", str(linux_credential), "enroll"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            shell=False,
         )
-        return False
+        if completed.returncode != 0 or not linux_credential.is_file():
+            raise InstallError("Não foi possível provisionar a credencial Linux do cofre.")
+        return vault.is_file() and linux_credential.is_file()
     return True
 
 
@@ -1731,6 +1824,8 @@ def gateway_runtime_status(instance_id: str) -> dict[str, Any]:
 
 
 def _service_name_for_instance(instance_id: str) -> str:
+    if os.name != "nt":
+        return f"coworker-{instance_id}"
     service_root = DATA_DIR / "service"
     if service_root.is_dir():
         for definition_path in service_root.glob("*/service.json"):
@@ -1745,11 +1840,9 @@ def _service_name_for_instance(instance_id: str) -> str:
 
 def gateway_service_status(instance_id: str) -> dict[str, Any]:
     """Consulta o serviço Windows associado sem confundi-lo com o processo manual."""
-    if os.name != "nt":
-        return {"ok": True, "installed": False, "platform": "linux-future"}
     service_name = _service_name_for_instance(instance_id)
     try:
-        result = windows_service_action(instance_id, "status", service_name=service_name)
+        result = service_action(instance_id, "status", service_name=service_name)
     except (InstallError, OSError) as exc:
         return {"ok": False, "installed": False, "service_name": service_name, "error": str(exc)}
     return {**result, "service_name": service_name}
@@ -1771,7 +1864,7 @@ def start_gateway(instance_id: str, *, mode: str = "process") -> dict[str, Any]:
         process = gateway_runtime_status(instance_id)
         if process.get("running"):
             raise InstallError("O gateway já está em execução como processo; pare-o antes de iniciar o serviço.")
-        return windows_service_action(
+        return service_action(
             instance_id, "start", service_name=str(service["service_name"])
         )
     current = gateway_runtime_status(instance_id)
@@ -1810,7 +1903,7 @@ def stop_gateway(
         service = gateway_service_status(instance_id)
         if not service.get("installed"):
             raise InstallError("Não há serviço Windows instalado para esta instância.")
-        return windows_service_action(
+        return service_action(
             instance_id, "stop", service_name=str(service["service_name"])
         )
     if str(PROJECT_ROOT) not in sys.path:
@@ -1873,8 +1966,8 @@ def manage_gateway(instance_id: str) -> None:
         print("  2. Iniciar")
         print("  3. Finalizar")
         print("  4. Reiniciar")
-        print("  5. Instalar como serviço Windows")
-        print("  6. Remover serviço Windows")
+        print("  5. Instalar como serviço do sistema")
+        print("  6. Remover serviço do sistema")
         print("  0. Voltar")
         answer = input("Escolha uma opção: ").strip()
         if answer in {"", "0"}:
@@ -1927,7 +2020,7 @@ def manage_gateway(instance_id: str) -> None:
                     print(f"Gateway reiniciado (PID {result['pid']}).")
             continue
         if answer == "5":
-            if os.name != "nt":
+            if os.name != "nt" and not shutil.which("systemctl"):
                 print("A instalação de serviço Linux permanece planejada para um MVP futuro.")
                 continue
             service_name = _ask("Nome do serviço", instance_id)
@@ -1936,28 +2029,34 @@ def manage_gateway(instance_id: str) -> None:
                 "automatic_delayed",
             ).casefold()
             account_mode = _ask("Conta (current_user ou local_system)", "current_user").casefold()
+            service_user = (
+                _ask("Usuário Linux dedicado", os.environ.get("SUDO_USER") or getpass.getuser())
+                if os.name != "nt"
+                else ""
+            )
             if _yes_no("Instalar e iniciar o serviço agora", default=True):
                 try:
-                    result = windows_service_action(
+                    result = service_action(
                         instance_id, "install", service_name=service_name,
+                        service_user=service_user or None,
                         display_name=str(_load_identity_values()["display_name"]),
                         startup=startup, account_mode=account_mode,
                     )
                     print(f"Serviço instalado: {result.get('name', service_name)}")
-                    windows_service_action(instance_id, "start", service_name=service_name)
+                    service_action(instance_id, "start", service_name=service_name)
                 except (InstallError, OSError) as exc:
                     print(f"Não foi possível instalar/iniciar o serviço: {exc}")
                     continue
                 print("Serviço iniciado.")
             continue
         if answer == "6":
-            if os.name != "nt":
+            if os.name != "nt" and not shutil.which("systemctl"):
                 print("A remoção de serviço Linux permanece planejada para um MVP futuro.")
                 continue
             service_name = _ask("Nome do serviço", instance_id)
             if _yes_no(f"Parar e remover o serviço '{service_name}'", default=False):
                 try:
-                    windows_service_action(instance_id, "remove", service_name=service_name)
+                    service_action(instance_id, "remove", service_name=service_name)
                 except (InstallError, OSError) as exc:
                     print(f"Não foi possível remover o serviço: {exc}")
                     continue
@@ -2334,16 +2433,21 @@ def _initialize_memory() -> dict[str, Any]:
 
 def _vault_operational(instance_id: str) -> bool:
     values = _load_secrets_values(instance_id)
-    tools_ready = bool(
-        _discover_executable(values["gui"], _keepass_filenames()[0])
-        and _discover_executable(values["cli"], _keepass_filenames()[1])
-    )
+    cli_ready = _discover_executable(values["cli"], _keepass_filenames()[1])
+    gui_ready = _discover_executable(values["gui"], _keepass_filenames()[0])
+    tools_ready = bool(cli_ready and (os.name != "nt" or gui_ready))
     if not tools_ready or not _resolve_configured_path(values["vault_path"]).is_file():
         return False
-    if os.name != "nt":
-        return False
     try:
-        status = _run_json([sys.executable, str(VAULT_TOOL), "status"], timeout=30)
+        status_command = [sys.executable, str(VAULT_TOOL), "status"]
+        if os.name != "nt":
+            status_command.extend(
+                [
+                    "--linux-credential-file",
+                    _resolve_configured_path(values["linux_credential_path"]).as_posix(),
+                ]
+            )
+        status = _run_json(status_command, timeout=30)
     except InstallError:
         return False
     return bool(status.get("master_password_enrolled"))
@@ -2355,9 +2459,10 @@ def run_configurator(args: argparse.Namespace, identity_values: dict[str, Any]) 
     last_telegram: dict[str, Any] | None = None
     requested_service = getattr(args, "service_action", "none")
     if requested_service != "none":
-        service_result = windows_service_action(
+        service_result = service_action(
             str(current["instance_id"]), requested_service,
             service_name=getattr(args, "service_name", "") or None,
+            service_user=getattr(args, "service_user", "") or None,
             display_name=str(current["display_name"]),
             startup=getattr(args, "service_startup", "automatic_delayed"),
             account_mode=getattr(args, "service_account_mode", "current_user"),
@@ -2487,9 +2592,10 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         return run_configurator(args, identity_values)
     requested_service = getattr(args, "service_action", "none")
     if requested_service != "none":
-        result = windows_service_action(
+        result = service_action(
             instance_id, requested_service,
             service_name=getattr(args, "service_name", "") or None,
+            service_user=getattr(args, "service_user", "") or None,
             display_name=str(identity_values["display_name"]),
             startup=getattr(args, "service_startup", "automatic_delayed"),
             account_mode=getattr(args, "service_account_mode", "current_user"),
@@ -2570,9 +2676,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--service-action",
         choices=("none", "install", "remove", "start", "stop", "status"),
         default="none",
-        help="Administra o serviço Windows da instância; Linux permanece MVP futuro.",
+        help="Administra o serviço nativo da instância (Windows ou systemd Linux).",
     )
     parser.add_argument("--service-name", default="")
+    parser.add_argument(
+        "--service-user",
+        default="",
+        help="Usuário Linux dedicado do serviço systemd.",
+    )
     parser.add_argument(
         "--service-startup",
         choices=("automatic_delayed", "automatic", "manual"),

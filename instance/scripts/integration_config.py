@@ -184,11 +184,11 @@ def configure_mysql(
     destination = _private_config("mysql", project_root)
     value = str(executable or "").strip()
     if enabled and not value:
-        raise IntegrationConfigError("Informe o caminho do mysql.exe ao habilitar a skill MySQL.")
+        raise IntegrationConfigError("Informe o caminho do cliente mysql ao habilitar a skill MySQL.")
     if value and any(char in value for char in "\r\n\0"):
         raise IntegrationConfigError("O caminho do mysql.exe é inválido.")
-    if value and Path(value).name.lower() != "mysql.exe":
-        raise IntegrationConfigError("O executável informado deve ser mysql.exe.")
+    if value and Path(value).name.lower() not in {"mysql", "mysql.exe"}:
+        raise IntegrationConfigError("O executável informado deve ser mysql ou mysql.exe.")
     try:
         original = destination.read_bytes()
         values = tomllib.loads(original.decode("utf-8"))
@@ -226,7 +226,7 @@ def _ensure_mysql_ready(project_root: Path) -> None:
         raise IntegrationConfigError("Habilite a skill MySQL antes de configurar perfis.")
     executable = str(values.get("mysql_executable", "")).strip()
     if not executable:
-        raise IntegrationConfigError("Informe o executável mysql.exe antes de configurar perfis.")
+        raise IntegrationConfigError("Informe o executável mysql antes de configurar perfis.")
 
 
 def list_profiles(integration: str, *, project_root: Path = PROJECT_ROOT) -> dict[str, Any]:
