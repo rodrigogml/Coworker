@@ -280,7 +280,54 @@ def _load_telegram_values(instance_id: str) -> dict[str, Any]:
                 values[key] = codex[key]
     if not str(values.get("home_dir", "")).strip():
         values["home_dir"] = str(_default_codex_home(instance_id))
+    values["writable_directories"] = _normalize_writable_directories(
+        values.get("writable_directories", ["data/work"])
+    )
     return values
+
+
+def _portable_workspace_path(raw: Any) -> str | None:
+    """Converte raízes de escrita antigas para o caminho relativo da instância.
+
+    Configurações privadas podem ter sido criadas antes de a instância ser
+    movida. Um absoluto que termine em ``data/work`` é seguro e deve virar um
+    caminho relativo; absolutos fora dessa área não podem ser reaproveitados.
+    """
+    value = str(raw or "").strip().strip('"')
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        candidate = (PROJECT_ROOT / path).resolve()
+    else:
+        candidate = path.resolve()
+    work_root = (DATA_DIR / "work").resolve()
+    try:
+        relative = candidate.relative_to(work_root)
+    except ValueError:
+        parts = [part.casefold() for part in candidate.parts]
+        try:
+            index = next(
+                index
+                for index in range(len(parts) - 1)
+                if parts[index:index + 2] == ["data", "work"]
+            )
+        except StopIteration:
+            return None
+        relative = Path(*candidate.parts[index + 2:])
+    return Path("data", "work", relative).as_posix()
+
+
+def _normalize_writable_directories(raw: Any) -> list[str]:
+    """Retorna somente raízes de escrita válidas, com fallback restrito."""
+    if not isinstance(raw, list):
+        return ["data/work"]
+    normalized = [
+        path
+        for item in raw
+        if (path := _portable_workspace_path(item)) is not None
+    ]
+    return normalized or ["data/work"]
 
 
 def _telegram_content(
@@ -289,6 +336,9 @@ def _telegram_content(
     settings = _default_telegram_values(instance_id)
     if codex_values:
         settings.update(codex_values)
+    settings["writable_directories"] = _normalize_writable_directories(
+        settings.get("writable_directories", ["data/work"])
+    )
     credential_ref = f"APIs/Telegram/{instance_id}"
     webhook_ref = f"APIs/Telegram/{instance_id}-webhook"
     return f'''# Configuração privada da interface Telegram.
@@ -1133,7 +1183,10 @@ def _manage_directory_list(
         print(f"\n{label}:")
         _print_directory_entries(values)
         print("  Caminhos relativos usam a raiz do Coworker como base.")
-        print("  Use '.' para a pr\u00f3pria raiz. Caminhos absolutos tamb\u00e9m s\u00e3o aceitos.")
+        if writable:
+            print("  Escrita aceita somente dentro de data/work/.")
+        else:
+            print("  Use '.' para a pr\u00f3pria raiz. Caminhos absolutos tamb\u00e9m s\u00e3o aceitos.")
         print("  1. Adicionar um ou mais diret\u00f3rios")
         print("  2. Excluir um diret\u00f3rio")
         if writable:
@@ -1151,6 +1204,12 @@ def _manage_directory_list(
             existing = {_directory_key(value) for value in values}
             added = 0
             for item in _parse_directory_entries(raw):
+                if writable:
+                    normalized = _portable_workspace_path(item)
+                    if normalized is None:
+                        print(f"Ignorado: escrita fora de data/work/: {item}")
+                        continue
+                    item = normalized
                 key = _directory_key(item)
                 if key in existing:
                     print(f"J\u00e1 cadastrado: {item}")
@@ -1773,6 +1832,8 @@ def configure_telegram(
         finally:
             token = ""
         print("Token salvo diretamente no cofre.")
+        # Corrige configurações privadas antigas antes de o gateway validá-las.
+        _save_codex_values(instance_id, _load_telegram_values(instance_id))
         _gateway("profile", "sync")
         _gateway("commands", "sync")
         _gateway("permissions", "sync")

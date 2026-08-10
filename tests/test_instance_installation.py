@@ -70,6 +70,21 @@ class InstallerTests(unittest.TestCase):
         parsed = tomllib.loads(content)
         self.assertTrue(parsed["codex"]["home_dir"])
 
+    def test_legacy_absolute_workspace_path_is_made_portable(self) -> None:
+        legacy = install_instance.PROJECT_ROOT.parent / "old-instance" / "data" / "work" / "scripts"
+        content = install_instance._telegram_content(
+            "assistente-teste", {"writable_directories": [str(legacy)]}
+        )
+        parsed = tomllib.loads(content)
+        self.assertEqual(["data/work/scripts"], parsed["codex"]["writable_directories"])
+
+    def test_invalid_workspace_path_falls_back_to_restricted_default(self) -> None:
+        content = install_instance._telegram_content(
+            "assistente-teste", {"writable_directories": ["C:/fora-da-instancia"]}
+        )
+        parsed = tomllib.loads(content)
+        self.assertEqual(["data/work"], parsed["codex"]["writable_directories"])
+
     def test_directory_entries_accept_commas_quotes_and_legacy_semicolons(self) -> None:
         self.assertEqual(
             [".", "C:\\repo", "C:\\path,with,commas"],
