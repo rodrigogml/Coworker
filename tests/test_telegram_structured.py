@@ -193,6 +193,20 @@ class StructuredStateTests(unittest.TestCase):
 
 
 class WorkspacePermissionTests(unittest.TestCase):
+    def test_setup_commands_can_load_when_optional_processors_are_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self._minimal_config(root, 'writable_directories = ["data/work"]')
+            content = config.read_text(encoding="utf-8")
+            content += (
+                "\n[processors.transcription]\n"
+                'enabled = true\npython_executable = "C:/missing/python.exe"\n'
+                'project_dir = "C:/missing/eccovox"\n'
+            )
+            config.write_text(content, encoding="utf-8")
+            loaded = load_config(config, require_codex=False, validate_processors=False)
+            self.assertFalse(loaded.processors.transcription.enabled)
+
     def test_restricted_writable_directories_must_be_inside_work(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

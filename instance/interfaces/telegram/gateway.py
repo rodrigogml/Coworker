@@ -2791,7 +2791,7 @@ def command_init(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_pairing(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_config(Path(args.config), require_codex=False)
+    config = load_config(Path(args.config), require_codex=False, validate_processors=False)
     state = StateStore(config.state_dir)
     try:
         if args.pairing_command == "begin":
@@ -2833,7 +2833,7 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_commands(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_config(Path(args.config), require_codex=False)
+    config = load_config(Path(args.config), require_codex=False, validate_processors=False)
     api = load_api(config)
     try:
         if args.commands_command == "sync":
@@ -2860,7 +2860,7 @@ def command_commands(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_profile(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_config(Path(args.config), require_codex=False)
+    config = load_config(Path(args.config), require_codex=False, validate_processors=False)
     api = load_api(config)
     expected = {
         "name": config.identity.telegram_name,
@@ -2888,7 +2888,7 @@ def command_profile(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_permissions(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_config(Path(args.config))
+    config = load_config(Path(args.config), validate_processors=False)
     adapter = CodexAdapter(config.codex, config.project_root, ProcessRegistry())
     if args.permissions_command == "sync":
         return {"ok": True, **adapter.sync_rules()}

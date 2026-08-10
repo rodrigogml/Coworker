@@ -511,7 +511,12 @@ def discover_codex(raw: Any) -> Path:
     return Path(discovered).resolve()
 
 
-def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> TelegramConfig:
+def load_config(
+    path: Path = DEFAULT_CONFIG,
+    *,
+    require_codex: bool = True,
+    validate_processors: bool = True,
+) -> TelegramConfig:
     """Carrega a configuração privada sem criar ou sobrescrever a instância."""
     resolved = path.expanduser().resolve()
     try:
@@ -698,7 +703,15 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             verbosity=verbosity,
         ),
         media=MediaConfig(inbox_dir, jobs_dir, max_download, max_upload),
-        processors=ProcessorConfig(*processor_limits, _transcription_config(processor_values), _speech_config(processor_values)),
+        processors=(
+            ProcessorConfig(
+                *processor_limits,
+                _transcription_config(processor_values),
+                _speech_config(processor_values),
+            )
+            if validate_processors
+            else ProcessorConfig(*processor_limits)
+        ),
         webhook=WebhookConfig(
             str(webhook_values.get("public_url", "")).strip(),
             str(webhook_values.get("secret_credential_ref", "")).strip(),
