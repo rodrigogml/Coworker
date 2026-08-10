@@ -28,6 +28,9 @@ python scripts/integration_config.py init gmail
    --service gmail`, repetindo `--service` para os demais escolhidos, ou usar
    `--all-services`. Informar que o navegador deve abrir na máquina da instância; não
    enviar a URL a um celular remoto, pois o callback usa `127.0.0.1`.
+   Quando for necessário corrigir somente a seleção local antes do consentimento,
+   usar `google_accounts.py configure --profile NOME --service gmail`; esse comando
+   não concede nem revoga permissões externas.
 4. Depois que a pessoa concluir o navegador, usar `doctor --profile NOME` para
    validar a conta selecionada.
 5. Pesquisar com a sintaxe nativa do Gmail antes de abrir mensagens.

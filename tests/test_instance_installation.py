@@ -93,6 +93,22 @@ scopes = ["openid", "email", "https://example.com/unknown"]
         with self.assertRaises(install_instance.InstallError):
             install_instance._migrate_legacy_google_content(legacy)
 
+    def test_google_legacy_profile_without_account_starts_without_services(self) -> None:
+        legacy = '''client_id = "public-client"
+default_profile = "default"
+[profiles.default]
+credential_ref = "APIs/Google/Accounts/Default"
+scopes = ["openid", "email", "https://www.googleapis.com/auth/gmail.modify"]
+'''
+
+        migrated, changed = install_instance._migrate_legacy_google_content(
+            legacy,
+            unauthorized_profiles={"default"},
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual([], tomllib.loads(migrated)["profiles"]["default"]["services"])
+
     def test_google_cleanup_removes_only_canonical_legacy_entry(self) -> None:
         legacy = '''client_id = "public-client"
 client_credential_ref = "APIs/Google/OAuthClient"

@@ -709,7 +709,11 @@ def _legacy_google_services(raw_scopes: Any) -> tuple[str, ...]:
     return tuple(services)
 
 
-def _migrate_legacy_google_content(content: str) -> tuple[str, bool]:
+def _migrate_legacy_google_content(
+    content: str,
+    *,
+    unauthorized_profiles: set[str] | None = None,
+) -> tuple[str, bool]:
     """Remove o cliente secreto legado e troca scopes por serviços conhecidos."""
     try:
         values = tomllib.loads(content)
@@ -728,7 +732,12 @@ def _migrate_legacy_google_content(content: str) -> tuple[str, bool]:
                 raise InstallError(
                     f"O perfil Google '{raw_name}' mistura os formatos antigo e novo."
                 )
-            replacements[str(raw_name)] = _legacy_google_services(raw_profile["scopes"])
+            name = str(raw_name)
+            replacements[name] = (
+                ()
+                if name in (unauthorized_profiles or set())
+                else _legacy_google_services(raw_profile["scopes"])
+            )
             changed = True
     if not changed:
         return content, False
@@ -791,20 +800,41 @@ def cleanup_legacy_google(instance_id: str) -> dict[str, Any]:
         print("A configuração Google ainda não existe; não há dados legados para limpar.")
         return {"ok": True, "changed": False, "entry_removed": False}
     original = GOOGLE_CONFIG.read_text(encoding="utf-8")
-    migrated, config_changed = _migrate_legacy_google_content(original)
     parsed = tomllib.loads(original)
     has_legacy_client = "client_credential_ref" in parsed
+    raw_profiles = parsed.get("profiles") or {}
+    legacy_profiles = {
+        str(name): profile
+        for name, profile in raw_profiles.items()
+        if isinstance(profile, dict) and "scopes" in profile
+    }
     entry_exists = False
-    if has_legacy_client:
+    unauthorized_profiles: set[str] = set()
+    if has_legacy_client or legacy_profiles:
         if not _vault_operational(instance_id):
             raise InstallError(
                 "Conclua a configuração e o desbloqueio do cofre antes da limpeza Google."
             )
-        check = _run_json(
-            [sys.executable, str(VAULT_TOOL), "check", LEGACY_GOOGLE_CLIENT_ENTRY],
-            timeout=30,
-        )
-        entry_exists = check.get("entry_exists") is True
+        if has_legacy_client:
+            check = _run_json(
+                [sys.executable, str(VAULT_TOOL), "check", LEGACY_GOOGLE_CLIENT_ENTRY],
+                timeout=30,
+            )
+            entry_exists = check.get("entry_exists") is True
+        for name, profile in legacy_profiles.items():
+            credential_ref = str(profile.get("credential_ref") or "").strip()
+            if not credential_ref:
+                raise InstallError(f"O perfil Google '{name}' não possui credential_ref.")
+            check = _run_json(
+                [sys.executable, str(VAULT_TOOL), "check", credential_ref],
+                timeout=30,
+            )
+            if check.get("entry_exists") is not True:
+                unauthorized_profiles.add(name)
+    migrated, config_changed = _migrate_legacy_google_content(
+        original,
+        unauthorized_profiles=unauthorized_profiles,
+    )
     if not config_changed and not entry_exists:
         print("Nenhum dado OAuth legado do Google foi encontrado.")
         return {"ok": True, "changed": False, "entry_removed": False}
@@ -812,6 +842,11 @@ def cleanup_legacy_google(instance_id: str) -> dict[str, Any]:
     print("\nLimpeza OAuth legada do Google:")
     if config_changed:
         print("  - converter scopes dos perfis em nomes de serviços")
+        for name in sorted(unauthorized_profiles):
+            print(
+                f"  - iniciar o perfil {name} sem serviços pré-autorizados; "
+                "a conta ainda não existe no cofre"
+            )
         if has_legacy_client:
             print("  - remover client_credential_ref de data/config/google.toml")
     if entry_exists:

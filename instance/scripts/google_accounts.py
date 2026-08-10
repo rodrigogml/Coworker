@@ -682,6 +682,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("services", help="Lista os serviços Google suportados.")
 
+    configure = commands.add_parser(
+        "configure", help="Define os serviços locais de um perfil sem abrir OAuth."
+    )
+    configure.add_argument("--config", default=str(DEFAULT_CONFIG))
+    configure.add_argument("--profile")
+    configure_group = configure.add_mutually_exclusive_group(required=True)
+    configure_group.add_argument(
+        "--service", action="append", choices=tuple(SERVICE_SCOPES)
+    )
+    configure_group.add_argument("--all-services", action="store_true")
+
     enroll = commands.add_parser("enroll")
     enroll.add_argument("--config", default=str(DEFAULT_CONFIG))
     enroll.add_argument("--profile")
@@ -741,6 +752,20 @@ def main() -> int:
                     }
                     for item in config.profiles.values()
                 ],
+            }
+        elif args.command == "configure":
+            profile = config.select(args.profile)
+            services = (
+                tuple(SERVICE_SCOPES)
+                if args.all_services
+                else tuple(dict.fromkeys(args.service or ()))
+            )
+            _replace_profile_services(config_path, profile.name, services)
+            result = {
+                "ok": True,
+                "profile": profile.name,
+                "services": list(services),
+                "external_permissions_changed": False,
             }
         elif args.command == "enroll":
             result = launch_enrollment(

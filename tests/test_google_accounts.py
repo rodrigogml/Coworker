@@ -224,6 +224,13 @@ class GoogleAccountsTests(unittest.TestCase):
         self.assertNotIn("--token", help_text)
         self.assertNotIn("--refresh-token", help_text)
 
+    def test_configure_command_accepts_only_known_services(self):
+        args = google.build_parser().parse_args(
+            ["configure", "--profile", "pessoal", "--service", "gmail"]
+        )
+
+        self.assertEqual(["gmail"], args.service)
+
     def test_profile_services_are_updated_atomically(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "google.toml"

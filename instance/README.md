@@ -519,6 +519,7 @@ compartilhada pode aparecer como inexistente.
 
 ```powershell
 python scripts/google_accounts.py services
+python scripts/google_accounts.py configure --profile default --service gmail
 python scripts/google_accounts.py enroll --profile default --service gmail
 ```
 
