@@ -16,6 +16,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INTEGRATIONS = {
     "bis2": "bis2",
+    "bis10": "bis10",
     "calendar": "calendar",
     "cloudflare": "cloudflare",
     "contacts": "contacts",
@@ -29,7 +30,7 @@ INTEGRATIONS = {
     "ssh": "ssh",
     "todoist": "todoist",
 }
-PROFILE_INTEGRATIONS = {"bis2", "ssh", "mysql"}
+PROFILE_INTEGRATIONS = {"bis2", "bis10", "ssh", "mysql"}
 PROFILE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
 
@@ -168,6 +169,20 @@ def _validate_credential_ref(value: str) -> str:
     return reference
 
 
+def _validate_locale(value: str) -> str:
+    locale = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{2,8})?", locale):
+        raise IntegrationConfigError("O locale BIS10 é inválido.")
+    return locale
+
+
+def _validate_path_value(value: str, field: str) -> str:
+    path = str(value or "").strip()
+    if not path or any(char in path for char in "\r\n\0"):
+        raise IntegrationConfigError(f"O caminho '{field}' é inválido.")
+    return path
+
+
 def _private_config(integration: str, project_root: Path) -> Path:
     _source, destination = _paths(integration, project_root)
     if not destination.is_file():
@@ -250,6 +265,12 @@ def list_profiles(integration: str, *, project_root: Path = PROJECT_ROOT) -> dic
                 "host": str(profile.get("host", "")),
                 "port": int(profile.get("port", 0)),
                 "credential_ref": str(profile.get("credential_ref", "")),
+                **({"jar_path": str(profile.get("jar_path", "")),
+                    "working_dir": str(profile.get("working_dir", "")),
+                    "locale": str(profile.get("locale", "pt-BR")),
+                    "jndi_credential_ref": str(profile.get("jndi_credential_ref", "")),
+                    "bis_credential_ref": str(profile.get("bis_credential_ref", ""))}
+                   if integration == "bis10" else {}),
                 **({"attachment_name": str(profile.get("attachment_name", ""))}
                    if integration == "ssh" else {}),
                 **({"database": str(profile.get("database", "")),
@@ -277,6 +298,11 @@ def add_profile(
     credential_mode: str = "password",
     ssl_mode: str = "preferred",
     connect_timeout: int = 15,
+    jar_path: str | None = None,
+    working_dir: str | None = None,
+    locale: str = "pt-BR",
+    jndi_credential_ref: str | None = None,
+    bis_credential_ref: str | None = None,
     *,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Any]:
@@ -288,7 +314,15 @@ def add_profile(
     profile_name = _validate_profile_name(name)
     profile_host = _validate_profile_host(host)
     profile_port = _validate_profile_port(port)
-    profile_credential = _validate_credential_ref(credential_ref)
+    profile_credential = (
+        _validate_credential_ref(credential_ref) if integration != "bis10" else ""
+    )
+    if integration == "bis10":
+        bis10_jar = _validate_path_value(jar_path, "jar_path")
+        bis10_working = _validate_path_value(working_dir, "working_dir")
+        bis10_locale = _validate_locale(locale)
+        bis10_jndi = _validate_credential_ref(jndi_credential_ref)
+        bis10_bis = _validate_credential_ref(bis_credential_ref)
     attachment = str(attachment_name or "").strip()
     if integration == "ssh" and attachment and any(char in attachment for char in "\\/\r\n\0"):
         raise IntegrationConfigError("O nome do anexo SSH é inválido.")
@@ -308,12 +342,24 @@ def add_profile(
         raise IntegrationConfigError("A seção de perfis da integração é inválida.")
     if profile_name in profiles:
         raise IntegrationConfigError(f"O perfil '{profile_name}' já existe.")
-    section = (
-        f"\n[profiles.{profile_name}]\n"
-        f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
-        f"port = {profile_port}\n"
-        f"credential_ref = {json.dumps(profile_credential, ensure_ascii=False)}\n"
-    )
+    if integration == "bis10":
+        section = (
+            f"\n[profiles.{profile_name}]\n"
+            f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
+            f"port = {profile_port}\n"
+            f"jar_path = {json.dumps(bis10_jar, ensure_ascii=False)}\n"
+            f"working_dir = {json.dumps(bis10_working, ensure_ascii=False)}\n"
+            f"locale = {json.dumps(bis10_locale)}\n"
+            f"jndi_credential_ref = {json.dumps(bis10_jndi, ensure_ascii=False)}\n"
+            f"bis_credential_ref = {json.dumps(bis10_bis, ensure_ascii=False)}\n"
+        )
+    else:
+        section = (
+            f"\n[profiles.{profile_name}]\n"
+            f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
+            f"port = {profile_port}\n"
+            f"credential_ref = {json.dumps(profile_credential, ensure_ascii=False)}\n"
+        )
     if integration == "ssh":
         section += f"attachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
     if integration == "mysql":
@@ -354,6 +400,11 @@ def set_profile(
     credential_mode: str = "password",
     ssl_mode: str = "preferred",
     connect_timeout: int = 15,
+    jar_path: str | None = None,
+    working_dir: str | None = None,
+    locale: str = "pt-BR",
+    jndi_credential_ref: str | None = None,
+    bis_credential_ref: str | None = None,
     *,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Any]:
@@ -367,7 +418,15 @@ def set_profile(
     profile_name = _validate_profile_name(name)
     profile_host = _validate_profile_host(host)
     profile_port = _validate_profile_port(port)
-    profile_credential = _validate_credential_ref(credential_ref)
+    profile_credential = (
+        _validate_credential_ref(credential_ref) if integration != "bis10" else ""
+    )
+    if integration == "bis10":
+        bis10_jar = _validate_path_value(jar_path, "jar_path")
+        bis10_working = _validate_path_value(working_dir, "working_dir")
+        bis10_locale = _validate_locale(locale)
+        bis10_jndi = _validate_credential_ref(jndi_credential_ref)
+        bis10_bis = _validate_credential_ref(bis_credential_ref)
     attachment = str(attachment_name or "").strip()
     if integration == "ssh" and attachment and any(char in attachment for char in "\\/\r\n\0"):
         raise IntegrationConfigError("O nome do anexo SSH é inválido.")
@@ -385,12 +444,24 @@ def set_profile(
     profiles = values.get("profiles", {})
     if not isinstance(profiles, dict):
         raise IntegrationConfigError("A seção de perfis da integração é inválida.")
-    section = (
-        f"[profiles.{profile_name}]\n"
-        f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
-        f"port = {profile_port}\n"
-        f"credential_ref = {json.dumps(profile_credential, ensure_ascii=False)}\n"
-    )
+    if integration == "bis10":
+        section = (
+            f"[profiles.{profile_name}]\n"
+            f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
+            f"port = {profile_port}\n"
+            f"jar_path = {json.dumps(bis10_jar, ensure_ascii=False)}\n"
+            f"working_dir = {json.dumps(bis10_working, ensure_ascii=False)}\n"
+            f"locale = {json.dumps(bis10_locale)}\n"
+            f"jndi_credential_ref = {json.dumps(bis10_jndi, ensure_ascii=False)}\n"
+            f"bis_credential_ref = {json.dumps(bis10_bis, ensure_ascii=False)}\n"
+        )
+    else:
+        section = (
+            f"[profiles.{profile_name}]\n"
+            f"host = {json.dumps(profile_host, ensure_ascii=False)}\n"
+            f"port = {profile_port}\n"
+            f"credential_ref = {json.dumps(profile_credential, ensure_ascii=False)}\n"
+        )
     if integration == "ssh":
         section += f"attachment_name = {json.dumps(attachment, ensure_ascii=False)}\n"
     if integration == "mysql":
@@ -462,23 +533,33 @@ def build_parser() -> argparse.ArgumentParser:
     profile_add.add_argument("--name", required=True)
     profile_add.add_argument("--host", required=True)
     profile_add.add_argument("--port", required=True, type=int)
-    profile_add.add_argument("--credential-ref", required=True)
+    profile_add.add_argument("--credential-ref", default="")
     profile_add.add_argument("--attachment-name", default="")
     profile_add.add_argument("--database", default="")
     profile_add.add_argument("--credential-mode", choices=("password", "certificate"), default="password")
     profile_add.add_argument("--ssl-mode", default="preferred")
     profile_add.add_argument("--connect-timeout", type=int, default=15)
+    profile_add.add_argument("--jar-path", default="")
+    profile_add.add_argument("--working-dir", default="")
+    profile_add.add_argument("--locale", default="pt-BR")
+    profile_add.add_argument("--jndi-credential-ref", default="")
+    profile_add.add_argument("--bis-credential-ref", default="")
     profile_set = profile_commands.add_parser("set", help="Cria ou atualiza um perfil tipado.")
     profile_set.add_argument("integration", choices=tuple(sorted(PROFILE_INTEGRATIONS)))
     profile_set.add_argument("--name", required=True)
     profile_set.add_argument("--host", required=True)
     profile_set.add_argument("--port", required=True, type=int)
-    profile_set.add_argument("--credential-ref", required=True)
+    profile_set.add_argument("--credential-ref", default="")
     profile_set.add_argument("--attachment-name", default="")
     profile_set.add_argument("--database", default="")
     profile_set.add_argument("--credential-mode", choices=("password", "certificate"), default="password")
     profile_set.add_argument("--ssl-mode", default="preferred")
     profile_set.add_argument("--connect-timeout", type=int, default=15)
+    profile_set.add_argument("--jar-path", default="")
+    profile_set.add_argument("--working-dir", default="")
+    profile_set.add_argument("--locale", default="pt-BR")
+    profile_set.add_argument("--jndi-credential-ref", default="")
+    profile_set.add_argument("--bis-credential-ref", default="")
     configure = commands.add_parser("configure", help="Configura o executável e habilitação do MySQL.")
     configure.add_argument("integration", choices=("mysql",))
     configure.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None, required=True)
@@ -514,6 +595,8 @@ def main() -> int:
                 args.credential_ref,
                 args.attachment_name,
                 args.database, args.credential_mode, args.ssl_mode, args.connect_timeout,
+                args.jar_path, args.working_dir, args.locale,
+                args.jndi_credential_ref, args.bis_credential_ref,
             )
         else:
             result = set_profile(
@@ -524,6 +607,8 @@ def main() -> int:
                 args.credential_ref,
                 args.attachment_name,
                 args.database, args.credential_mode, args.ssl_mode, args.connect_timeout,
+                args.jar_path, args.working_dir, args.locale,
+                args.jndi_credential_ref, args.bis_credential_ref,
             )
     except (IntegrationConfigError, OSError) as exc:
         print_json(

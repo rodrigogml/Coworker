@@ -1,0 +1,12 @@
+java_executable = ""
+timeout_seconds = 300
+default_profile = "example"
+
+[profiles.example]
+host = "127.0.0.1"
+port = 8080
+jar_path = "C:/opt/BIS10CMD/BISCMD-10.0.jar"
+working_dir = "C:/opt/BIS10CMD"
+locale = "pt-BR"
+jndi_credential_ref = "BIS10/Example/ApplicationRealm"
+bis_credential_ref = "BIS10/Example/BIS10"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "BIS10"
+  short_description: "Acessa instalações BIS10 via BIS10CMD."
+  default_prompt: "Use a skill BIS10 para consultar ou operar o BIS10 configurado para esta instância."

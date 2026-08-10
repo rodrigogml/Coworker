@@ -124,6 +124,27 @@ class IntegrationConfigTests(unittest.TestCase):
                     "bis2", "local", "127.0.0.1", 0, "BIS2/Local/BISCMD", project_root=root
                 )
 
+    def test_bis10_profile_contains_two_credential_references(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config").mkdir()
+            (root / "config" / "bis10.example.toml").write_text(
+                'default_profile = "example"\n', encoding="utf-8"
+            )
+            integration_config.initialize_integration("bis10", project_root=root)
+            result = integration_config.add_profile(
+                "bis10", "local", "127.0.0.1", 8080, "",
+                jar_path="C:/opt/BIS10CMD/BISCMD-10.0.jar",
+                working_dir="C:/opt/BIS10CMD", locale="pt-BR",
+                jndi_credential_ref="BIS10/Local/ApplicationRealm",
+                bis_credential_ref="BIS10/Local/BIS10", project_root=root,
+            )
+            self.assertTrue(result["created"])
+            values = integration_config.list_profiles("bis10", project_root=root)
+            profile = next(item for item in values["profiles"] if item["name"] == "local")
+            self.assertEqual("BIS10/Local/ApplicationRealm", profile["jndi_credential_ref"])
+            self.assertEqual("BIS10/Local/BIS10", profile["bis_credential_ref"])
+
     def test_catalog_reports_commands_without_creating_files(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

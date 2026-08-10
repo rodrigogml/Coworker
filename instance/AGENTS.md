@@ -498,6 +498,22 @@ no BIS2 exigem autorização explícita e atual, `--profile` informado de forma 
 e os parâmetros de confirmação exigidos pelo comando. Não chamar o JAR diretamente
 quando houver credenciais envolvidas.
 
+### BIS10
+
+Para acessar instalações BIS10 por meio do BIS10CMD, usar
+`skills/bis10/SKILL.md` e executar `python skills/bis10/scripts/bis10.py`. Cada perfil
+define host, porta, locale, JAR, diretório de execução e duas referências do cofre:
+uma entrada `BIS10/<Perfil>/ApplicationRealm` para o acesso remoto EJB e uma entrada
+`BIS10/<Perfil>/BIS10` para o usuário da sessão BIS10. Ambas usam `Username` e
+`Password`; o wrapper lê os valores internamente e os injeta somente no processo do
+BIS10CMD. Nunca gravar credenciais em `application.properties`, TOML, argumentos ou
+arquivos temporários.
+
+Consultas de conexão, ping e sessão são permitidas dentro do escopo solicitado.
+Criação, alteração e exclusão de lançamentos ou transferências financeiras exigem
+autorização explícita e atual, `--profile` explícito e `--confirm`. O cliente não deve
+alterar lançamentos originados por contas a pagar/receber (`BILLS`) diretamente.
+
 ### Omie
 
 Para consultar ou manipular dados permitidos do ERP Omie, usar

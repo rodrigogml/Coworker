@@ -435,6 +435,9 @@ python scripts/credential_vault.py check "APIs/Notion"
 python skills/notion/scripts/notion.py doctor
 python scripts/credential_vault.py check "BIS2/Example/BISCMD"
 python skills/bis2/scripts/bis2.py --profile example doctor
+python scripts/integration_config.py init bis10
+python scripts/integration_config.py profile list bis10
+python skills/bis10/scripts/bis10.py --profile example doctor
 python scripts/google_accounts.py services
 python scripts/google_accounts.py list
 python scripts/google_accounts.py doctor --profile default
