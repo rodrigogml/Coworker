@@ -172,6 +172,9 @@ raiz de confiança da instalação.
 - `/verbosity [low|medium|high|default]`: controla o detalhamento da resposta;
 - `/progress [off|compact|detailed]`: controla as atualizações provisórias durante
   o processamento;
+- `/audiomode`: abre o painel de áudio (desligado por padrão), com opções de ligar,
+  desligar, voz, idioma, velocidade e restauração. As preferências são independentes
+  do Codex e persistem por `chat_id`.
 - `/codex diagnose`: verifica CLI, autenticação, App Server e catálogo de modelos;
 - `/codex reset`: restaura os padrões da instância após confirmação;
 - `/status`: abre o painel de sessão e fila, com atualização, cancelamento, nova
@@ -371,6 +374,12 @@ feito por reações na mensagem original: uma das reações de processamento (`�
 quando concluído. As listas antigas `immediate_messages` e `queued_messages` continuam
 aceitas somente para compatibilidade. O gateway renova `typing` enquanto um trabalho
 estiver em execução.
+A resposta textual sempre é enviada antes do áudio. Quando `[processors.speech]` estiver
+habilitado e `/audiomode` ligado, o EccoVox gera segmentos Opus por CLI sem shell ou por
+`/v1/audio/speech`, entregues como `sendVoice`. Markdown estrutural, URLs técnicas e
+blocos de código são removidos da fala. Todos os segmentos são preparados antes de
+qualquer envio; uma falha deixa somente o texto. Os temporários ficam dentro de
+`instance/data/telegram/jobs` e são removidos após a entrega ou falha.
 A retenção dos jobs é
 manual nesta versão: remova caixas antigas somente com o gateway parado e depois de
 confirmar que seus artefatos não são mais necessários.

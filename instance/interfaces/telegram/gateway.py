@@ -77,6 +77,7 @@ from skills.totp.core import TotpError, decode_qr, format_codes, parse_input, to
 from skills.totp.vault import TotpVaultError, find_records, read as read_totp, store as store_totp  # noqa: E402
 from interfaces.telegram.automation_state import AutomationState, AutomationStateError  # noqa: E402
 from interfaces.telegram.processors import ProcessorError, ProcessorRegistry  # noqa: E402
+from interfaces.telegram.speech import SpeechError, speech_segments  # noqa: E402
 from interfaces.telegram.progress import (  # noqa: E402
     PROGRESS_MODES,
     TelegramProgressReporter,
@@ -117,6 +118,7 @@ BOT_COMMANDS = (
     ("speed", "Definir a velocidade"),
     ("verbosity", "Definir o tamanho das respostas"),
     ("progress", "Configurar atualizações de progresso"),
+    ("audiomode", "Configurar respostas de áudio"),
     ("status", "Consultar a sessão e a fila"),
     ("usage", "Consultar a franquia do Codex"),
     ("cancel", "Interromper a execução atual"),
@@ -734,6 +736,42 @@ class Gateway:
         with self.state_lock:
             return self.state.codex_preferences(chat_id).progress_mode
 
+    def _audio_preferences(self, chat_id: int):
+        with self.state_lock:
+            return self.state.audio_preferences(chat_id)
+
+    def _audio_panel(self, chat_id: int) -> tuple[str, dict[str, Any]]:
+        prefs = self._audio_preferences(chat_id)
+        cfg = self.config.processors.speech
+        voice = prefs.voice or cfg.default_voice or "padrão"
+        language = prefs.language or cfg.default_language
+        speed = prefs.speed if prefs.speed is not None else cfg.default_speed
+        text = ("Modo de áudio\n\n"
+                f"Estado: {'ligado' if prefs.audio_enabled else 'desligado'}\n"
+                f"Voz: {voice}\nIdioma: {language}\nVelocidade: {speed:g}\n\n"
+                f"EccoVox: {'disponível' if self.processors.speech.doctor().get('available') else 'indisponível'}")
+        rows = [[("Desligar" if prefs.audio_enabled else "Ligar", "cx:au:off" if prefs.audio_enabled else "cx:au:on")]]
+        if cfg.voices:
+            rows.append([("Voz", "cx:au:voice")])
+        if cfg.languages:
+            rows.append([("Idioma", "cx:au:language")])
+        rows.extend([[('Velocidade', 'cx:au:speed')], [('Restaurar padrões', 'cx:au:reset')], [('Voltar', 'cx:root')]])
+        return text, self._inline_keyboard(rows)
+
+    def _audio_choices_panel(self, chat_id: int, kind: str) -> tuple[str, dict[str, Any]]:
+        cfg = self.config.processors.speech; prefs = self._audio_preferences(chat_id)
+        if kind == "voice":
+            values = cfg.voices; current = prefs.voice or cfg.default_voice
+            prefix = "v"
+        elif kind == "language":
+            values = cfg.languages; current = prefs.language or cfg.default_language
+            prefix = "l"
+        else:
+            values = ("0.75", "1", "1.25", "1.5", "2"); current = str(prefs.speed if prefs.speed is not None else cfg.default_speed); prefix = "s"
+        rows = [[(f"✓ {value}" if value == current else value, f"cx:au:{prefix}:{value}") for value in values[i:i+2]] for i in range(0, len(values), 2)]
+        rows.append([("Voltar", "cx:audio")])
+        return ("Escolha " + {"voice": "a voz", "language": "o idioma"}.get(kind, "a velocidade"), self._inline_keyboard(rows))
+
     def _model_for_options(
         self, models: tuple[CodexModel, ...], options: CodexOptions
     ) -> CodexModel | None:
@@ -1016,7 +1054,41 @@ class Gateway:
     def _route_settings_callback(
         self, chat_id: int, message_id: int, data: str
     ) -> None:
-        if data == "cx:root":
+        if data == "cx:audio":
+            text, keyboard = self._audio_panel(chat_id)
+        elif data == "cx:au:voice":
+            text, keyboard = self._audio_choices_panel(chat_id, "voice")
+        elif data == "cx:au:language":
+            text, keyboard = self._audio_choices_panel(chat_id, "language")
+        elif data == "cx:au:speed":
+            text, keyboard = self._audio_choices_panel(chat_id, "speed")
+        elif data in {"cx:au:on", "cx:au:off"}:
+            with self.state_lock:
+                self.state.set_audio_preference(chat_id, "audio_enabled", data.endswith("on"))
+            text, keyboard = self._audio_panel(chat_id)
+        elif data.startswith("cx:au:v:"):
+            value = data[len("cx:au:v:"):]
+            if value not in self.config.processors.speech.voices:
+                raise StateError("Voz não permitida.")
+            with self.state_lock: self.state.set_audio_preference(chat_id, "voice", value)
+            text, keyboard = self._audio_panel(chat_id)
+        elif data.startswith("cx:au:l:"):
+            value = data[len("cx:au:l:"):]
+            if value not in self.config.processors.speech.languages:
+                raise StateError("Idioma não permitido.")
+            with self.state_lock: self.state.set_audio_preference(chat_id, "language", value)
+            text, keyboard = self._audio_panel(chat_id)
+        elif data.startswith("cx:au:s:"):
+            value = data[len("cx:au:s:"):]
+            try: speed = float(value)
+            except ValueError as exc: raise StateError("Velocidade inválida.") from exc
+            if not 0.25 <= speed <= 4: raise StateError("Velocidade inválida.")
+            with self.state_lock: self.state.set_audio_preference(chat_id, "speed", speed)
+            text, keyboard = self._audio_panel(chat_id)
+        elif data == "cx:au:reset":
+            with self.state_lock: self.state.reset_audio_preferences(chat_id)
+            text, keyboard = self._audio_panel(chat_id)
+        elif data == "cx:root":
             text, keyboard = self._settings_panel(chat_id)
         elif data.startswith("cx:model:"):
             text, keyboard = self._models_panel(chat_id, int(data.rsplit(":", 1)[1]))
@@ -1930,7 +2002,9 @@ class Gateway:
         attachments: list[Attachment] | None = None,
         *, message_id: int | None = None,
     ) -> None:
-        if command in {"/settings", "/codex", "/model", "/reasoning", "/speed", "/verbosity", "/progress"}:
+        if command == "/audiomode":
+            self._handle_audio_command(chat_id, argument, update_id)
+        elif command in {"/settings", "/codex", "/model", "/reasoning", "/speed", "/verbosity", "/progress"}:
             try:
                 self._handle_codex_command(update_id, chat_id, command, argument)
             except (CodexExecutionError, StateError) as exc:
@@ -2208,6 +2282,20 @@ class Gateway:
                 self.state.set_codex_preference(chat_id, "progress_mode", normalized)
             self._send_settings(chat_id, update_id=update_id)
 
+    def _handle_audio_command(self, chat_id: int, argument: str, update_id: int) -> None:
+        value = argument.strip().casefold()
+        if value in {"on", "ligar", "enable"}:
+            with self.state_lock: self.state.set_audio_preference(chat_id, "audio_enabled", True)
+        elif value in {"off", "desligar", "disable"}:
+            with self.state_lock: self.state.set_audio_preference(chat_id, "audio_enabled", False)
+        elif value in {"reset", "default", "padrão", "padrao"}:
+            with self.state_lock: self.state.reset_audio_preferences(chat_id)
+        elif value:
+            self._send(chat_id, "Use /audiomode, /audiomode on ou /audiomode off.", update_id=update_id)
+            return
+        text, keyboard = self._audio_panel(chat_id)
+        self._send(chat_id, text, update_id=update_id, reply_markup=keyboard)
+
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
             item = self.work.get()
@@ -2385,6 +2473,7 @@ class Gateway:
                     turn_id=result.turn_id, job_id=item.job_id,
                     telegram_message_thread_id=inbound.telegram_message_thread_id,
                 )
+                self._deliver_speech(item, delivery.text, result.thread_id, result.turn_id, workspace)
             self._deliver_artifacts(item, delivery)
             with self.state_lock:
                 self.state.update_job(item.job_id, "completed")
@@ -2512,6 +2601,38 @@ class Gateway:
                     self.state.mark_artifact(artifact_id, "unknown")
                 raise
             self._record_sent_artifact(item, delivery, artifact_id, artifact, receipt)
+
+    def _deliver_speech(self, item: WorkItem, text: str, thread_id: str | None, turn_id: str | None, workspace: JobWorkspace) -> None:
+        cfg = self.config.processors.speech
+        with self.state_lock:
+            prefs = self.state.audio_preferences(item.inbound.chat_id)
+        if not prefs.audio_enabled or not cfg.enabled:
+            return
+        voice = prefs.voice or cfg.default_voice
+        language = prefs.language or cfg.default_language
+        speed = prefs.speed if prefs.speed is not None else cfg.default_speed
+        segments = speech_segments(text, cfg.max_characters)
+        if not voice or not segments:
+            return
+        paths = []
+        try:
+            # Synthesize every segment first, so a failure cannot produce partial audio.
+            for segment in segments:
+                paths.append(self.processors.speech.synthesize(segment, workspace.derived_dir, voice=voice, language=language, speed=speed).path)
+        except SpeechError as exc:
+            for path in paths: path.unlink(missing_ok=True)
+            log_event(LOGGER, logging.WARNING, "eccovox_speech_failed", job_id=item.job_id, error=str(exc)[:200])
+            return
+        for index, path in enumerate(paths):
+            try:
+                receipt = self.api.send_voice(item.inbound.chat_id, path, reply_to_message_id=item.inbound.message_ids[0] if index == 0 else None, message_thread_id=item.inbound.telegram_message_thread_id)
+                with self.state_lock:
+                    record = self.state.record_message(item.inbound.update_ids[0], item.inbound.chat_id, receipt.message_id or None, "out", None, "sent", reply_to_message_id=item.inbound.message_ids[0] if index == 0 else None, thread_id=thread_id, turn_id=turn_id, content_type="voice", job_id=item.job_id)
+                    self.state.set_job_response(item.job_id, record)
+            except TelegramApiError as exc:
+                log_event(LOGGER, logging.WARNING, "telegram_voice_failed", job_id=item.job_id, error=str(exc)[:200])
+                break
+        for path in paths: path.unlink(missing_ok=True)
 
     def _prepare_artifact_record(self, job_id: int, artifact: Any) -> int:
         with self.state_lock:

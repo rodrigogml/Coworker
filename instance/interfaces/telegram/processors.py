@@ -21,6 +21,7 @@ from interfaces.telegram.pdf_extraction import (
     extract_pdf_text,
 )
 from interfaces.telegram.transcription import EccoVoxClient, TranscriptionError
+from interfaces.telegram.speech import EccoVoxSpeechClient
 
 
 class ProcessorError(RuntimeError):
@@ -40,6 +41,7 @@ class ProcessorRegistry:
     def __init__(self, config: ProcessorConfig):
         self.config = config
         self.transcription = EccoVoxClient(config.transcription)
+        self.speech = EccoVoxSpeechClient(config.speech)
 
     def start(self) -> bool:
         return self.transcription.start()
@@ -53,6 +55,7 @@ class ProcessorRegistry:
             "pdf": {"available": pdf_dependency_available(), "provider": "pypdf"},
             "ocr": {"available": shutil.which("tesseract") is not None, "provider": "tesseract"},
             "audio_transcription": self.transcription.doctor(),
+            "audio_speech": self.speech.doctor(),
             "video": {
                 "available": False,
                 "dependency_present": shutil.which("ffprobe") is not None,

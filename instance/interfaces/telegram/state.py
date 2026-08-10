@@ -64,6 +64,14 @@ class CodexPreferences:
     progress_mode: str = "off"
 
 
+@dataclass(frozen=True)
+class AudioPreferences:
+    audio_enabled: bool = False
+    voice: str | None = None
+    language: str | None = None
+    speed: float | None = None
+
+
 class StateStore:
     """Controla autorização, sessões e mensagens em um SQLite exclusivo da máquina."""
 
@@ -353,6 +361,35 @@ class StateStore:
         cursor = self.connection.execute(
             "DELETE FROM codex_preferences WHERE chat_id=?", (chat_id,)
         )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
+    def audio_preferences(self, chat_id: int) -> AudioPreferences:
+        row = self.connection.execute("SELECT audio_enabled,voice,language,speed FROM audio_preferences WHERE chat_id=?", (chat_id,)).fetchone()
+        if not row:
+            return AudioPreferences()
+        return AudioPreferences(bool(row["audio_enabled"]), row["voice"], row["language"], float(row["speed"]) if row["speed"] is not None else None)
+
+    def set_audio_preference(self, chat_id: int, field: str, value: bool | str | float | None) -> None:
+        if field not in {"audio_enabled", "voice", "language", "speed"}:
+            raise StateError("Campo de configuração de áudio inválido.")
+        if field == "audio_enabled":
+            if not isinstance(value, bool):
+                raise StateError("audio_enabled deve ser booleano.")
+            value = int(value)
+        elif field == "speed":
+            try:
+                value = float(value) if value is not None else None
+            except (TypeError, ValueError) as exc:
+                raise StateError("Velocidade de áudio inválida.") from exc
+            if value is not None and not 0.25 <= value <= 4:
+                raise StateError("Velocidade de áudio fora do limite.")
+        with self.connection:
+            self.connection.execute("INSERT INTO audio_preferences(chat_id,updated_at) VALUES (?,?) ON CONFLICT(chat_id) DO NOTHING", (chat_id, iso()))
+            self.connection.execute(f"UPDATE audio_preferences SET {field}=?,updated_at=? WHERE chat_id=?", (value, iso(), chat_id))
+
+    def reset_audio_preferences(self, chat_id: int) -> bool:
+        cursor = self.connection.execute("DELETE FROM audio_preferences WHERE chat_id=?", (chat_id,))
         self.connection.commit()
         return cursor.rowcount > 0
 

@@ -80,6 +80,24 @@ class TranscriptionConfig:
 
 
 @dataclass(frozen=True)
+class SpeechConfig:
+    enabled: bool = False
+    backend: str = "cli"
+    python_executable: Path | None = None
+    project_dir: Path | None = None
+    endpoint: str = "http://127.0.0.1:8870"
+    allow_remote: bool = False
+    timeout_seconds: int = 120
+    voices: tuple[str, ...] = ()
+    languages: tuple[str, ...] = ("pt-BR",)
+    default_voice: str = ""
+    default_language: str = "pt-BR"
+    default_speed: float = 1.0
+    max_characters: int = 4000
+    format: str = "opus"
+
+
+@dataclass(frozen=True)
 class ProcessorConfig:
     max_extracted_characters: int
     max_archive_members: int
@@ -88,6 +106,7 @@ class ProcessorConfig:
     max_duration_seconds: int
     max_frames: int
     transcription: TranscriptionConfig = TranscriptionConfig()
+    speech: SpeechConfig = SpeechConfig()
 
 
 @dataclass(frozen=True)
@@ -417,6 +436,51 @@ def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
     )
 
 
+def _speech_config(values: dict[str, Any]) -> SpeechConfig:
+    raw = values.get("speech", {})
+    if not isinstance(raw, dict):
+        raise TelegramConfigError("A seção [processors.speech] deve ser uma tabela TOML.")
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise TelegramConfigError("'processors.speech.enabled' deve ser booleano.")
+    backend = str(raw.get("backend", "cli")).strip().casefold()
+    if backend not in {"cli", "http"}:
+        raise TelegramConfigError("'processors.speech.backend' deve ser cli ou http.")
+    endpoint = str(raw.get("endpoint", "http://127.0.0.1:8870")).strip()
+    parsed = urlparse(endpoint)
+    local_hosts = {"127.0.0.1", "localhost", "::1"}
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise TelegramConfigError("O endpoint EccoVox deve ser HTTP(S), sem credenciais, caminho ou parâmetros.")
+    allow_remote = raw.get("allow_remote", False)
+    if not isinstance(allow_remote, bool):
+        raise TelegramConfigError("'processors.speech.allow_remote' deve ser booleano.")
+    remote = parsed.hostname not in local_hosts
+    if remote and not allow_remote:
+        raise TelegramConfigError("Defina allow_remote=true para usar um EccoVox remoto.")
+    if remote and parsed.scheme != "https":
+        raise TelegramConfigError("Um EccoVox remoto deve usar HTTPS.")
+    executable = _resolve(str(raw.get("python_executable", "")).strip(), PROJECT_ROOT, allow_empty=True)
+    project_dir = _resolve(str(raw.get("project_dir", "")).strip(), PROJECT_ROOT, allow_empty=True)
+    if enabled and backend == "cli" and (executable is None or not executable.is_file() or project_dir is None or not project_dir.is_dir()):
+        raise TelegramConfigError("O Python e o diretório do EccoVox são obrigatórios para o backend CLI.")
+    try:
+        timeout = int(raw.get("timeout_seconds", 120)); max_chars = int(raw.get("max_characters", 4000)); speed = float(raw.get("default_speed", 1.0))
+    except (TypeError, ValueError) as exc:
+        raise TelegramConfigError("A configuração numérica de fala é inválida.") from exc
+    if not 5 <= timeout <= 1800 or not 100 <= max_chars <= 100_000 or not 0.25 <= speed <= 4:
+        raise TelegramConfigError("timeout, max_characters ou default_speed fora dos limites.")
+    voices = _string_list(raw.get("voices"), "processors.speech.voices")
+    languages = _string_list(raw.get("languages", ["pt-BR"]), "processors.speech.languages")
+    default_voice = str(raw.get("default_voice", voices[0] if voices else "")).strip()
+    default_language = str(raw.get("default_language", languages[0] if languages else "pt-BR")).strip()
+    if voices and default_voice not in voices or not languages or default_language not in languages:
+        raise TelegramConfigError("Os padrões de voz/idioma devem estar na allowlist.")
+    fmt = str(raw.get("format", "opus")).strip().casefold()
+    if fmt != "opus":
+        raise TelegramConfigError("O formato de fala deve ser opus.")
+    return SpeechConfig(enabled, backend, executable, project_dir, endpoint.rstrip("/"), allow_remote, timeout, voices, languages, default_voice, default_language, speed, max_chars, fmt)
+
+
 def default_state_dir(instance_id: str) -> Path:
     """Retorna o estado volátil da instância dentro de instance/data."""
     del instance_id
@@ -634,7 +698,7 @@ def load_config(path: Path = DEFAULT_CONFIG, *, require_codex: bool = True) -> T
             verbosity=verbosity,
         ),
         media=MediaConfig(inbox_dir, jobs_dir, max_download, max_upload),
-        processors=ProcessorConfig(*processor_limits, _transcription_config(processor_values)),
+        processors=ProcessorConfig(*processor_limits, _transcription_config(processor_values), _speech_config(processor_values)),
         webhook=WebhookConfig(
             str(webhook_values.get("public_url", "")).strip(),
             str(webhook_values.get("secret_credential_ref", "")).strip(),

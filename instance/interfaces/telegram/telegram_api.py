@@ -316,8 +316,8 @@ class TelegramApi:
     def send_audio(self, chat_id: int, path: Path, caption: str = "", *, reply_to_message_id: int | None = None) -> TelegramReceipt:
         return self._send_file("sendAudio", "audio", chat_id, path, caption, reply_to_message_id)
 
-    def send_voice(self, chat_id: int, path: Path, caption: str = "", *, reply_to_message_id: int | None = None) -> TelegramReceipt:
-        return self._send_file("sendVoice", "voice", chat_id, path, caption, reply_to_message_id)
+    def send_voice(self, chat_id: int, path: Path, caption: str = "", *, reply_to_message_id: int | None = None, message_thread_id: int | None = None) -> TelegramReceipt:
+        return self._send_file("sendVoice", "voice", chat_id, path, caption, reply_to_message_id, message_thread_id)
 
     def send_video(self, chat_id: int, path: Path, caption: str = "", *, reply_to_message_id: int | None = None) -> TelegramReceipt:
         return self._send_file("sendVideo", "video", chat_id, path, caption, reply_to_message_id)
@@ -333,12 +333,15 @@ class TelegramApi:
         path: Path,
         caption: str,
         reply_to_message_id: int | None,
+        message_thread_id: int | None = None,
     ) -> TelegramReceipt:
         fields: dict[str, Any] = {"chat_id": chat_id}
         if caption:
             fields.update({"caption": markdown_to_telegram_html(caption[:1024]), "parse_mode": "HTML"})
         if reply_to_message_id is not None:
             fields["reply_parameters"] = {"message_id": reply_to_message_id}
+        if message_thread_id is not None:
+            fields["message_thread_id"] = message_thread_id
         return _receipt(self.call_multipart(method, fields, {field: path}))
 
     def send_media_group(
