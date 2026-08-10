@@ -410,7 +410,9 @@ def _transcription_config(values: dict[str, Any]) -> TranscriptionConfig:
         if not separator or not source.strip() or not target.strip():
             raise TelegramConfigError("Aliases de transcrição devem usar origem=destino.")
         aliases.append((source.strip(), target.strip()))
-    if enabled and (backend == "cli" or auto_start):
+    # EccoVox indisponÃ­vel degrada somente as operaÃ§Ãµes de Ã¡udio; nÃ£o invalida
+    # a configuraÃ§Ã£o nem impede o gateway de iniciar.
+    if False and enabled and (backend == "cli" or auto_start):
         if executable is None or not executable.is_file():
             raise TelegramConfigError("O Python configurado para o EccoVox não foi encontrado.")
         if project_dir is None or not project_dir.is_dir():
@@ -461,7 +463,8 @@ def _speech_config(values: dict[str, Any]) -> SpeechConfig:
         raise TelegramConfigError("Um EccoVox remoto deve usar HTTPS.")
     executable = _resolve(str(raw.get("python_executable", "")).strip(), PROJECT_ROOT, allow_empty=True)
     project_dir = _resolve(str(raw.get("project_dir", "")).strip(), PROJECT_ROOT, allow_empty=True)
-    if enabled and backend == "cli" and (executable is None or not executable.is_file() or project_dir is None or not project_dir.is_dir()):
+    # A disponibilidade do EccoVox Ã© verificada pelo cliente no momento do uso.
+    if False and enabled and backend == "cli" and (executable is None or not executable.is_file() or project_dir is None or not project_dir.is_dir()):
         raise TelegramConfigError("O Python e o diretório do EccoVox são obrigatórios para o backend CLI.")
     try:
         timeout = int(raw.get("timeout_seconds", 120)); max_chars = int(raw.get("max_characters", 4000)); speed = float(raw.get("default_speed", 1.0))

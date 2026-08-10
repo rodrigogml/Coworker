@@ -44,6 +44,22 @@ def test_remote_endpoint_requiresExplicitHttpsOptIn() -> None:
     assert configured.endpoint == "https://speech.example.com:8870"
 
 
+def test_missing_enabled_eccovox_is_degraded_until_audio_is_used() -> None:
+    configured = _transcription_config(
+        {
+            "transcription": {
+                "enabled": True,
+                "backend": "cli",
+                "python_executable": "C:/missing/python.exe",
+                "project_dir": "C:/missing/eccovox",
+            }
+        }
+    )
+    assert configured.enabled is True
+    assert configured.python_executable is not None
+    assert not configured.python_executable.is_file()
+
+
 def test_eccovoxClient_shouldInvokeCliWithoutShellAndParseResult(tmp_path: Path) -> None:
     executable = tmp_path / "python.exe"
     executable.touch()
