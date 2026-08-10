@@ -20,13 +20,16 @@ python scripts/integration_config.py init calendar
 ## Executar
 
 1. Listar perfis com `python scripts/google_accounts.py list`.
-2. Consultar calendários antes de usar um identificador não conhecido.
-3. Usar `events list` ou `freebusy` para leituras.
-4. Usar `events instances` para expandir uma série recorrente.
-5. Confirmar datas, fuso, calendário, recorrência, lembretes e participantes antes
+2. Se Agenda ainda não estiver autorizada, não pedir credenciais da aplicação;
+   executar `python scripts/google_accounts.py enroll --profile NOME --service
+   calendar` após a pessoa escolher o serviço e concluir o navegador local.
+3. Consultar calendários antes de usar um identificador não conhecido.
+4. Usar `events list` ou `freebusy` para leituras.
+5. Usar `events instances` para expandir uma série recorrente.
+6. Confirmar datas, fuso, calendário, recorrência, lembretes e participantes antes
    de mutações.
-6. Criar, alterar ou cancelar somente com autorização explícita e atual.
-7. Usar `--send-updates all` somente quando o pedido autorizar notificações.
+7. Criar, alterar ou cancelar somente com autorização explícita e atual.
+8. Usar `--send-updates all` somente quando o pedido autorizar notificações.
 
 ```powershell
 python skills/calendar/scripts/calendar.py --profile pessoal calendars list

@@ -29,7 +29,6 @@ EXAMPLE_CONFIG = PROJECT_ROOT / "config" / "google.example.toml"
 from credential_vault import (  # noqa: E402
     VaultToolError,
     read_entry_credentials,
-    read_entry_secret,
     write_entry_credentials,
 )
 from integration_profiles import (  # noqa: E402
@@ -51,6 +50,22 @@ ALLOWED_ENDPOINTS = {
     ),
 }
 REQUIRED_IDENTITY_SCOPES = {"openid", "email"}
+SERVICE_SCOPES: dict[str, tuple[str, ...]] = {
+    "gmail": ("https://www.googleapis.com/auth/gmail.modify",),
+    "calendar": (
+        "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.freebusy",
+    ),
+    "drive": ("https://www.googleapis.com/auth/drive",),
+    "contacts": ("https://www.googleapis.com/auth/contacts",),
+}
+SERVICE_LABELS = {
+    "gmail": "Gmail",
+    "calendar": "Agenda",
+    "drive": "Drive",
+    "contacts": "Contatos",
+}
 
 
 class GoogleAccountError(Exception):
@@ -63,7 +78,11 @@ class GoogleProfile:
 
     name: str
     credential_ref: str
-    scopes: tuple[str, ...]
+    services: tuple[str, ...]
+
+    @property
+    def scopes(self) -> tuple[str, ...]:
+        return scopes_for_services(self.services)
 
 
 @dataclass(frozen=True)
@@ -74,7 +93,6 @@ class GoogleConfig:
     token_endpoint: str
     userinfo_endpoint: str
     client_id: str
-    client_credential_ref: str
     timeout_seconds: int
     authorization_timeout_seconds: int
     default_profile: str
@@ -117,11 +135,64 @@ def require_google_scopes(
     granted = set(access.scopes)
     missing = sorted(required.difference(granted))
     if missing:
+        service_name = next(
+            (
+                name
+                for name, scopes in SERVICE_SCOPES.items()
+                if required.issubset(scopes)
+            ),
+            None,
+        )
+        authorization = (
+            f"--service {service_name}" if service_name else "--service NOME"
+        )
         raise GoogleAccountError(
             f"O perfil Google '{access.profile}' não possui os escopos exigidos "
-            f"por {service}: {', '.join(missing)}. Ajuste google.toml e execute "
-            f"'python scripts/google_accounts.py enroll --profile {access.profile}'."
+            f"por {service}: {', '.join(missing)}. Autorize o serviço correspondente "
+            f"com 'python scripts/google_accounts.py enroll --profile "
+            f"{access.profile} {authorization}'."
         )
+
+
+def validate_services(raw_services: Any, *, field: str) -> tuple[str, ...]:
+    """Valida nomes fechados de serviços sem aceitar scopes arbitrários."""
+    if not isinstance(raw_services, list):
+        raise GoogleAccountError(f"'{field}' deve ser uma lista de serviços.")
+    services: list[str] = []
+    for raw in raw_services:
+        name = str(raw).strip().casefold()
+        if name not in SERVICE_SCOPES:
+            available = ", ".join(SERVICE_SCOPES)
+            raise GoogleAccountError(
+                f"Serviço Google inválido em '{field}'. Disponíveis: {available}."
+            )
+        if name not in services:
+            services.append(name)
+    return tuple(services)
+
+
+def scopes_for_services(services: tuple[str, ...]) -> tuple[str, ...]:
+    """Expande serviços conhecidos para identidade e scopes OAuth."""
+    scopes = ["openid", "email"]
+    for service in services:
+        try:
+            service_scopes = SERVICE_SCOPES[service]
+        except KeyError as exc:
+            raise GoogleAccountError(f"Serviço Google desconhecido: {service}.") from exc
+        for scope in service_scopes:
+            if scope not in scopes:
+                scopes.append(scope)
+    return tuple(scopes)
+
+
+def services_for_granted_scopes(scopes: tuple[str, ...]) -> tuple[str, ...]:
+    """Converte somente conjuntos completos de scopes em serviços utilizáveis."""
+    granted = set(scopes)
+    return tuple(
+        service
+        for service, required in SERVICE_SCOPES.items()
+        if set(required).issubset(granted)
+    )
 
 
 def _validated_endpoint(field: str, value: Any) -> str:
@@ -162,14 +233,16 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
         ) from exc
 
     client_id = str(values.get("client_id", "")).strip()
-    client_ref = str(values.get("client_credential_ref", "")).strip()
     default_profile = str(values.get("default_profile", "")).strip()
     timeout = values.get("timeout_seconds", 30)
     authorization_timeout = values.get("authorization_timeout_seconds", 300)
     raw_profiles = values.get("profiles")
-    if not client_ref:
+    if not client_id:
+        raise GoogleAccountError("'client_id' não pode ficar vazio.")
+    if "client_credential_ref" in values:
         raise GoogleAccountError(
-            "'client_credential_ref' deve apontar para o Client Secret no cofre."
+            "A configuração Google usa o formato OAuth legado. Execute a limpeza "
+            "de dados obsoletos no configurador local da instância."
         )
     if not isinstance(timeout, int) or not 1 <= timeout <= 120:
         raise GoogleAccountError("'timeout_seconds' deve estar entre 1 e 120.")
@@ -196,25 +269,20 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
         if not isinstance(raw_profile, dict):
             raise GoogleAccountError(f"'profiles.{name}' deve ser uma tabela.")
         credential_ref = str(raw_profile.get("credential_ref", "")).strip()
-        raw_scopes = raw_profile.get("scopes")
         if not credential_ref:
             raise GoogleAccountError(
                 f"'profiles.{name}.credential_ref' não pode ficar vazio."
             )
-        if (
-            not isinstance(raw_scopes, list)
-            or not raw_scopes
-            or not all(isinstance(scope, str) and scope.strip() for scope in raw_scopes)
-        ):
+        if "scopes" in raw_profile:
             raise GoogleAccountError(
-                f"'profiles.{name}.scopes' deve conter textos não vazios."
+                f"'profiles.{name}.scopes' usa o formato legado. Execute a limpeza "
+                "de dados obsoletos no configurador local da instância."
             )
-        scopes = tuple(dict.fromkeys(scope.strip() for scope in raw_scopes))
-        if not REQUIRED_IDENTITY_SCOPES.issubset(scopes):
-            raise GoogleAccountError(
-                f"'profiles.{name}.scopes' deve incluir 'openid' e 'email'."
-            )
-        profiles[name] = GoogleProfile(name, credential_ref, scopes)
+        services = validate_services(
+            raw_profile.get("services", []),
+            field=f"profiles.{name}.services",
+        )
+        profiles[name] = GoogleProfile(name, credential_ref, services)
     if default_profile not in profiles:
         raise GoogleAccountError(
             f"O perfil padrão Google '{default_profile}' não existe."
@@ -227,29 +295,11 @@ def load_google_config(path: Path = DEFAULT_CONFIG) -> GoogleConfig:
         _validated_endpoint("token_endpoint", values.get("token_endpoint")),
         _validated_endpoint("userinfo_endpoint", values.get("userinfo_endpoint")),
         client_id,
-        client_ref,
         timeout,
         authorization_timeout,
         default_profile,
         profiles,
     )
-
-
-def _read_oauth_client(config: GoogleConfig) -> tuple[str, str]:
-    """Combina o Client ID público com o Client Secret protegido."""
-    if config.client_id:
-        client_id = config.client_id
-        client_secret = read_entry_secret(config.client_credential_ref)
-    else:
-        client_id, client_secret = read_entry_credentials(
-            config.client_credential_ref
-        )
-    if not client_id or not client_secret:
-        client_secret = ""
-        raise GoogleAccountError(
-            "A credencial OAuth do Google não está completa."
-        )
-    return client_id, client_secret
 
 
 def _json_request(
@@ -332,12 +382,19 @@ def refresh_google_access(
 ) -> GoogleAccess:
     """Troca um refresh token do cofre por acesso efêmero."""
     profile = config.select(requested_profile)
-    client_id, client_secret = _read_oauth_client(config)
-    account_email, refresh_token = read_entry_credentials(profile.credential_ref)
+    try:
+        account_email, refresh_token = read_entry_credentials(profile.credential_ref)
+    except VaultToolError as exc:
+        suggested = profile.services[0] if profile.services else "gmail"
+        raise GoogleAccountError(
+            f"A conta do perfil Google '{profile.name}' ainda não está acessível. "
+            "Se ela ainda não foi autorizada, execute 'python "
+            f"scripts/google_accounts.py enroll --profile {profile.name} "
+            f"--service {suggested}'."
+        ) from exc
     try:
         token_fields = {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": config.client_id,
             "refresh_token": refresh_token,
             "grant_type": "refresh_token",
         }
@@ -348,7 +405,6 @@ def refresh_google_access(
             opener=opener,
         )
     finally:
-        client_secret = ""
         refresh_token = ""
     access_token = response.get("access_token")
     if not isinstance(access_token, str) or not access_token:
@@ -416,11 +472,20 @@ def enroll_google_profile(
     config: GoogleConfig,
     requested_profile: str | None,
     *,
+    requested_services: tuple[str, ...] = (),
+    all_services: bool = False,
+    config_path: Path | None = None,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> dict[str, Any]:
     """Executa consentimento no navegador e persiste somente o refresh token."""
     profile = config.select(requested_profile)
-    client_id, client_secret = _read_oauth_client(config)
+    additions = tuple(SERVICE_SCOPES) if all_services else requested_services
+    selected_services = tuple(dict.fromkeys((*profile.services, *additions)))
+    if not selected_services:
+        raise GoogleAccountError(
+            "Selecione ao menos um serviço Google antes de abrir o navegador."
+        )
+    requested_scopes = scopes_for_services(selected_services)
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(
@@ -433,10 +498,10 @@ def enroll_google_profile(
         f"{config.authorization_endpoint}?"
         + urllib.parse.urlencode(
             {
-                "client_id": client_id,
+                "client_id": config.client_id,
                 "redirect_uri": redirect_uri,
                 "response_type": "code",
-                "scope": " ".join(profile.scopes),
+                "scope": " ".join(requested_scopes),
                 "access_type": "offline",
                 "prompt": "consent",
                 "state": state,
@@ -447,7 +512,6 @@ def enroll_google_profile(
     )
     if not webbrowser.open(authorization_url, new=1):
         server.server_close()
-        client_secret = ""
         raise GoogleAccountError("Não foi possível abrir o navegador.")
     try:
         server.handle_request()
@@ -455,21 +519,17 @@ def enroll_google_profile(
         server.server_close()
     parameters = server.parameters or {}
     if parameters.get("state") != state:
-        client_secret = ""
         raise GoogleAccountError("A resposta OAuth não corresponde à solicitação.")
     if parameters.get("error"):
-        client_secret = ""
         raise GoogleAccountError(
             f"O consentimento Google falhou: {parameters['error'][:100]}."
         )
     code = parameters.get("code")
     if not code:
-        client_secret = ""
         raise GoogleAccountError("O Google não devolveu o código de autorização.")
     try:
         token_fields = {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": config.client_id,
             "code": code,
             "code_verifier": verifier,
             "redirect_uri": redirect_uri,
@@ -482,7 +542,6 @@ def enroll_google_profile(
             opener=opener,
         )
     finally:
-        client_secret = ""
         code = ""
         verifier = ""
     refresh_token = token_response.get("refresh_token")
@@ -492,6 +551,19 @@ def enroll_google_profile(
     if not isinstance(access_token, str) or not access_token:
         refresh_token = ""
         raise GoogleAccountError("O Google não devolveu um access token.")
+    granted_raw = token_response.get("scope")
+    if not isinstance(granted_raw, str) or not granted_raw.strip():
+        refresh_token = ""
+        access_token = ""
+        raise GoogleAccountError(
+            "O Google não informou as permissões efetivamente concedidas."
+        )
+    granted_scopes = tuple(dict.fromkeys(granted_raw.split()))
+    if not REQUIRED_IDENTITY_SCOPES.issubset(granted_scopes):
+        refresh_token = ""
+        access_token = ""
+        raise GoogleAccountError("O Google não concedeu os escopos de identidade.")
+    granted_services = services_for_granted_scopes(granted_scopes)
     identity = _userinfo(config, access_token, opener=opener)
     email = identity.get("email")
     access_token = ""
@@ -502,15 +574,69 @@ def enroll_google_profile(
         write_entry_credentials(profile.credential_ref, email, refresh_token)
     finally:
         refresh_token = ""
+    if config_path is not None:
+        _replace_profile_services(config_path, profile.name, granted_services)
     return {
         "ok": True,
         "profile": profile.name,
         "account": email,
-        "scopes": list(profile.scopes),
+        "services": list(granted_services),
+        "requested_services": list(selected_services),
+        "scopes": list(granted_scopes),
     }
 
 
-def launch_enrollment(config_path: Path, profile: str | None) -> dict[str, Any]:
+def _replace_profile_services(
+    path: Path,
+    profile_name: str,
+    services: tuple[str, ...],
+) -> None:
+    """Atualiza somente a lista não confidencial de serviços de um perfil."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    section = f"[profiles.{profile_name}]"
+    section_index = next(
+        (index for index, line in enumerate(lines) if line.strip() == section),
+        None,
+    )
+    if section_index is None:
+        raise GoogleAccountError(f"Perfil Google '{profile_name}' não encontrado.")
+    end_index = next(
+        (
+            index
+            for index in range(section_index + 1, len(lines))
+            if lines[index].lstrip().startswith("[")
+        ),
+        len(lines),
+    )
+    replacement = "services = " + json.dumps(list(services), ensure_ascii=False)
+    service_index = next(
+        (
+            index
+            for index in range(section_index + 1, end_index)
+            if lines[index].strip().startswith("services")
+            and lines[index].strip().split("=", 1)[0].strip() == "services"
+        ),
+        None,
+    )
+    if service_index is None:
+        lines.insert(end_index, replacement)
+    else:
+        lines[service_index] = replacement
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def launch_enrollment(
+    config_path: Path,
+    profile: str | None,
+    *,
+    services: tuple[str, ...] = (),
+    all_services: bool = False,
+) -> dict[str, Any]:
     """Abre o fluxo confidencial em um console separado."""
     if os.name != "nt":
         raise GoogleAccountError(
@@ -525,6 +651,10 @@ def launch_enrollment(config_path: Path, profile: str | None) -> dict[str, Any]:
     ]
     if profile:
         arguments.extend(["--profile", profile])
+    for service in services:
+        arguments.extend(["--service", service])
+    if all_services:
+        arguments.append("--all-services")
     process = subprocess.Popen(
         arguments,
         creationflags=subprocess.CREATE_NEW_CONSOLE,
@@ -533,6 +663,8 @@ def launch_enrollment(config_path: Path, profile: str | None) -> dict[str, Any]:
         "ok": True,
         "interactive": True,
         "process_id": process.pid,
+        "requested_services": list(services),
+        "all_services": all_services,
         "message": "Conclua o consentimento no navegador e aguarde o console fechar.",
     }
 
@@ -548,9 +680,16 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = commands.add_parser("list")
     list_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
 
+    commands.add_parser("services", help="Lista os serviços Google suportados.")
+
     enroll = commands.add_parser("enroll")
     enroll.add_argument("--config", default=str(DEFAULT_CONFIG))
     enroll.add_argument("--profile")
+    enroll_group = enroll.add_mutually_exclusive_group()
+    enroll_group.add_argument(
+        "--service", action="append", choices=tuple(SERVICE_SCOPES)
+    )
+    enroll_group.add_argument("--all-services", action="store_true")
 
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--config", default=str(DEFAULT_CONFIG))
@@ -559,6 +698,11 @@ def build_parser() -> argparse.ArgumentParser:
     internal = commands.add_parser("_enroll", help=argparse.SUPPRESS)
     internal.add_argument("--config", default=str(DEFAULT_CONFIG))
     internal.add_argument("--profile")
+    internal_group = internal.add_mutually_exclusive_group()
+    internal_group.add_argument(
+        "--service", action="append", choices=tuple(SERVICE_SCOPES)
+    )
+    internal_group.add_argument("--all-services", action="store_true")
     return parser
 
 
@@ -570,20 +714,49 @@ def main() -> int:
     args = build_parser().parse_args()
     access: GoogleAccess | None = None
     try:
+        if args.command == "services":
+            print_json(
+                {
+                    "services": [
+                        {
+                            "name": name,
+                            "label": SERVICE_LABELS[name],
+                            "scopes": list(scopes),
+                        }
+                        for name, scopes in SERVICE_SCOPES.items()
+                    ]
+                }
+            )
+            return 0
         config_path = Path(args.config).expanduser().resolve()
         config = load_google_config(config_path)
         if args.command == "list":
             result = {
                 "default_profile": config.default_profile,
                 "profiles": [
-                    {"name": item.name, "scopes": list(item.scopes)}
+                    {
+                        "name": item.name,
+                        "services": list(item.services),
+                        "scopes": list(item.scopes),
+                    }
                     for item in config.profiles.values()
                 ],
             }
         elif args.command == "enroll":
-            result = launch_enrollment(config_path, args.profile)
+            result = launch_enrollment(
+                config_path,
+                args.profile,
+                services=tuple(args.service or ()),
+                all_services=bool(args.all_services),
+            )
         elif args.command == "_enroll":
-            result = enroll_google_profile(config, args.profile)
+            result = enroll_google_profile(
+                config,
+                args.profile,
+                requested_services=tuple(args.service or ()),
+                all_services=bool(args.all_services),
+                config_path=config_path,
+            )
         else:
             access = refresh_google_access(config, args.profile)
             result = {

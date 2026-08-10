@@ -39,18 +39,13 @@ class GoogleAccountsTests(unittest.TestCase):
         profile = google.GoogleProfile(
             "pessoal",
             "APIs/Google/Accounts/Pessoal",
-            (
-                "openid",
-                "email",
-                "https://www.googleapis.com/auth/gmail.modify",
-            ),
+            ("gmail",),
         )
         return google.GoogleConfig(
             authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
             token_endpoint="https://oauth2.googleapis.com/token",
             userinfo_endpoint="https://openidconnect.googleapis.com/v1/userinfo",
             client_id="client-id-publico.apps.googleusercontent.com",
-            client_credential_ref="APIs/Google/OAuthClient",
             timeout_seconds=30,
             authorization_timeout_seconds=300,
             default_profile="pessoal",
@@ -67,18 +62,18 @@ class GoogleAccountsTests(unittest.TestCase):
                 'userinfo_endpoint = '
                 '"https://openidconnect.googleapis.com/v1/userinfo"\n'
                 'client_id = "client-id-publico.apps.googleusercontent.com"\n'
-                'client_credential_ref = "APIs/Google/OAuthClient"\n'
                 "timeout_seconds = 20\n"
                 "authorization_timeout_seconds = 180\n"
                 'default_profile = "pessoal"\n'
                 "[profiles.pessoal]\n"
                 'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
-                'scopes = ["openid", "email"]\n',
+                'services = ["gmail"]\n',
                 encoding="utf-8",
             )
             config = google.load_google_config(path)
 
         self.assertEqual("pessoal", config.select(None).name)
+        self.assertEqual(("gmail",), config.select(None).services)
         self.assertEqual(180, config.authorization_timeout_seconds)
 
     def test_config_rejects_token_exfiltration_endpoint(self):
@@ -91,19 +86,18 @@ class GoogleAccountsTests(unittest.TestCase):
                 'userinfo_endpoint = '
                 '"https://openidconnect.googleapis.com/v1/userinfo"\n'
                 'client_id = "client-id-publico.apps.googleusercontent.com"\n'
-                'client_credential_ref = "APIs/Google/OAuthClient"\n'
                 "timeout_seconds = 20\n"
                 "authorization_timeout_seconds = 180\n"
                 'default_profile = "pessoal"\n'
                 "[profiles.pessoal]\n"
                 'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
-                'scopes = ["openid", "email"]\n',
+                'services = ["gmail"]\n',
                 encoding="utf-8",
             )
             with self.assertRaises(google.GoogleAccountError):
                 google.load_google_config(path)
 
-    def test_load_config_accepts_legacy_vault_client(self):
+    def test_load_config_rejects_legacy_vault_client(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "google.toml"
             path.write_text(
@@ -112,20 +106,21 @@ class GoogleAccountsTests(unittest.TestCase):
                 'token_endpoint = "https://oauth2.googleapis.com/token"\n'
                 'userinfo_endpoint = '
                 '"https://openidconnect.googleapis.com/v1/userinfo"\n'
+                'client_id = "client-id-publico.apps.googleusercontent.com"\n'
                 'client_credential_ref = "APIs/Google/OAuthClient"\n'
                 'default_profile = "pessoal"\n'
                 '[profiles.pessoal]\n'
                 'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
-                'scopes = ["openid", "email"]\n',
+                'services = ["gmail"]\n',
                 encoding="utf-8",
             )
 
-            config = google.load_google_config(path)
+            with self.assertRaises(google.GoogleAccountError) as raised:
+                google.load_google_config(path)
 
-        self.assertEqual("", config.client_id)
-        self.assertEqual("APIs/Google/OAuthClient", config.client_credential_ref)
+        self.assertIn("formato OAuth legado", str(raised.exception))
 
-    def test_load_config_requires_vault_reference_for_client_secret(self):
+    def test_load_config_rejects_legacy_raw_scopes(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "google.toml"
             path.write_text(
@@ -134,8 +129,7 @@ class GoogleAccountsTests(unittest.TestCase):
                 'token_endpoint = "https://oauth2.googleapis.com/token"\n'
                 'userinfo_endpoint = '
                 '"https://openidconnect.googleapis.com/v1/userinfo"\n'
-                'client_id = ""\n'
-                'client_credential_ref = ""\n'
+                'client_id = "client-id-publico.apps.googleusercontent.com"\n'
                 'default_profile = "pessoal"\n'
                 '[profiles.pessoal]\n'
                 'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
@@ -146,7 +140,7 @@ class GoogleAccountsTests(unittest.TestCase):
             with self.assertRaises(google.GoogleAccountError):
                 google.load_google_config(path)
 
-    def test_refresh_uses_public_client_and_secret_from_vault(self):
+    def test_refresh_uses_public_client_without_client_secret(self):
         requests = []
 
         def opener(request, *, timeout):
@@ -174,51 +168,41 @@ class GoogleAccountsTests(unittest.TestCase):
             google,
             "read_entry_credentials",
             return_value=("pessoal@example.com", "refresh-secreto"),
-        ) as read, patch.object(
-            google,
-            "read_entry_secret",
-            return_value="client-secret",
-        ) as read_secret:
+        ) as read:
             access = google.refresh_google_access(self.config(), "pessoal", opener=opener)
 
         self.assertEqual(
             [("APIs/Google/Accounts/Pessoal",)],
             [call.args for call in read.call_args_list],
         )
-        read_secret.assert_called_once_with("APIs/Google/OAuthClient")
         token_body = requests[0].data.decode("ascii")
         self.assertIn(
             "client_id=client-id-publico.apps.googleusercontent.com",
             token_body,
         )
-        self.assertIn("client_secret=client-secret", token_body)
+        self.assertNotIn("client_secret", token_body)
         self.assertEqual("pessoal@example.com", access.email)
         self.assertEqual("access-secreto", access.access_token)
         access.close()
         self.assertEqual("", access.access_token)
 
-    def test_legacy_config_reads_client_id_and_secret_from_vault(self):
-        config = self.config()
-        config = google.GoogleConfig(
-            authorization_endpoint=config.authorization_endpoint,
-            token_endpoint=config.token_endpoint,
-            userinfo_endpoint=config.userinfo_endpoint,
-            client_id="",
-            client_credential_ref="APIs/Google/OAuthClient",
-            timeout_seconds=config.timeout_seconds,
-            authorization_timeout_seconds=config.authorization_timeout_seconds,
-            default_profile=config.default_profile,
-            profiles=config.profiles,
-        )
-        with patch.object(
-            google,
-            "read_entry_credentials",
-            return_value=("client-id-vault", "client-secret"),
-        ):
-            self.assertEqual(
-                ("client-id-vault", "client-secret"),
-                google._read_oauth_client(config),
+    def test_service_catalog_expands_identity_and_service_scopes(self):
+        scopes = google.scopes_for_services(("gmail", "contacts"))
+
+        self.assertEqual(("openid", "email"), scopes[:2])
+        self.assertIn("https://www.googleapis.com/auth/gmail.modify", scopes)
+        self.assertIn("https://www.googleapis.com/auth/contacts", scopes)
+
+    def test_partial_calendar_grant_does_not_enable_calendar(self):
+        granted = google.services_for_granted_scopes(
+            (
+                "openid",
+                "email",
+                "https://www.googleapis.com/auth/calendar.events",
             )
+        )
+
+        self.assertNotIn("calendar", granted)
 
     def test_launch_enrollment_never_passes_credentials(self):
         with patch.object(google.subprocess, "Popen") as popen:
@@ -239,6 +223,89 @@ class GoogleAccountsTests(unittest.TestCase):
         help_text = google.build_parser().format_help()
         self.assertNotIn("--token", help_text)
         self.assertNotIn("--refresh-token", help_text)
+
+    def test_profile_services_are_updated_atomically(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "google.toml"
+            path.write_text(
+                '[profiles.pessoal]\n'
+                'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
+                'services = ["gmail"]\n',
+                encoding="utf-8",
+            )
+
+            google._replace_profile_services(path, "pessoal", ("gmail", "drive"))
+
+            content = path.read_text(encoding="utf-8")
+        self.assertIn('services = ["gmail", "drive"]', content)
+
+    def test_enrollment_unions_services_and_never_sends_client_secret(self):
+        requests = []
+
+        class FakeServer:
+            server_port = 43123
+            parameters = {"state": "fixed-state", "code": "authorization-code"}
+
+            def handle_request(self):
+                return None
+
+            def server_close(self):
+                return None
+
+        def opener(request, *, timeout):
+            del timeout
+            requests.append(request)
+            if request.full_url == "https://oauth2.googleapis.com/token":
+                return FakeResponse(
+                    {
+                        "access_token": "access-secreto",
+                        "refresh_token": "refresh-secreto",
+                        "token_type": "Bearer",
+                        "scope": "openid email "
+                        "https://www.googleapis.com/auth/gmail.modify "
+                        "https://www.googleapis.com/auth/calendar.calendarlist.readonly "
+                        "https://www.googleapis.com/auth/calendar.events "
+                        "https://www.googleapis.com/auth/calendar.freebusy",
+                    }
+                )
+            return FakeResponse({"email": "pessoal@example.com"})
+
+        with TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "google.toml"
+            config_path.write_text(
+                '[profiles.pessoal]\n'
+                'credential_ref = "APIs/Google/Accounts/Pessoal"\n'
+                'services = ["gmail"]\n',
+                encoding="utf-8",
+            )
+            with (
+                patch.object(google, "_OAuthServer", return_value=FakeServer()),
+                patch.object(
+                    google.secrets,
+                    "token_urlsafe",
+                    side_effect=["fixed-state", "fixed-verifier"],
+                ),
+                patch.object(google.webbrowser, "open", return_value=True),
+                patch.object(google, "write_entry_credentials") as write_credentials,
+            ):
+                result = google.enroll_google_profile(
+                    self.config(),
+                    "pessoal",
+                    requested_services=("calendar",),
+                    config_path=config_path,
+                    opener=opener,
+                )
+            updated = config_path.read_text(encoding="utf-8")
+
+        token_body = requests[0].data.decode("ascii")
+        self.assertNotIn("client_secret", token_body)
+        write_credentials.assert_called_once_with(
+            "APIs/Google/Accounts/Pessoal",
+            "pessoal@example.com",
+            "refresh-secreto",
+        )
+        self.assertEqual(["gmail", "calendar"], result["services"])
+        self.assertIn('services = ["gmail", "calendar"]', updated)
 
     def test_required_scopes_fail_before_api_use(self):
         access = google.GoogleAccess(

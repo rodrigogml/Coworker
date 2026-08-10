@@ -5,15 +5,16 @@ Revisado em 2026-07-30.
 ## Autenticação
 
 - OAuth 2.0 para aplicação desktop.
-- Cadastro: `python scripts/google_accounts.py enroll --profile NOME`.
-- Cliente OAuth: `APIs/Google/OAuthClient`, com Client ID em `Username` e Client
-  Secret em `Password`.
+- Cadastro: `python scripts/google_accounts.py enroll --profile NOME --service gmail`.
+- Cliente OAuth: Client ID público em `data/config/google.toml`, sem Client Secret e
+  sem entrada de cliente no cofre. O fluxo usa PKCE.
 - Conta: entrada indicada em `config/google.example.toml`, com e-mail em `Username` e
   refresh token em `Password`.
 - Access tokens são renovados em memória e nunca persistidos.
 
-O perfil padrão usa `gmail.modify`, além de `openid` e `email`. Reduzir ou ampliar
-escopos exige novo consentimento. Aplicações pessoais com menos de 100 usuários podem
+O serviço Gmail usa `gmail.modify`, além de `openid` e `email`. Acrescentar serviços
+exige novo consentimento com a união das permissões, pois apps instalados não possuem
+autorização incremental. Aplicações pessoais com menos de 100 usuários podem
 operar sem verificação pública, mas continuam sujeitas às políticas de dados e à tela
 de aplicação não verificada.
 

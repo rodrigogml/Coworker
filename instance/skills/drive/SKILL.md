@@ -19,14 +19,17 @@ python scripts/integration_config.py init drive
 
 ## Executar
 
-1. Pesquisar antes de abrir ou alterar arquivos.
-2. Identificar arquivos por ID, não somente pelo nome.
-3. Usar `files show` para verificar capacidades antes de mutações.
-4. Usar `--dry-run` em upload, criação, movimentação e compartilhamento.
-5. Não sobrescrever downloads sem `--overwrite`.
-6. Não oferecer exclusão permanente; usar `files update --trashed`.
-7. Alterar permissões somente com autorização explícita e destinatário verificado.
-8. Tratar `files replace` como sobrescrita de conteúdo remoto.
+1. Se Drive ainda não estiver autorizado, não pedir credenciais da aplicação;
+   executar `python scripts/google_accounts.py enroll --profile NOME --service drive`
+   após a pessoa escolher o serviço e concluir o navegador local.
+2. Pesquisar antes de abrir ou alterar arquivos.
+3. Identificar arquivos por ID, não somente pelo nome.
+4. Usar `files show` para verificar capacidades antes de mutações.
+5. Usar `--dry-run` em upload, criação, movimentação e compartilhamento.
+6. Não sobrescrever downloads sem `--overwrite`.
+7. Não oferecer exclusão permanente; usar `files update --trashed`.
+8. Alterar permissões somente com autorização explícita e destinatário verificado.
+9. Tratar `files replace` como sobrescrita de conteúdo remoto.
 
 ```powershell
 python skills/drive/scripts/drive.py --profile pessoal files list `

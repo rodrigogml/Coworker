@@ -145,6 +145,21 @@ interface Telegram e sandbox do Codex. Configurações de skills e contas extern
 feitas posteriormente em conversa com a própria instância. O mesmo comando pode ser
 executado novamente para revisar a configuração sem perder as respostas anteriores.
 
+### Limites do configurador local
+
+O configurador não é uma central obrigatória de onboarding das skills. Ele administra
+somente a infraestrutura da instância, dependências e executáveis locais, migrações,
+diagnósticos e controles explícitos que habilitem ou desabilitem capacidades total ou
+parcialmente. Não concentrar nele cadastro de contas, perfis, blocos funcionais,
+parâmetros cotidianos nem consentimentos próprios de uma integração.
+
+Skills autocontidas devem oferecer pontos de entrada tipados para inicializar seus
+modelos conhecidos, validar perfis e solicitar somente as escolhas necessárias. A
+própria instância pode executar esses pontos de entrada quando a pessoa usuária pedir
+a capacidade, sem depender de uma passagem prévia pelo instalador. Isso não elimina
+confirmações: login, consentimento, credenciais, mutações externas e concessões de
+acesso continuam seguindo seus contratos específicos de segurança.
+
 No Windows:
 
 ```powershell
@@ -294,10 +309,10 @@ Configurações antigas com uma única `credential_ref` continuam funcionando. P
 `--profile`, migrar o arquivo privado para o formato acima. Nomes, referências e
 e-mails de contas ficam somente em `data/`; os modelos públicos usam `default`.
 
-`data/config/google.toml` reúne endpoints OAuth oficiais, a referência do cliente
-OAuth e os perfis de contas Google. Os arquivos `calendar.toml`, `contacts.toml`,
-`drive.toml` e `gmail.toml` contêm somente parâmetros operacionais de suas APIs.
-Client Secret, refresh tokens e access tokens nunca devem ser gravados nesses arquivos.
+`data/config/google.toml` reúne endpoints OAuth oficiais, o Client ID público e os
+perfis de contas Google com nomes fechados de serviços. Os arquivos `calendar.toml`,
+`contacts.toml`, `drive.toml` e `gmail.toml` contêm somente parâmetros operacionais de
+suas APIs. Refresh tokens e access tokens nunca devem ser gravados nesses arquivos.
 
 CPFL não possui configuração privada: o script recebe um link individual por arquivo
 ou entrada padrão e uma referência da pessoa titular no cofre.
@@ -419,7 +434,7 @@ python scripts/credential_vault.py check "APIs/Notion"
 python skills/notion/scripts/notion.py doctor
 python scripts/credential_vault.py check "BIS2/Example/BISCMD"
 python skills/bis2/scripts/bis2.py --profile example doctor
-python scripts/credential_vault.py check "APIs/Google/OAuthClient"
+python scripts/google_accounts.py services
 python scripts/google_accounts.py list
 python scripts/google_accounts.py doctor --profile default
 python skills/gmail/scripts/gmail.py --profile default doctor
@@ -497,17 +512,14 @@ compartilhada pode aparecer como inexistente.
 
 ### Preparar Google OAuth e Workspace
 
-1. Criar um projeto no Google Cloud e configurar a tela de consentimento OAuth.
-2. Habilitar Gmail API, Google Calendar API, Google Drive API e People API.
-3. Criar um OAuth Client ID do tipo **Desktop app**.
-4. Usar o Client ID público compartilhado em `config/google.example.toml` e criar no
-   KeePassXC a entrada indicada por `client_credential_ref`, com o mesmo Client ID em
-   `Username` e o Client Secret em `Password`.
-5. Ajustar os perfis e escopos em `data/config/google.toml`.
-6. Autorizar cada conta pelo navegador:
+1. O projeto Coworker já fornece em `config/google.example.toml` o Client ID público
+   do cliente OAuth do tipo **Desktop app**.
+2. Inicializar a configuração Google e escolher somente os serviços necessários.
+3. Autorizar cada conta pelo navegador:
 
 ```powershell
-python scripts/google_accounts.py enroll --profile default
+python scripts/google_accounts.py services
+python scripts/google_accounts.py enroll --profile default --service gmail
 ```
 
 O comando abre um console separado e o navegador. Após o consentimento, o refresh
@@ -515,34 +527,41 @@ token é escrito diretamente na entrada `APIs/Google/Accounts/Default`; ele não
 na conversa nem no terminal do agente. O perfil utiliza o e-mail autorizado em
 `Username` e o refresh token em `Password`.
 
+O callback usa um servidor temporário em `127.0.0.1`; por isso, neste fluxo, o
+navegador precisa ser aberto na mesma máquina que executa a instância. Não enviar a URL
+de autorização para um celular remoto: o `localhost` passaria a apontar para o próprio
+celular. Autorização remota exigirá um fluxo separado para dispositivos, um callback
+HTTPS público ou um broker OAuth e não faz parte deste procedimento.
+
 O Client ID público identifica a distribuição Coworker e pode ser reutilizado por
-todas as instâncias. O Client Secret exigido pelo endpoint do Google e as autorizações
-de cada conta permanecem protegidos no cofre local. O fluxo Desktop também usa PKCE;
-nenhum segredo é publicado no repositório.
+todas as instâncias. O fluxo Desktop usa PKCE e não depende de Client Secret. Nunca
+pedir Client ID ou Client Secret à pessoa que está apenas autorizando sua conta.
 
 Para adicionar outra conta:
 
 ```toml
 [profiles.empresa]
 credential_ref = "APIs/Google/Accounts/Empresa"
-scopes = [
-  "openid",
-  "email",
-  "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
-  "https://www.googleapis.com/auth/calendar.events",
-  "https://www.googleapis.com/auth/calendar.freebusy",
-  "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/contacts",
-]
+services = ["gmail"]
 ```
 
-Executar então `python scripts/google_accounts.py enroll --profile empresa`.
-Ao adicionar escopos a um perfil já autorizado, executar `enroll` novamente: um
-refresh token antigo não recebe permissões adicionais automaticamente.
+Executar então
+`python scripts/google_accounts.py enroll --profile empresa --service gmail`.
+Para ampliar uma conta já autorizada, executar `enroll` com os serviços adicionais;
+o script solicitará novamente a união completa das permissões, pois o fluxo instalado
+do Google não oferece autorização incremental. Usar `--all-services` somente quando a
+pessoa escolher explicitamente Gmail, Agenda, Drive e Contatos.
 Aplicações pessoais com poucos usuários podem operar sem verificação pública, mas o
 Google pode mostrar a tela de aplicação não verificada. Usar somente os escopos
 necessários e observar as políticas de dados do Google Workspace.
+
+Instalações antigas podem conter `client_credential_ref`, uma entrada
+`APIs/Google/OAuthClient` e listas cruas de `scopes`. No configurador local, abrir
+**Skills e integrações → Limpar dados OAuth legados do Google**. A limpeza apresenta
+uma prévia, exige confirmação, converte somente scopes conhecidos e nunca lê o
+conteúdo da credencial removida. Cadastro de perfis, escolha de serviços, autorização
+e diagnóstico permanecem nos scripts tipados da integração e não dependem do
+configurador local.
 
 ## Como agir quando algo estiver ausente
 

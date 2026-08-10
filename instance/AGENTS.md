@@ -283,6 +283,15 @@ fechado indicado pela própria skill ou pela mensagem de erro:
 ou escrita genérica por shell para esse bootstrap. O comando pode criar apenas modelos
 conhecidos dentro de `data/config/` e nunca sobrescreve um arquivo existente.
 
+O configurador local não é pré-requisito para usar skills autocontidas. Perfis de
+conta, blocos funcionais, parâmetros operacionais e consentimentos devem ser
+inicializados pelos pontos de entrada tipados da própria integração, permitindo que o
+agente configure a capacidade quando a pessoa usuária solicitar. O configurador pode
+administrar dependências locais, executáveis, infraestrutura compartilhada, migrações
+e controles explícitos de habilitação total ou parcial, mas não deve concentrar o
+onboarding cotidiano das skills nem bloquear sua autoconfiguração. Login, consentimento
+e mutações externas continuam exigindo a interação ou autorização aplicável.
+
 Executar scripts do repositório diretamente por `python <caminho-do-script>`. Não
 criar wrappers, atalhos ou comandos auxiliares fora do repositório. Dependências
 externas devem ser localizadas e registradas em arquivos privados de configuração
@@ -519,10 +528,11 @@ prévia técnica e não constitui autorização.
 ### Google Workspace
 
 Para cadastrar, listar e diagnosticar contas Google, usar
-`python scripts/google_accounts.py`. O cliente OAuth deve permanecer em
-`APIs/Google/OAuthClient`; cada perfil autorizado deve ter sua própria entrada
-`APIs/Google/Accounts/<Nome>`. Refresh tokens são gravados diretamente no KeePassXC e
-access tokens existem somente em memória.
+`python scripts/google_accounts.py`. O Client ID público da aplicação fica em
+`data/config/google.toml`; não solicitar Client ID nem Client Secret à pessoa usuária
+e não criar uma entrada de cliente OAuth no cofre. Cada perfil autorizado deve ter
+sua própria entrada `APIs/Google/Accounts/<Nome>`. Refresh tokens são gravados
+diretamente no KeePassXC e access tokens existem somente em memória.
 
 Para mensagens, conversas, marcadores e rascunhos do Gmail, usar
 `skills/gmail/SKILL.md` e executar
@@ -551,8 +561,13 @@ autorização explícita; a exclusão é permanente. Ao excluir grupos, preserva
 contatos com `deleteContacts=false`.
 
 Os quatro serviços compartilham os perfis definidos em `data/config/google.toml`.
-Quando os escopos forem ampliados, orientar nova execução de
-`python scripts/google_accounts.py enroll --profile NOME`.
+Perfis declaram nomes fechados em `services`, nunca scopes arbitrários. Antes do
+primeiro consentimento, apresentar Gmail, Agenda, Drive, Contatos e a opção de todos,
+permitindo escolha por menu ou lista numerada. Autorizar com um ou mais
+`--service NOME` ou com `--all-services`. Para acrescentar um serviço, executar novo
+consentimento; o script solicita a união dos serviços já ativos com os novos. Não
+afirmar que remover um nome da configuração revoga uma permissão já concedida no
+Google.
 
 ### CPFL
 

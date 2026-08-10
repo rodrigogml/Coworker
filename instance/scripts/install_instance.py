@@ -31,6 +31,8 @@ VAULT_TOOL = PROJECT_ROOT / "scripts" / "credential_vault.py"
 MEMORY_TOOL = PROJECT_ROOT / "scripts" / "memory.py"
 BIS2_CONFIG = DATA_DIR / "config" / "bis2.toml"
 BIS2_TOOL = PROJECT_ROOT / "skills" / "bis2" / "scripts" / "bis2.py"
+GOOGLE_CONFIG = DATA_DIR / "config" / "google.toml"
+LEGACY_GOOGLE_CLIENT_ENTRY = "APIs/Google/OAuthClient"
 
 IDENTITY_FIELDS = (
     ("instance_id", "Identificador técnico"),
@@ -675,16 +677,184 @@ def configure_bis2(instance_id: str) -> None:
             print("Escolha uma opção válida.")
 
 
+def _legacy_google_services(raw_scopes: Any) -> tuple[str, ...]:
+    """Converte scopes antigos somente quando correspondem ao catálogo atual."""
+    from google_accounts import REQUIRED_IDENTITY_SCOPES, SERVICE_SCOPES
+
+    if (
+        not isinstance(raw_scopes, list)
+        or not all(isinstance(scope, str) and scope.strip() for scope in raw_scopes)
+    ):
+        raise InstallError("A lista legada de scopes Google é inválida.")
+    remaining = {scope.strip() for scope in raw_scopes}.difference(
+        REQUIRED_IDENTITY_SCOPES
+    )
+    services: list[str] = []
+    for service, scopes in SERVICE_SCOPES.items():
+        required = set(scopes)
+        overlap = remaining.intersection(required)
+        if overlap and overlap != required:
+            raise InstallError(
+                f"O perfil Google possui permissões parciais de {service}; "
+                "revise-o manualmente antes da limpeza."
+            )
+        if required.issubset(remaining):
+            services.append(service)
+            remaining.difference_update(required)
+    if remaining:
+        raise InstallError(
+            "A configuração Google contém scopes desconhecidos; a limpeza automática "
+            "foi bloqueada para não alterar permissões silenciosamente."
+        )
+    return tuple(services)
+
+
+def _migrate_legacy_google_content(content: str) -> tuple[str, bool]:
+    """Remove o cliente secreto legado e troca scopes por serviços conhecidos."""
+    try:
+        values = tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        raise InstallError("A configuração Google legada contém TOML inválido.") from exc
+    profiles = values.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise InstallError("A configuração Google não possui perfis válidos.")
+    replacements: dict[str, tuple[str, ...]] = {}
+    changed = "client_credential_ref" in values
+    for raw_name, raw_profile in profiles.items():
+        if not isinstance(raw_profile, dict):
+            raise InstallError(f"O perfil Google '{raw_name}' é inválido.")
+        if "scopes" in raw_profile:
+            if "services" in raw_profile:
+                raise InstallError(
+                    f"O perfil Google '{raw_name}' mistura os formatos antigo e novo."
+                )
+            replacements[str(raw_name)] = _legacy_google_services(raw_profile["scopes"])
+            changed = True
+    if not changed:
+        return content, False
+
+    lines = content.splitlines()
+    output: list[str] = []
+    current_profile: str | None = None
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        section_match = re.fullmatch(r"\[profiles\.([A-Za-z0-9_-]+)\]", stripped)
+        if section_match:
+            current_profile = section_match.group(1)
+            output.append(line)
+            index += 1
+            continue
+        if stripped.startswith("["):
+            current_profile = None
+        if (
+            current_profile is None
+            and re.match(r"^client_credential_ref\s*=", stripped)
+        ):
+            index += 1
+            continue
+        if (
+            current_profile in replacements
+            and re.match(r"^scopes\s*=", stripped)
+        ):
+            balance = line.count("[") - line.count("]")
+            index += 1
+            while balance > 0 and index < len(lines):
+                balance += lines[index].count("[") - lines[index].count("]")
+                index += 1
+            services = replacements[current_profile]
+            output.append(f"services = {_toml_array(services)}")
+            continue
+        output.append(line)
+        index += 1
+    migrated = "\n".join(output).rstrip() + "\n"
+    try:
+        migrated_values = tomllib.loads(migrated)
+    except tomllib.TOMLDecodeError as exc:
+        raise InstallError("A conversão da configuração Google não produziu TOML válido.") from exc
+    migrated_profiles = migrated_values.get("profiles") or {}
+    if "client_credential_ref" in migrated_values or any(
+        isinstance(profile, dict) and "scopes" in profile
+        for profile in migrated_profiles.values()
+    ):
+        raise InstallError(
+            "A configuração Google usa uma estrutura legada que não pode ser "
+            "convertida automaticamente."
+        )
+    return migrated, True
+
+
+def cleanup_legacy_google(instance_id: str) -> dict[str, Any]:
+    """Limpa a configuração e a entrada OAuth antigas após confirmação local."""
+    if not GOOGLE_CONFIG.is_file():
+        print("A configuração Google ainda não existe; não há dados legados para limpar.")
+        return {"ok": True, "changed": False, "entry_removed": False}
+    original = GOOGLE_CONFIG.read_text(encoding="utf-8")
+    migrated, config_changed = _migrate_legacy_google_content(original)
+    parsed = tomllib.loads(original)
+    has_legacy_client = "client_credential_ref" in parsed
+    entry_exists = False
+    if has_legacy_client:
+        if not _vault_operational(instance_id):
+            raise InstallError(
+                "Conclua a configuração e o desbloqueio do cofre antes da limpeza Google."
+            )
+        check = _run_json(
+            [sys.executable, str(VAULT_TOOL), "check", LEGACY_GOOGLE_CLIENT_ENTRY],
+            timeout=30,
+        )
+        entry_exists = check.get("entry_exists") is True
+    if not config_changed and not entry_exists:
+        print("Nenhum dado OAuth legado do Google foi encontrado.")
+        return {"ok": True, "changed": False, "entry_removed": False}
+
+    print("\nLimpeza OAuth legada do Google:")
+    if config_changed:
+        print("  - converter scopes dos perfis em nomes de serviços")
+        if has_legacy_client:
+            print("  - remover client_credential_ref de data/config/google.toml")
+    if entry_exists:
+        print(f"  - remover do cofre a entrada exata {LEGACY_GOOGLE_CLIENT_ENTRY}")
+        print("    O conteúdo da entrada não será lido nem exibido.")
+    if not _yes_no("Executar esta limpeza", default=False):
+        print("Limpeza cancelada.")
+        return {"ok": True, "changed": False, "entry_removed": False}
+
+    if config_changed:
+        _replace_config(GOOGLE_CONFIG, migrated)
+    if entry_exists:
+        from credential_vault import VaultToolError, remove_entry
+
+        try:
+            remove_entry(LEGACY_GOOGLE_CLIENT_ENTRY)
+        except VaultToolError as exc:
+            raise InstallError(
+                "A configuração foi migrada, mas a entrada OAuth legada não pôde "
+                "ser removida do cofre."
+            ) from exc
+    print("Limpeza OAuth legada concluída.")
+    if entry_exists:
+        print(
+            "A entrada foi removida pelo KeePassXC. A possibilidade de recuperação "
+            "depende da lixeira configurada no próprio cofre."
+        )
+    return {"ok": True, "changed": config_changed, "entry_removed": entry_exists}
+
+
 def configure_skill_integrations(instance_id: str) -> None:
     while True:
         print("\nSkills e integrações")
         print("  1. BIS2 / BISCMD")
+        print("  2. Limpar dados OAuth legados do Google")
         print("  0. Voltar ao menu principal")
         answer = input("Escolha uma opção: ").strip()
         if answer in {"", "0"}:
             return
         if answer == "1":
             configure_bis2(instance_id)
+        elif answer == "2":
+            cleanup_legacy_google(instance_id)
         else:
             print("Escolha uma opção válida.")
 

@@ -19,13 +19,16 @@ python scripts/integration_config.py init contacts
 
 ## Executar
 
-1. Pesquisar antes de criar para evitar duplicidades.
-2. Identificar contatos pelo `resourceName`, nunca somente pelo nome.
-3. Ler o contato atual antes de atualizar; o script preserva o `etag` da fonte.
-4. Usar `--dry-run` antes de criar, alterar ou excluir.
-5. Alterar ou excluir somente com autorização explícita e atual.
-6. Não executar mutações paralelas para uma mesma conta.
-7. Ao excluir um grupo, preservar seus contatos; o script fixa
+1. Se Contatos ainda não estiver autorizado, não pedir credenciais da aplicação;
+   executar `python scripts/google_accounts.py enroll --profile NOME --service
+   contacts` após a pessoa escolher o serviço e concluir o navegador local.
+2. Pesquisar antes de criar para evitar duplicidades.
+3. Identificar contatos pelo `resourceName`, nunca somente pelo nome.
+4. Ler o contato atual antes de atualizar; o script preserva o `etag` da fonte.
+5. Usar `--dry-run` antes de criar, alterar ou excluir.
+6. Alterar ou excluir somente com autorização explícita e atual.
+7. Não executar mutações paralelas para uma mesma conta.
+8. Ao excluir um grupo, preservar seus contatos; o script fixa
    `deleteContacts=false`.
 
 ```powershell

@@ -54,6 +54,76 @@ class IdentityTests(unittest.TestCase):
 
 
 class InstallerTests(unittest.TestCase):
+    def test_google_legacy_content_becomes_service_configuration(self) -> None:
+        legacy = '''authorization_endpoint = "https://accounts.google.com/o/oauth2/v2/auth"
+token_endpoint = "https://oauth2.googleapis.com/token"
+userinfo_endpoint = "https://openidconnect.googleapis.com/v1/userinfo"
+client_id = "public-client"
+client_credential_ref = "APIs/Google/OAuthClient"
+default_profile = "default"
+
+[profiles.default]
+credential_ref = "APIs/Google/Accounts/Default"
+scopes = [
+  "openid",
+  "email",
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/contacts",
+]
+'''
+
+        migrated, changed = install_instance._migrate_legacy_google_content(legacy)
+        parsed = tomllib.loads(migrated)
+
+        self.assertTrue(changed)
+        self.assertNotIn("client_credential_ref", parsed)
+        self.assertEqual(
+            ["gmail", "contacts"], parsed["profiles"]["default"]["services"]
+        )
+        self.assertNotIn("scopes", parsed["profiles"]["default"])
+
+    def test_google_legacy_cleanup_rejects_unknown_scope(self) -> None:
+        legacy = '''client_id = "public-client"
+default_profile = "default"
+[profiles.default]
+credential_ref = "APIs/Google/Accounts/Default"
+scopes = ["openid", "email", "https://example.com/unknown"]
+'''
+
+        with self.assertRaises(install_instance.InstallError):
+            install_instance._migrate_legacy_google_content(legacy)
+
+    def test_google_cleanup_removes_only_canonical_legacy_entry(self) -> None:
+        legacy = '''client_id = "public-client"
+client_credential_ref = "APIs/Google/OAuthClient"
+default_profile = "default"
+[profiles.default]
+credential_ref = "APIs/Google/Accounts/Default"
+scopes = ["openid", "email", "https://www.googleapis.com/auth/gmail.modify"]
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "google.toml"
+            config.write_text(legacy, encoding="utf-8")
+            with (
+                patch.object(install_instance, "GOOGLE_CONFIG", config),
+                patch.object(install_instance, "_vault_operational", return_value=True),
+                patch.object(
+                    install_instance,
+                    "_run_json",
+                    return_value={"ok": True, "entry_exists": True},
+                ),
+                patch.object(install_instance, "_yes_no", return_value=True),
+                patch("credential_vault.remove_entry") as remove_entry,
+                patch("builtins.print"),
+            ):
+                result = install_instance.cleanup_legacy_google("instance-test")
+
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+
+        remove_entry.assert_called_once_with("APIs/Google/OAuthClient")
+        self.assertTrue(result["entry_removed"])
+        self.assertEqual(["gmail"], parsed["profiles"]["default"]["services"])
+
     def test_instance_contract_documents_runtime_and_git_path_bases(self) -> None:
         contract = (install_instance.PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("instance/data/work/", contract)

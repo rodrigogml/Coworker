@@ -21,13 +21,21 @@ python scripts/integration_config.py init gmail
 ## Executar o fluxo
 
 1. Usar `python scripts/google_accounts.py list` para conhecer os perfis locais.
-2. Usar `doctor --profile NOME` para validar a conta selecionada.
-3. Pesquisar com a sintaxe nativa do Gmail antes de abrir mensagens.
-4. Ler somente os formatos necessários: preferir `metadata`, usar `full` quando o
+2. Se a conta ainda não estiver autorizada ou não possuir Gmail, não pedir Client ID,
+   Client Secret nem token. Apresentar uma lista numerada com Gmail, Agenda, Drive,
+   Contatos e Todos; recomendar somente Gmail para uma solicitação de e-mail.
+3. Após a escolha, executar `python scripts/google_accounts.py enroll --profile NOME
+   --service gmail`, repetindo `--service` para os demais escolhidos, ou usar
+   `--all-services`. Informar que o navegador deve abrir na máquina da instância; não
+   enviar a URL a um celular remoto, pois o callback usa `127.0.0.1`.
+4. Depois que a pessoa concluir o navegador, usar `doctor --profile NOME` para
+   validar a conta selecionada.
+5. Pesquisar com a sintaxe nativa do Gmail antes de abrir mensagens.
+6. Ler somente os formatos necessários: preferir `metadata`, usar `full` quando o
    corpo for necessário e `raw` somente quando solicitado.
-5. Preparar mensagens como rascunho a partir de arquivo RFC 822 UTF-8.
-6. Enviar somente quando o pedido atual autorizar destinatários e conteúdo.
-7. Tratar lixeira, marcadores e envio como alterações externas.
+7. Preparar mensagens como rascunho a partir de arquivo RFC 822 UTF-8.
+8. Enviar somente quando o pedido atual autorizar destinatários e conteúdo.
+9. Tratar lixeira, marcadores e envio como alterações externas.
 
 ```powershell
 python skills/gmail/scripts/gmail.py --profile pessoal doctor
