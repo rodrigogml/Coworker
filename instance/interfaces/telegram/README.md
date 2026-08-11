@@ -552,6 +552,18 @@ O broker cria o destino exclusivamente, preserva a origem e retorna apenas metad
 O perfil `workspace-write` concede escrita manual somente em `data/work/`.
 Não habilite escrita no repositório, em `data/config/`, em `data/secrets/` ou em
 diretórios externos. Use sempre caminhos relativos à raiz `instance`.
+
+Para criar um arquivo, use o ponto de entrada aprovado:
+
+`python scripts/workspace.py write --path data/work/arquivo.json --content-stdin`
+
+Esse canal aceita UTF-8 e o UTF-16LE emitido pelo Windows PowerShell clássico,
+convertendo o conteúdo para UTF-8 antes da gravação atômica. Comandos genéricos de
+shell que tentem criar arquivos continuam bloqueados pela política. O diagnóstico
+do Codex diferencia uma raiz gravável existente que não foi reconhecida pelo editor
+(`root_not_recognized`) de um bloqueio esperado de escrita genérica
+(`blocked_by_policy`). O caminho é convertido para absoluto no perfil interno do
+Codex, pois a configuração dele não aceita caminhos relativos nessa seção.
 ## Regra vigente de escrita
 
 Apesar de referências históricas a `data/`, o perfil restrito concede escrita manual

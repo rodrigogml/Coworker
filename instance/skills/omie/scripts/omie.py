@@ -38,6 +38,7 @@ from integration_profiles import (  # noqa: E402
     resolve_credential_ref,
 )
 from integration_config import missing_config_message  # noqa: E402
+from stdin_utf8 import read_text  # noqa: E402
 
 
 ALLOWED_API_HOST = "app.omie.com.br"
@@ -1416,7 +1417,10 @@ def parse_input_document(raw: str) -> dict[str, Any]:
 def load_input_document(args: argparse.Namespace) -> dict[str, Any]:
     """Lê uma única fonte de entrada aprovada pela CLI."""
     if args.input_stdin:
-        raw = sys.stdin.read()
+        try:
+            raw = read_text()
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise OmieToolError("A entrada padrão deve ser JSON UTF-8 válido.") from exc
     else:
         try:
             raw = Path(args.input_file).expanduser().resolve().read_text(

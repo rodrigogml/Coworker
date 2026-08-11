@@ -1236,7 +1236,9 @@ class Gateway:
                 f"App Server: {diagnostic['app_server']}\n"
                 f"Modelos disponíveis: {len(models)}\n"
                 f"Sandbox: {diagnostic['sandbox']}\n"
-                f"Rede: {'habilitada' if diagnostic['network_access'] else 'desabilitada'}"
+                f"Rede: {'habilitada' if diagnostic['network_access'] else 'desabilitada'}\n"
+                f"Workspace: {diagnostic['workspace']['status']}\n"
+                f"Escrita genérica: {diagnostic['workspace']['generic_shell_write']}"
             )
             keyboard = self._inline_keyboard([[('Voltar', 'cx:root')]])
         else:

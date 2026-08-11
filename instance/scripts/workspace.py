@@ -9,6 +9,11 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from scripts.stdin_utf8 import read_text
+except ModuleNotFoundError:  # execução direta: python scripts/workspace.py
+    from stdin_utf8 import read_text
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORK_ROOT = (PROJECT_ROOT / "data" / "work").resolve()
@@ -59,9 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     source = write.add_mutually_exclusive_group(required=True)
     source.add_argument("--content")
     source.add_argument("--content-file")
+    source.add_argument("--content-stdin", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if args.content_file:
+        if args.content_stdin:
+            content = read_text(MAX_BYTES)
+        elif args.content_file:
             source_path = _workspace_path(args.content_file)
             content = source_path.read_text(encoding="utf-8")
         else:

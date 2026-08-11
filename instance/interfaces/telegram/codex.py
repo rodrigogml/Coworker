@@ -243,6 +243,40 @@ class CodexAdapter:
             "authenticated": True,
             "exec_rules": self.rules_status(),
             "app_server": self._app_server_diagnostic(),
+            "workspace": self.workspace_diagnostic(),
+        }
+
+    def workspace_diagnostic(self) -> dict[str, Any]:
+        """Classifica a falha de escrita sem tentar burlar a política."""
+        roots: list[dict[str, Any]] = []
+        for configured in self.config.writable_directories:
+            resolved = configured.resolve()
+            try:
+                relative = resolved.relative_to(self.project_root.resolve()).as_posix()
+                editor_root = relative == "data/work" or relative.startswith("data/work/")
+            except ValueError:
+                relative = None
+                editor_root = False
+            roots.append({
+                "path": str(resolved),
+                "exists": resolved.is_dir(),
+                "readable": os.access(resolved, os.R_OK),
+                "writable": os.access(resolved, os.W_OK),
+                "editor_root": editor_root,
+                "relative_path": relative,
+            })
+        aligned = bool(roots) and all(item["editor_root"] for item in roots)
+        return {
+            "status": "root_aligned" if aligned else "root_not_recognized",
+            "project_root": str(self.project_root.resolve()),
+            "roots": roots,
+            "approved_writer": "python scripts/workspace.py write",
+            "generic_shell_write": "blocked_by_policy",
+            "interpretation": (
+                "A raiz existe, mas não está expressa relativamente à raiz do processo."
+                if roots and not aligned
+                else "Use o escritor aprovado; bloqueios de shell são esperados pela política."
+            ),
         }
 
     def _app_server_diagnostic(self) -> str:
@@ -486,6 +520,8 @@ class CodexAdapter:
             direct_paths += f', "{additional}" = "read"'
         if self.config.sandbox == "workspace-write":
             for directory in self.config.writable_directories:
+                # O Codex valida filesystem paths antes de iniciar e exige
+                # caminhos absolutos nesta seção de configuração.
                 writable = directory.as_posix().replace('"', '\\"')
                 direct_paths += f', "{writable}" = "write"'
         if self.config.generated_images_dir is not None:
